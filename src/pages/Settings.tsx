@@ -63,6 +63,18 @@ export default function Settings() {
         ))}
       </div>
 
+      <div className="section-title">{t('emergencyProfile')}</div>
+      <button className="list-link" onClick={() => nav('/app/emergency-profile')}>
+        <Icon name="heart" size={19} color="var(--danger)" />
+        <span className="grow">
+          <span className="strong" style={{ display: 'block' }}>
+            {t('emergencyProfile')}
+          </span>
+          <span className="tiny">{t('emergencyProfileHint')}</span>
+        </span>
+        <Icon name="chevronRight" size={16} color="var(--text-3)" />
+      </button>
+
       <div className="section-title" id="emergency">
         {t('emergencyContacts')}
       </div>

@@ -1,33 +1,36 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { addAnnouncement, addReport, deleteAnnouncement } from '../lib/db'
+import { addReport, deleteAnnouncement } from '../lib/db'
 import { timeAgo } from '../lib/format'
-import { useApp } from '../lib/store'
-import { Icon, type IconName } from '../ui/Icon'
-import { Sheet } from '../ui/Sheet'
-import { useToast } from '../ui/Toast'
 import { CATEGORY_META, statusChip, statusKey } from '../lib/meta'
-import type { LatLng } from '../lib/types'
+import { useApp } from '../lib/store'
+import { Countdown } from '../ui/Countdown'
+import { Icon, type IconName } from '../ui/Icon'
+import { PanicGrid } from '../ui/PanicGrid'
+import { SafetyCheck } from '../ui/SafetyCheck'
+import { useToast } from '../ui/Toast'
+import type { LatLng, PanicType } from '../lib/types'
 
 export default function Home() {
   const { db, me, community, t, lang, isAdmin, isSatpam, plan } = useApp()
   const nav = useNavigate()
   const toast = useToast()
-  const [sosOpen, setSosOpen] = useState(false)
-  const [annOpen, setAnnOpen] = useState(false)
-  const [aTitle, setATitle] = useState('')
-  const [aBody, setABody] = useState('')
-  const [aPin, setAPin] = useState(false)
+  const [armed, setArmed] = useState<PanicType | null>(null)
 
   if (!me || !community) return null
 
   const reports = db.reports.filter((r) => r.communityId === community.id)
-  const alerts = reports.filter((r) => r.status !== 'resolved')
+  const alerts = reports.filter((r) => r.status !== 'resolved' && r.kind !== 'tip')
+  const liveSos = alerts.filter((r) => r.kind === 'sos')
   const anns = db.announcements
     .filter((a) => a.communityId === community.id)
     .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt - a.createdAt)
+  const broadcasts = db.broadcasts
+    .filter((b) => b.communityId === community.id)
+    .slice(0, 3)
 
-  const sendSos = async () => {
+  /** Fires after the countdown completes: capture location and raise the alert. */
+  const sendPanic = async (type: PanicType) => {
     let at: LatLng | null = null
     try {
       const pos = await new Promise<GeolocationPosition>((res, rej) =>
@@ -37,43 +40,28 @@ export default function Home() {
     } catch {
       at = community.center
     }
-    addReport({
+    const rep = addReport({
       communityId: community.id,
       authorId: me.id,
       kind: 'sos',
-      category: 'other',
-      note: t('sos'),
+      category: type,
+      note: t(CATEGORY_META[type].key),
       at,
       address: me.house,
     })
-    setSosOpen(false)
-    toast(t('sosSent'), 'err')
+    setArmed(null)
+    toast(t('panicSent'), 'err')
     if (navigator.vibrate) navigator.vibrate([120, 60, 120])
-  }
-
-  const postAnn = () => {
-    if (!aTitle.trim()) return
-    addAnnouncement({
-      communityId: community.id,
-      authorId: me.id,
-      title: aTitle.trim(),
-      body: aBody.trim(),
-      pinned: aPin,
-    })
-    setATitle('')
-    setABody('')
-    setAPin(false)
-    setAnnOpen(false)
-    toast(t('post'))
+    nav(`/app/reports?id=${rep.id}`)
   }
 
   const quick: { icon: IconName; label: string; color: string; bg: string; go: () => void }[] = [
     {
-      icon: 'alert',
-      label: t('quickReport'),
-      color: 'var(--warn)',
-      bg: 'var(--warn-soft)',
-      go: () => nav('/app/reports?new=1'),
+      icon: 'incognito',
+      label: t('tip'),
+      color: 'var(--purple)',
+      bg: 'rgba(163,113,247,.16)',
+      go: () => nav('/app/reports?tip=1'),
     },
     {
       icon: 'door',
@@ -85,15 +73,15 @@ export default function Home() {
     {
       icon: 'route',
       label: t('quickPatrol'),
-      color: 'var(--purple)',
-      bg: 'rgba(163,113,247,.16)',
+      color: 'var(--brand)',
+      bg: 'var(--brand-soft)',
       go: () => nav('/app/patrol'),
     },
     {
       icon: 'phone',
       label: t('quickCall'),
-      color: 'var(--brand)',
-      bg: 'var(--brand-soft)',
+      color: 'var(--warn)',
+      bg: 'var(--warn-soft)',
       go: () => nav('/app/settings#emergency'),
     },
   ]
@@ -104,9 +92,7 @@ export default function Home() {
         <div className="banner banner-warn">
           <Icon name="gift" size={17} />
           <span>
-            {plan.daysLeft <= 1
-              ? t('trialLastDay')
-              : t('trialBanner', { n: plan.daysLeft })}
+            {plan.daysLeft <= 1 ? t('trialLastDay') : t('trialBanner', { n: plan.daysLeft })}
             {isAdmin && (
               <>
                 {' '}
@@ -131,7 +117,37 @@ export default function Home() {
         </div>
       )}
 
-      <div className="card" style={{ marginBottom: 16 }}>
+      {/* live panic alerts float to the very top */}
+      {liveSos.map((r) => {
+        const author = db.members.find((m) => m.id === r.authorId)
+        return (
+          <button
+            key={r.id}
+            className="live-bar"
+            onClick={() => nav(`/app/reports?id=${r.id}`)}
+          >
+            <span className="live-dot" />
+            <div className="grow">
+              <div className="strong" style={{ fontSize: 13.5 }}>
+                🚨 {t(CATEGORY_META[r.category].key)} · {author?.name}
+              </div>
+              <div className="tiny">
+                {r.address} · {timeAgo(r.createdAt, lang)} ·{' '}
+                {r.responders.length
+                  ? `${r.responders.length} ${t('responders')}`
+                  : t('noResponders')}
+              </div>
+            </div>
+            <Icon name="chevronRight" size={17} />
+          </button>
+        )
+      })}
+
+      {broadcasts.map((b) => (
+        <SafetyCheck key={b.id} broadcast={b} />
+      ))}
+
+      <div className="card" style={{ marginBottom: 18 }}>
         <h2 style={{ fontSize: 19, fontWeight: 800, letterSpacing: '-0.3px' }}>
           {t('greeting', { name: me.name.split(' ')[0] })}
         </h2>
@@ -140,18 +156,20 @@ export default function Home() {
         </p>
       </div>
 
-      <div className="sos-wrap">
-        <button className="sos-btn" onClick={() => setSosOpen(true)}>
-          <div>
-            {t('sos')}
-            <small>SOS</small>
-          </div>
-        </button>
-      </div>
-      <p className="tiny center" style={{ margin: '12px 0 20px' }}>
-        {t('sosHold')}
-      </p>
+      <PanicGrid onTrigger={(type) => setArmed(type)} />
 
+      <div className="btn-row" style={{ marginTop: 12 }}>
+        <a className="btn btn-danger grow" href="tel:112">
+          <Icon name="phone" size={16} /> {t('call112')}
+        </a>
+        {isAdmin && (
+          <button className="btn btn-ghost grow" onClick={() => nav('/app/broadcast')}>
+            <Icon name="broadcast" size={16} /> {t('broadcast')}
+          </button>
+        )}
+      </div>
+
+      <div className="section-title">{t('seeSomething')}</div>
       <div className="quick-grid">
         {quick.map((q) => (
           <button key={q.label} className="quick" onClick={q.go}>
@@ -178,18 +196,15 @@ export default function Home() {
                 className="item"
                 onClick={() => nav(`/app/reports?id=${r.id}`)}
               >
-                <div
-                  className="item-icon"
-                  style={{ background: meta.bg, color: meta.color }}
-                >
+                <div className="item-icon" style={{ background: meta.bg, color: meta.color }}>
                   <Icon name={meta.icon} size={19} />
                 </div>
                 <div className="grow">
                   <div className="strong truncate">
-                    {r.kind === 'sos' ? `🚨 ${t('sos')}` : t(meta.key)}
+                    {r.kind === 'sos' ? `🚨 ${t(CATEGORY_META[r.category].key)}` : t(meta.key)}
                   </div>
                   <div className="tiny truncate">
-                    {author?.name} · {r.address || '-'}
+                    {r.anonymous ? t('anonymousBadge') : author?.name} · {r.address || '-'}
                   </div>
                 </div>
                 <div className="tiny" style={{ flex: 'none' }}>
@@ -204,7 +219,7 @@ export default function Home() {
       <div className="section-title">
         {t('announcements')}
         {isAdmin && (
-          <button className="btn btn-sm btn-ghost" onClick={() => setAnnOpen(true)}>
+          <button className="btn btn-sm btn-ghost" onClick={() => nav('/app/admin?post=1')}>
             <Icon name="plus" size={13} /> {t('newAnnouncement')}
           </button>
         )}
@@ -275,68 +290,26 @@ export default function Home() {
               <div className="grow">
                 <div className="strong truncate">{t(meta.key)}</div>
                 <div className="tiny truncate">
-                  {author?.name} · {timeAgo(r.createdAt, lang)}
+                  {r.anonymous ? t('anonymousBadge') : author?.name} ·{' '}
+                  {timeAgo(r.createdAt, lang)}
                 </div>
               </div>
-              <span className={`chip ${statusChip(r.status)}`}>
-                {t(statusKey(r.status))}
-              </span>
+              <span className={`chip ${statusChip(r.status)}`}>{t(statusKey(r.status))}</span>
             </button>
           )
         })
       )}
 
-      <Sheet
-        open={sosOpen}
-        onClose={() => setSosOpen(false)}
-        title={t('sosConfirmTitle')}
-        subtitle={t('sosConfirmBody')}
-      >
-        <button className="btn btn-danger" onClick={sendSos}>
-          <Icon name="alert" size={17} /> {t('sos')}
-        </button>
-        <button
-          className="btn btn-ghost"
-          style={{ marginTop: 8 }}
-          onClick={() => setSosOpen(false)}
-        >
-          {t('cancel')}
-        </button>
-      </Sheet>
-
-      <Sheet
-        open={annOpen}
-        onClose={() => setAnnOpen(false)}
-        title={t('newAnnouncement')}
-      >
-        <label className="field">
-          <span>{t('title')}</span>
-          <input
-            className="input"
-            value={aTitle}
-            onChange={(e) => setATitle(e.target.value)}
-          />
-        </label>
-        <label className="field">
-          <span>{t('body')}</span>
-          <textarea
-            className="textarea"
-            value={aBody}
-            onChange={(e) => setABody(e.target.value)}
-          />
-        </label>
-        <label className="row" style={{ marginBottom: 14 }}>
-          <input
-            type="checkbox"
-            checked={aPin}
-            onChange={(e) => setAPin(e.target.checked)}
-          />
-          <span className="muted">{t('pin')}</span>
-        </label>
-        <button className="btn btn-primary" onClick={postAnn}>
-          <Icon name="send" size={16} /> {t('post')}
-        </button>
-      </Sheet>
+      {armed && (
+        <Countdown
+          label={t(CATEGORY_META[armed].key)}
+          onDone={() => void sendPanic(armed)}
+          onCancel={() => {
+            setArmed(null)
+            toast(t('alertCancelled'))
+          }}
+        />
+      )}
     </div>
   )
 }

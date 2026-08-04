@@ -9,7 +9,7 @@ Bahasa default **Indonesia**, dengan opsi Bahasa Inggris dan Basa Sunda.
 npm install
 npm run dev      # http://localhost:5173
 npm run build    # build produksi ke dist/
-npm test         # 20 tes (alur pendaftaran, peran, langganan, area)
+npm test         # 31 tes (pendaftaran, peran, langganan, area, panik, siaran)
 ```
 
 ## Aturan utama
@@ -34,10 +34,34 @@ npm test         # 20 tes (alur pendaftaran, peran, langganan, area)
 
 ## Fitur
 
-Tombol panik (SOS) dengan lokasi · laporan kejadian 8 kategori dengan status
-terbuka/ditangani/selesai · peta lingkungan (Leaflet + OpenStreetMap) dengan
-editor area · buku tamu masuk/keluar · patroli satpam dengan jejak dan titik
-pantau · pengumuman · kontak darurat · tiket dukungan ke superadmin.
+### Tanggap darurat (terinspirasi SaferWatch)
+
+- **Tombol panik tekan-tahan** — enam jenis darurat (Pencurian, Keributan,
+  Darurat Medis, Kebakaran, Banjir, Lainnya). Wajib ditahan 1,5 detik dengan
+  cincin progres, lalu ada **hitung mundur 5 detik untuk membatalkan**, supaya
+  tidak ada alarm palsu karena tidak sengaja tersentuh.
+- **Profil darurat** — golongan darah, alergi, riwayat penyakit, dan kontak
+  keluarga; otomatis ditampilkan ke Satpam/Admin saat panik ditekan.
+- **Insiden langsung** — spanduk merah berdenyut di beranda, tombol
+  *"Saya menuju lokasi"*, daftar petugas yang merespons, dan **percakapan dua
+  arah** berikut foto bukti di dalam setiap insiden.
+- **Kirim info (anonim)** — warga bisa melaporkan hal mencurigakan (narkoba,
+  perusakan, orang hilang, dll.) tanpa menampilkan namanya ke anggota lain.
+- **Siaran darurat + konfirmasi keselamatan** — admin mengirim notifikasi massal
+  bertingkat (Informasi / Peringatan / Darurat) berisi instruksi keselamatan,
+  lalu warga menjawab **"Saya aman"** atau **"Butuh bantuan"**; admin melihat
+  rekapnya secara langsung.
+
+### Lainnya
+
+Laporan kejadian 11 kategori dengan status terbuka/ditangani/selesai · peta
+lingkungan (Leaflet + OpenStreetMap) dengan editor area · buku tamu
+masuk/keluar · patroli satpam dengan jejak dan titik pantau · pengumuman ·
+kontak darurat · tiket dukungan ke superadmin.
+
+> Catatan: tombol *Telepon 112* memakai tautan `tel:` bawaan ponsel. Integrasi
+> langsung ke 911/112 seperti SaferWatch memerlukan kerja sama resmi dengan
+> pusat panggilan darurat.
 
 ## Akun demo
 
@@ -57,9 +81,12 @@ Tekan **“Isi data contoh”** di layar awal untuk membuat lingkungan contoh
 src/
   lib/     types.ts  db.ts (data + aturan bisnis)  i18n.ts  store.tsx  format.ts  seed.ts
   ui/      Icon.tsx  MapView.tsx  Sheet.tsx  Toast.tsx
+  ui/      PanicGrid.tsx (tombol tekan-tahan)  Countdown.tsx  SafetyCheck.tsx
   pages/   Landing  Register  Login  Pending  AppShell  Home  Reports
            MapPage  Guests  Patrol  Admin  Settings  Billing  Support  Console
+           Broadcast  EmergencyProfile
   __tests__/  flow.test.tsx (alur UI)  rules.test.ts (aturan bisnis)
+              panic.test.tsx (tombol panik)
 ```
 
 ## Catatan penyimpanan

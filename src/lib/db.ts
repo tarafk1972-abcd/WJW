@@ -1,6 +1,9 @@
 import type {
   Announcement,
+  Attachment,
   AuditEntry,
+  Broadcast,
+  EmergencyProfile,
   Community,
   DBShape,
   Guest,
@@ -40,6 +43,7 @@ function emptyDB(): DBShape {
     patrols: [],
     guests: [],
     announcements: [],
+    broadcasts: [],
     invites: [],
     tickets: [],
     payments: [],
@@ -488,7 +492,19 @@ export function createInvite(
 }
 
 export function addReport(
-  r: Omit<Report, 'id' | 'createdAt' | 'status' | 'handledBy' | 'handledAt' | 'insideArea'>,
+  r: Omit<
+    Report,
+    | 'id'
+    | 'createdAt'
+    | 'status'
+    | 'handledBy'
+    | 'handledAt'
+    | 'insideArea'
+    | 'attachments'
+    | 'messages'
+    | 'responders'
+  > &
+    Partial<Pick<Report, 'attachments' | 'messages' | 'responders'>>,
 ): Report {
   const db = loadDB()
   const c = communityById(db, r.communityId)
@@ -502,11 +518,59 @@ export function addReport(
     handledBy: null,
     handledAt: null,
     insideArea: inside,
+    attachments: r.attachments ?? [],
+    messages: r.messages ?? [],
+    responders: r.responders ?? [],
   }
   db.reports.unshift(rep)
   audit(db, r.communityId, r.authorId, `report.${r.kind}`, r.category)
   saveDB(db)
   return rep
+}
+
+/** Append a chat message to an incident thread (two-way communication). */
+export function addIncidentMessage(
+  reportId: string,
+  from: string,
+  body: string,
+  system = false,
+) {
+  const db = loadDB()
+  const r = db.reports.find((x) => x.id === reportId)
+  if (!r) return
+  r.messages.push({ id: uid('im_'), from, body, at: Date.now(), system })
+  saveDB(db)
+}
+
+/** Mark the actor as responding to an incident and move it to "in progress". */
+export function respondToReport(actorId: string, reportId: string) {
+  const db = loadDB()
+  const r = db.reports.find((x) => x.id === reportId)
+  if (!r) return
+  if (!r.responders.includes(actorId)) r.responders.push(actorId)
+  if (r.status === 'open') {
+    r.status = 'ack'
+    r.handledBy = actorId
+    r.handledAt = Date.now()
+  }
+  r.messages.push({
+    id: uid('im_'),
+    from: actorId,
+    body: 'responding',
+    at: Date.now(),
+    system: true,
+  })
+  audit(db, r.communityId, actorId, 'report.respond', r.category)
+  saveDB(db)
+}
+
+export function addAttachment(reportId: string, dataUrl: string) {
+  const db = loadDB()
+  const r = db.reports.find((x) => x.id === reportId)
+  if (!r) return
+  const a: Attachment = { id: uid('at_'), kind: 'photo', dataUrl, at: Date.now() }
+  r.attachments.push(a)
+  saveDB(db)
 }
 
 export function updateReport(
@@ -692,6 +756,71 @@ export function verifyPayment(
     approve ? 'approved' : 'rejected',
   )
   saveDB(db)
+}
+
+/* ---------------- mass notification & safety check ---------------- */
+
+export function sendBroadcast(
+  b: Omit<Broadcast, 'id' | 'createdAt' | 'responses'>,
+): Broadcast {
+  const db = loadDB()
+  const bc: Broadcast = {
+    ...b,
+    id: uid('b_'),
+    createdAt: Date.now(),
+    responses: [],
+  }
+  db.broadcasts.unshift(bc)
+  audit(db, b.communityId, b.authorId, `broadcast.${b.severity}`, b.title)
+  saveDB(db)
+  return bc
+}
+
+export function respondSafety(
+  broadcastId: string,
+  memberId: string,
+  status: 'safe' | 'need_help',
+  note = '',
+) {
+  const db = loadDB()
+  const b = db.broadcasts.find((x) => x.id === broadcastId)
+  if (!b) return
+  const existing = b.responses.find((r) => r.memberId === memberId)
+  if (existing) {
+    existing.status = status
+    existing.note = note
+    existing.at = Date.now()
+  } else {
+    b.responses.push({ memberId, status, note, at: Date.now() })
+  }
+  audit(db, b.communityId, memberId, 'safety.check', status)
+  saveDB(db)
+}
+
+export function deleteBroadcast(id: string) {
+  const db = loadDB()
+  db.broadcasts = db.broadcasts.filter((b) => b.id !== id)
+  saveDB(db)
+}
+
+export function saveEmergencyProfile(memberId: string, profile: EmergencyProfile) {
+  const db = loadDB()
+  const m = memberById(db, memberId)
+  if (!m) return
+  m.emergency = profile
+  saveDB(db)
+}
+
+/** Members who should be alerted first for an incident: guards then admins. */
+export function responderPool(db: DBShape, communityId: string): Member[] {
+  return db.members
+    .filter(
+      (m) =>
+        m.communityId === communityId &&
+        m.status === 'active' &&
+        (m.role === 'satpam' || m.role === 'admin'),
+    )
+    .sort((a, b) => (a.role === 'satpam' ? -1 : 1) - (b.role === 'satpam' ? -1 : 1))
 }
 
 export function setCommunityPlan(

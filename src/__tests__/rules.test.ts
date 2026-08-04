@@ -255,3 +255,182 @@ describe('demo seeder', () => {
     expect(loadDB().members.length).toBe(before)
   })
 })
+
+describe('panic alerts, tips & two-way updates', () => {
+  beforeEach(fresh)
+
+  it('records a panic alert as an open SOS carrying its location', async () => {
+    const { addReport } = await import('../lib/db')
+    const res = makeCommunity()
+    if (!res.ok) return
+    saveArea(res.member.id, res.community.id, [
+      { lat: -1, lng: -1 },
+      { lat: -1, lng: 1 },
+      { lat: 1, lng: 1 },
+      { lat: 1, lng: -1 },
+    ])
+
+    const rep = addReport({
+      communityId: res.community.id,
+      authorId: res.member.id,
+      kind: 'sos',
+      category: 'medical',
+      note: 'help',
+      at: { lat: 0, lng: 0 },
+      address: 'A1',
+    })
+    expect(rep.kind).toBe('sos')
+    expect(rep.status).toBe('open')
+    expect(rep.insideArea).toBe(true)
+    expect(rep.responders).toEqual([])
+    expect(rep.messages).toEqual([])
+  })
+
+  it('flags a panic alert raised outside the neighbourhood area', async () => {
+    const { addReport } = await import('../lib/db')
+    const res = makeCommunity()
+    if (!res.ok) return
+    saveArea(res.member.id, res.community.id, [
+      { lat: 0, lng: 0 },
+      { lat: 0, lng: 1 },
+      { lat: 1, lng: 1 },
+      { lat: 1, lng: 0 },
+    ])
+    const rep = addReport({
+      communityId: res.community.id,
+      authorId: res.member.id,
+      kind: 'sos',
+      category: 'fire',
+      note: '',
+      at: { lat: 50, lng: 50 },
+      address: '',
+    })
+    expect(rep.insideArea).toBe(false)
+  })
+
+  it('lets a guard respond, which acknowledges the incident once', async () => {
+    const { addReport, respondToReport } = await import('../lib/db')
+    const res = makeCommunity()
+    if (!res.ok) return
+    const guard = register({
+      name: 'Pak Joko',
+      phone: '0899999999',
+      email: 'joko@x.id',
+      password: 'secret1',
+      house: 'Pos',
+      language: 'id',
+      mode: 'join',
+      communityId: res.community.id,
+    })
+    if (!guard.ok) return
+    decideMember(res.member.id, guard.member.id, 'accept', 'satpam')
+
+    const rep = addReport({
+      communityId: res.community.id,
+      authorId: res.member.id,
+      kind: 'sos',
+      category: 'theft',
+      note: '',
+      at: null,
+      address: '',
+    })
+    respondToReport(guard.member.id, rep.id)
+    respondToReport(guard.member.id, rep.id) // idempotent
+
+    const after = loadDB().reports.find((r) => r.id === rep.id)!
+    expect(after.status).toBe('ack')
+    expect(after.handledBy).toBe(guard.member.id)
+    expect(after.responders).toEqual([guard.member.id])
+  })
+
+  it('keeps an anonymous tip anonymous while storing the author for admins', async () => {
+    const { addReport } = await import('../lib/db')
+    const res = makeCommunity()
+    if (!res.ok) return
+    const tip = addReport({
+      communityId: res.community.id,
+      authorId: res.member.id,
+      kind: 'tip',
+      category: 'drugs',
+      note: 'suspicious dealing',
+      at: null,
+      address: '',
+      anonymous: true,
+    })
+    expect(tip.kind).toBe('tip')
+    expect(tip.anonymous).toBe(true)
+    expect(tip.authorId).toBe(res.member.id)
+  })
+
+  it('appends chat and photo evidence to an incident', async () => {
+    const { addReport, addIncidentMessage, addAttachment } = await import('../lib/db')
+    const res = makeCommunity()
+    if (!res.ok) return
+    const rep = addReport({
+      communityId: res.community.id,
+      authorId: res.member.id,
+      kind: 'incident',
+      category: 'flood',
+      note: '',
+      at: null,
+      address: '',
+    })
+    addIncidentMessage(rep.id, res.member.id, 'water is rising')
+    addAttachment(rep.id, 'data:image/jpeg;base64,AAA')
+
+    const after = loadDB().reports.find((r) => r.id === rep.id)!
+    expect(after.messages).toHaveLength(1)
+    expect(after.messages[0].body).toBe('water is rising')
+    expect(after.attachments).toHaveLength(1)
+  })
+})
+
+describe('mass notification & safety check', () => {
+  beforeEach(fresh)
+
+  it('sends a broadcast and tallies safety responses without duplicates', async () => {
+    const { sendBroadcast, respondSafety } = await import('../lib/db')
+    const res = makeCommunity()
+    if (!res.ok) return
+
+    const bc = sendBroadcast({
+      communityId: res.community.id,
+      authorId: res.member.id,
+      severity: 'critical',
+      title: 'Kebakaran',
+      body: '',
+      instruction: 'Evakuasi ke lapangan',
+      requireSafetyCheck: true,
+    })
+    expect(bc.responses).toEqual([])
+
+    respondSafety(bc.id, res.member.id, 'safe')
+    respondSafety(bc.id, res.member.id, 'need_help', 'terjebak')
+
+    const after = loadDB().broadcasts.find((b) => b.id === bc.id)!
+    expect(after.responses).toHaveLength(1) // updated, not duplicated
+    expect(after.responses[0].status).toBe('need_help')
+    expect(after.responses[0].note).toBe('terjebak')
+  })
+})
+
+describe('emergency profile', () => {
+  beforeEach(fresh)
+
+  it('stores the profile that responders see on a panic alert', async () => {
+    const { saveEmergencyProfile } = await import('../lib/db')
+    const res = makeCommunity()
+    if (!res.ok) return
+    saveEmergencyProfile(res.member.id, {
+      bloodType: 'O',
+      allergies: 'Penisilin',
+      conditions: 'Hipertensi',
+      contactName: 'Siti',
+      contactPhone: '0812',
+      notes: '',
+    })
+    const m = loadDB().members.find((x) => x.id === res.member.id)!
+    expect(m.emergency?.bloodType).toBe('O')
+    expect(m.emergency?.contactPhone).toBe('0812')
+  })
+})

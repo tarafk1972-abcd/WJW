@@ -4,6 +4,8 @@ import { ToastProvider } from './ui/Toast'
 import Admin from './pages/Admin'
 import AppShell from './pages/AppShell'
 import Billing from './pages/Billing'
+import BroadcastPage from './pages/Broadcast'
+import EmergencyProfilePage from './pages/EmergencyProfile'
 import Console from './pages/Console'
 import Guests from './pages/Guests'
 import Home from './pages/Home'
@@ -48,6 +50,8 @@ export default function App() {
               <Route path="settings" element={<Settings />} />
               <Route path="billing" element={<Billing />} />
               <Route path="support" element={<Support />} />
+              <Route path="broadcast" element={<BroadcastPage />} />
+              <Route path="emergency-profile" element={<EmergencyProfilePage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

@@ -1,6 +1,11 @@
 import {
   DAY,
   addAnnouncement,
+  addIncidentMessage,
+  respondSafety,
+  respondToReport,
+  saveEmergencyProfile,
+  sendBroadcast,
   addGuest,
   addReport,
   createInvite,
@@ -127,7 +132,7 @@ export function seedDemo(): string | null {
     at: { lat: -6.9841, lng: 107.5211 },
     address: 'Blok D No. 21',
   })
-  addReport({
+  const flood = addReport({
     communityId: cid,
     authorId: aid,
     kind: 'incident',
@@ -136,6 +141,33 @@ export function seedDemo(): string | null {
     at: { lat: -6.9829, lng: 107.5163 },
     address: 'Jalan utama',
   })
+
+  // an anonymous tip, SaferWatch style
+  addReport({
+    communityId: cid,
+    authorId: ids['Dewi Lestari'] ?? aid,
+    kind: 'tip',
+    category: 'drugs',
+    note: 'Sering ada transaksi mencurigakan di gang belakang saat larut malam.',
+    at: { lat: -6.9856, lng: 107.5196 },
+    address: 'Gang belakang Blok D',
+    anonymous: true,
+  })
+
+  // a live panic alert with responders and a running conversation
+  const sos = addReport({
+    communityId: cid,
+    authorId: ids['Rina Marlina'] ?? ids['Agus Priyanto'] ?? aid,
+    kind: 'sos',
+    category: 'medical',
+    note: 'Darurat medis',
+    at: { lat: -6.9822, lng: 107.5218 },
+    address: 'Blok A No. 9',
+  })
+  respondToReport(ids['Pak Joko'] ?? aid, sos.id)
+  addIncidentMessage(sos.id, ids['Pak Joko'] ?? aid, 'Saya sudah di lokasi, ambulans dalam perjalanan.')
+
+  respondToReport(ids['Pak Rahmat'] ?? aid, flood.id)
 
   addGuest({
     communityId: cid,
@@ -164,6 +196,27 @@ export function seedDemo(): string | null {
     { lat: -6.9862, lng: 107.5171, note: 'Pos 4 aman' },
   ].forEach((p) => addPatrolPoint(patrol.id, p))
   endPatrol(patrol.id)
+
+  saveEmergencyProfile(aid, {
+    bloodType: 'O',
+    allergies: 'Penisilin',
+    conditions: 'Hipertensi',
+    contactName: 'Siti Aminah',
+    contactPhone: '081298765432',
+    notes: 'Rutin minum obat tekanan darah.',
+  })
+
+  const bc = sendBroadcast({
+    communityId: cid,
+    authorId: aid,
+    severity: 'warning',
+    title: 'Genangan air di jalan utama',
+    body: 'Hujan deras menyebabkan genangan setinggi 20 cm di jalan utama.',
+    instruction: 'Hindari jalan utama, gunakan jalur Blok B.',
+    requireSafetyCheck: true,
+  })
+  respondSafety(bc.id, ids['Dewi Lestari'] ?? aid, 'safe')
+  respondSafety(bc.id, ids['Agus Priyanto'] ?? aid, 'safe')
 
   openTicket(
     cid,

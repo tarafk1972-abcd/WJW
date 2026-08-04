@@ -45,9 +45,11 @@ export interface Member {
   decidedBy: string | null
   rejectedReason?: string
   invitedBy?: string | null
+  emergency?: EmergencyProfile
 }
 
-export type ReportKind = 'sos' | 'incident'
+/** 'sos' = panic button, 'incident' = normal report, 'tip' = (optionally anonymous) intel */
+export type ReportKind = 'sos' | 'incident' | 'tip'
 export type ReportStatus = 'open' | 'ack' | 'resolved'
 export type ReportCategory =
   | 'theft'
@@ -57,7 +59,32 @@ export type ReportCategory =
   | 'accident'
   | 'flood'
   | 'fight'
+  | 'drugs'
+  | 'vandalism'
+  | 'missing'
   | 'other'
+
+/** Panic-button tiles, in display order (see PANIC_TYPES in lib/meta.ts). */
+export type PanicType = 'theft' | 'fight' | 'medical' | 'fire' | 'flood' | 'other'
+
+export type Severity = 'info' | 'warning' | 'critical'
+
+export interface Attachment {
+  id: string
+  kind: 'photo'
+  dataUrl: string
+  at: number
+}
+
+/** One entry in an incident's two-way communication thread. */
+export interface IncidentMessage {
+  id: string
+  from: string
+  body: string
+  at: number
+  /** System entries (status changes) are rendered differently and are not editable. */
+  system?: boolean
+}
 
 export interface Report {
   id: string
@@ -74,6 +101,48 @@ export interface Report {
   handledAt: number | null
   resolvedNote?: string
   insideArea: boolean | null
+  /** Tips may be submitted without revealing the author to other members. */
+  anonymous?: boolean
+  attachments: Attachment[]
+  /** Two-way communication between the reporter and responders. */
+  messages: IncidentMessage[]
+  /** Who has been dispatched/acknowledged, for real-time coordination. */
+  responders: string[]
+}
+
+/**
+ * Mass notification pushed by an admin to every member, optionally asking each
+ * one to check in as safe (SaferWatch-style safety check).
+ */
+export interface Broadcast {
+  id: string
+  communityId: string
+  authorId: string
+  severity: Severity
+  title: string
+  body: string
+  /** Actionable safety instruction shown prominently, e.g. "Stay indoors". */
+  instruction: string
+  requireSafetyCheck: boolean
+  createdAt: number
+  responses: SafetyResponse[]
+}
+
+export interface SafetyResponse {
+  memberId: string
+  status: 'safe' | 'need_help'
+  note: string
+  at: number
+}
+
+/** Biographical/medical detail handed to responders when a panic alert fires. */
+export interface EmergencyProfile {
+  bloodType: string
+  allergies: string
+  conditions: string
+  contactName: string
+  contactPhone: string
+  notes: string
 }
 
 export interface PatrolPoint {
@@ -174,6 +243,7 @@ export interface DBShape {
   patrols: Patrol[]
   guests: Guest[]
   announcements: Announcement[]
+  broadcasts: Broadcast[]
   invites: Invite[]
   tickets: Ticket[]
   payments: Payment[]

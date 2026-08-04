@@ -109,8 +109,8 @@ export default function Admin() {
         </button>
       </div>
       <div className="btn-row" style={{ marginBottom: 14 }}>
-        <button className="btn btn-sm btn-ghost grow" onClick={() => nav('/app/patrol')}>
-          <Icon name="route" size={14} /> {t('patrol')}
+        <button className="btn btn-sm btn-ghost grow" onClick={() => nav('/app/broadcast')}>
+          <Icon name="broadcast" size={14} /> {t('broadcast')}
         </button>
         <button className="btn btn-sm btn-ghost grow" onClick={() => nav('/app/support')}>
           <Icon name="headset" size={14} /> {t('contactCS')}
