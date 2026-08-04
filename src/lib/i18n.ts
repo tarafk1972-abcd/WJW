@@ -566,6 +566,7 @@ const id = {
   today: 'Hari ini',
   yesterday: 'Kemarin',
   outsideRadius: 'Di luar radius',
+  storageFull: 'Penyimpanan penuh — lampiran tidak tersimpan, tetapi peringatan tetap terkirim.',
 }
 
 export type Dict = typeof id
@@ -1107,6 +1108,7 @@ const en: Dict = {
   today: 'Today',
   yesterday: 'Yesterday',
   outsideRadius: 'Outside radius',
+  storageFull: 'Storage full — the attachment was not saved, but the alert was still sent.',
 }
 
 const su: Dict = {

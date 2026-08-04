@@ -22,7 +22,8 @@ import { Sheet } from '../ui/Sheet'
 import { useToast } from '../ui/Toast'
 import type { ContactKind, PanicType, Report } from '../lib/types'
 
-const MAX_MB = 8
+/** Batas lampiran: penyimpanan browser hanya ~5 MB total. */
+const MAX_MB = 2
 
 export const KIND_META: Record<
   ContactKind,
@@ -119,8 +120,13 @@ export default function Panic() {
     const cap = recordVoice(VOICE_SECONDS)
     const res = await cap.done
     setRecording(false)
-    if (res) attachAudio(report.id, res.dataUrl, res.seconds)
-    else setMicFailed(true)
+    if (res) {
+      try {
+        attachAudio(report.id, res.dataUrl, res.seconds)
+      } catch {
+        setMicFailed(true)
+      }
+    } else setMicFailed(true)
   }, [me, community, t, toast])
 
   const attach = async (file: File | undefined, kind: 'photo' | 'video') => {
@@ -132,8 +138,13 @@ export default function Panic() {
       fr.onerror = rej
       fr.readAsDataURL(file)
     })
-    addAttachment(active.id, dataUrl, kind)
-    toast(t('mediaAdded'))
+    try {
+      addAttachment(active.id, dataUrl, kind)
+      toast(t('mediaAdded'))
+    } catch {
+      // penyimpanan penuh — peringatan tetap aman, hanya lampiran yang gagal
+      toast(t('storageFull'), 'err')
+    }
   }
 
   if (!me || !community) return null

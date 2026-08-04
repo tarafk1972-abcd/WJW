@@ -100,10 +100,77 @@ export function loadDB(): DBShape {
   return cache
 }
 
+/** Terlempar saat penyimpanan penuh dan tidak bisa dikosongkan lagi. */
+export class StorageFullError extends Error {
+  constructor() {
+    super('storage-full')
+    this.name = 'StorageFullError'
+  }
+}
+
+function isQuotaError(e: unknown): boolean {
+  return (
+    e instanceof DOMException &&
+    (e.name === 'QuotaExceededError' ||
+      e.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+      e.code === 22)
+  ) || (e instanceof Error && e.name === 'QuotaExceededError')
+}
+
+/**
+ * Membuang lampiran terberat dari laporan lama agar ada ruang.
+ * Peringatan darurat yang masih aktif tidak pernah disentuh.
+ * @returns true bila berhasil membebaskan sesuatu.
+ */
+function evictOldMedia(db: DBShape): boolean {
+  const candidates = db.reports
+    .filter((r) => !r.live && (r.attachments.length > 0 || r.audio))
+    .sort((a, b) => a.createdAt - b.createdAt)
+
+  for (const r of candidates) {
+    if (r.attachments.length) {
+      r.attachments = []
+      return true
+    }
+    if (r.audio) {
+      r.audio = null
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Menyimpan basis data.
+ *
+ * Penyimpanan browser hanya sekitar 5 MB, sementara satu video bisa
+ * menghabiskannya sendiri. Bila kuota penuh, media laporan lama dibuang
+ * bertahap agar peringatan darurat yang baru tetap tersimpan — data
+ * keselamatan lebih penting daripada lampiran lama.
+ */
 export function saveDB(db: DBShape) {
   cache = db
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(db))
-  window.dispatchEvent(new CustomEvent('wjw:db'))
+  for (let attempt = 0; attempt < 12; attempt++) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(db))
+      window.dispatchEvent(new CustomEvent('wjw:db'))
+      return
+    } catch (e) {
+      if (!isQuotaError(e)) throw e
+      if (!evictOldMedia(db)) {
+        // tidak ada lagi yang bisa dibuang
+        window.dispatchEvent(new CustomEvent('wjw:storage-full'))
+        throw new StorageFullError()
+      }
+    }
+  }
+  window.dispatchEvent(new CustomEvent('wjw:storage-full'))
+  throw new StorageFullError()
+}
+
+/** Perkiraan pemakaian penyimpanan dalam byte. */
+export function storageBytes(): number {
+  return (localStorage.getItem(STORAGE_KEY) || '').length * 2
 }
 
 export function resetDB() {
