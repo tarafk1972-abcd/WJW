@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { deleteBroadcast, sendBroadcast } from '../lib/db'
 import { fmtDateTime } from '../lib/format'
 import { SEVERITY_META } from '../lib/meta'

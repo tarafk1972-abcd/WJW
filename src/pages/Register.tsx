@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router'
 import { lookupInvite, register, searchCommunities } from '../lib/db'
 import { LANGS, translate } from '../lib/i18n'
 import { useApp } from '../lib/store'

@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { deviceId, setSession } from '../lib/db'
 import { LANGS } from '../lib/i18n'
 import { seedDemo } from '../lib/seed'

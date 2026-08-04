@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { SUPERADMIN_EMAIL, login } from '../lib/db'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'

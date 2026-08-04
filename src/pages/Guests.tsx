@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router'
 import { addGuest, checkoutGuest } from '../lib/db'
 import { fmtDateTime, fmtTime } from '../lib/format'
 import { useApp } from '../lib/store'

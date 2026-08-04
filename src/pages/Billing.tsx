@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { PRICE_MONTHLY, PRICE_YEARLY, submitPayment } from '../lib/db'
 import { fmtDate, fmtDateTime, fmtMoney } from '../lib/format'
 import { useApp } from '../lib/store'

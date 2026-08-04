@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { deviceId, memberById, getSessionId } from '../lib/db'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'

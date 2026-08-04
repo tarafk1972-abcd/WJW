@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { resetDB, setMemberLanguage } from '../lib/db'
 import { fmtDate, initials } from '../lib/format'
 import { LANGS } from '../lib/i18n'

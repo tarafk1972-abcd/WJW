@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { addReport, deleteAnnouncement } from '../lib/db'
 import { timeAgo } from '../lib/format'
 import { CATEGORY_META, statusChip, statusKey } from '../lib/meta'

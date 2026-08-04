@@ -1,4 +1,4 @@
-import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { HashRouter, Navigate, Route, Routes } from 'react-router'
 import { AppProvider } from './lib/store'
 import { ToastProvider } from './ui/Toast'
 import Admin from './pages/Admin'

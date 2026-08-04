@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { SUPERADMIN_EMAIL, closeTicket, openTicket, replyTicket } from '../lib/db'
 import { fmtDateTime, timeAgo } from '../lib/format'
 import { useApp } from '../lib/store'

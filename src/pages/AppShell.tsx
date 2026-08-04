@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate } from 'react-router'
 import { useApp } from '../lib/store'
 import { Icon, type IconName } from '../ui/Icon'
 import { useEffect } from 'react'
