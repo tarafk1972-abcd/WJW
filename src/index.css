@@ -1656,3 +1656,67 @@ p {
   border-color: var(--brand);
   background: var(--brand-soft);
 }
+
+/* ---------- tombol rekam ronda ---------- */
+
+.patrol-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 0 4px;
+}
+
+.patrol-btn {
+  width: min(58vw, 200px);
+  height: min(58vw, 200px);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: radial-gradient(circle at 34% 28%, #55627a, #2c3648);
+  border: 3px solid var(--line);
+  transition: transform 0.12s, box-shadow 0.2s;
+  touch-action: manipulation;
+}
+
+.patrol-btn .cap {
+  display: block;
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  margin-top: 8px;
+}
+
+.patrol-btn.ready {
+  background: radial-gradient(circle at 34% 28%, #46d99a, var(--brand-2));
+  border-color: var(--brand);
+  box-shadow:
+    0 0 0 10px rgba(46, 194, 126, 0.10),
+    0 0 0 22px rgba(46, 194, 126, 0.05),
+    0 14px 36px rgba(46, 194, 126, 0.32);
+  animation: pulse 2.6s ease-in-out infinite;
+}
+
+.patrol-btn:active {
+  transform: scale(0.96);
+}
+
+.patrol-btn:disabled {
+  opacity: 0.55;
+  animation: none;
+}
+
+.progress-track {
+  height: 8px;
+  border-radius: 5px;
+  background: var(--bg-2);
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 5px;
+  background: linear-gradient(90deg, var(--brand), #14b8a6);
+  transition: width 0.35s ease;
+}

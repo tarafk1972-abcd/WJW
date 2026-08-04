@@ -122,6 +122,14 @@ export default function Admin() {
         <button className="btn btn-sm btn-ghost grow" onClick={() => nav('/app/broadcast')}>
           <Icon name="broadcast" size={14} /> {t('broadcast')}
         </button>
+      </div>
+      <div className="btn-row" style={{ marginBottom: 14 }}>
+        <button className="btn btn-sm btn-ghost grow" onClick={() => nav('/app/cluster-qr')}>
+          <Icon name="key" size={14} /> {t('clusterQr')}
+        </button>
+        <button className="btn btn-sm btn-ghost grow" onClick={() => nav('/app/checkpoints')}>
+          <Icon name="shield" size={14} /> {t('checkpointsAdmin')}
+        </button>
         <button className="btn btn-sm btn-ghost grow" onClick={() => nav('/app/support')}>
           <Icon name="headset" size={14} /> {t('contactCS')}
         </button>

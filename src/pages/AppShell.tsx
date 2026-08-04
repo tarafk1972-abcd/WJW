@@ -30,6 +30,9 @@ export default function AppShell() {
     { to: '/app/feed', icon: 'home', label: t('navHome') },
     { to: '/app/reports', icon: 'alert', label: t('navReports'), badge: openReports },
     { to: '/app/map', icon: 'map', label: t('navMap') },
+    ...(isSatpam
+      ? [{ to: '/app/patrol-check', icon: 'shield' as IconName, label: t('patrol') }]
+      : []),
     ...(isAdmin || isSatpam
       ? [{ to: '/app/guests', icon: 'door' as IconName, label: t('navGuests') }]
       : []),

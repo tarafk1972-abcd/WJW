@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router'
 import { addPatrolPoint, endPatrol, startPatrol } from '../lib/db'
 import { fmtDateTime, fmtDuration, fmtTime } from '../lib/format'
 import { useApp } from '../lib/store'
@@ -10,6 +11,7 @@ import { useToast } from '../ui/Toast'
 export default function Patrol() {
   const { db, me, community, t, lang, isAdmin, isSatpam } = useApp()
   const toast = useToast()
+  const nav = useNavigate()
   const [open, setOpen] = useState(false)
   const [note, setNote] = useState('')
 
@@ -63,6 +65,9 @@ export default function Patrol() {
     <div className="page">
       <div className="row-between" style={{ marginBottom: 14 }}>
         <h2 style={{ fontSize: 20, fontWeight: 800 }}>{t('patrol')}</h2>
+        <button className="btn btn-sm btn-primary" onClick={() => nav('/app/patrol-check')}>
+          <Icon name="shield" size={13} /> {t('patrolCheck')}
+        </button>
         {active ? (
           <span className="chip chip-info">
             <Icon name="route" size={12} /> {t('patrolRunning')}

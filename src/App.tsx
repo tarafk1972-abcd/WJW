@@ -4,6 +4,9 @@ import { ToastProvider } from './ui/Toast'
 import Admin from './pages/Admin'
 import AppShell from './pages/AppShell'
 import Billing from './pages/Billing'
+import Checkpoints from './pages/Checkpoints'
+import ClusterQr from './pages/ClusterQr'
+import PatrolCheck from './pages/PatrolCheck'
 import BroadcastPage from './pages/Broadcast'
 import EmergencyProfilePage from './pages/EmergencyProfile'
 import Console from './pages/Console'
@@ -56,6 +59,9 @@ export default function App() {
               <Route path="billing" element={<Billing />} />
               <Route path="support" element={<Support />} />
               <Route path="broadcast" element={<BroadcastPage />} />
+              <Route path="patrol-check" element={<PatrolCheck />} />
+              <Route path="checkpoints" element={<Checkpoints />} />
+              <Route path="cluster-qr" element={<ClusterQr />} />
               <Route path="emergency-profile" element={<EmergencyProfilePage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />

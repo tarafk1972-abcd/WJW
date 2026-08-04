@@ -1,7 +1,10 @@
 import {
   DAY,
   addAnnouncement,
+  addCheckpoint,
   addContact,
+  addSchedule,
+  recordPatrol,
   addIncidentMessage,
   respondSafety,
   respondToReport,
@@ -96,6 +99,47 @@ export function seedDemo(): string | null {
 
   // registration writes a session for each new member — restore the admin's
   setSession(aid)
+
+  // titik ronda mengelilingi area, dipakai layar "Rekam Ronda"
+  const cps = [
+    { name: 'Pos 1 — Gerbang Depan', lat: -6.9799, lng: 107.5162 },
+    { name: 'Pos 2 — Blok B', lat: -6.9815, lng: 107.5205 },
+    { name: 'Pos 3 — Taman', lat: -6.9848, lng: 107.5228 },
+    { name: 'Pos 4 — Gerbang Belakang', lat: -6.9862, lng: 107.5171 },
+  ].map((c) =>
+    addCheckpoint(aid, { communityId: cid, name: c.name, lat: c.lat, lng: c.lng, radiusM: 50 }),
+  )
+
+  addSchedule(aid, {
+    communityId: cid,
+    label: 'Ronda Malam',
+    startMinute: 22 * 60,
+    endMinute: 23 * 60,
+    days: [],
+    graceMin: 15,
+  })
+  addSchedule(aid, {
+    communityId: cid,
+    label: 'Ronda Dini Hari',
+    startMinute: 2 * 60,
+    endMinute: 3 * 60,
+    days: [],
+    graceMin: 15,
+  })
+
+  // dua titik pertama sudah dironda Pak Joko tadi malam
+  const lastNight = new Date()
+  lastNight.setDate(lastNight.getDate() - 1)
+  lastNight.setHours(22, 5, 0, 0)
+  cps.slice(0, 2).forEach((cp, i) => {
+    recordPatrol({
+      communityId: cid,
+      satpamId: ids['Pak Joko'] ?? aid,
+      at: { lat: cp.lat, lng: cp.lng },
+      checkpointId: cp.id,
+      now: lastNight.getTime() + i * 12 * 60 * 1000,
+    })
+  })
 
   createInvite(aid, cid, 'admin', { days: 7, maxUses: 1 })
   createInvite(aid, cid, 'warga', { days: 30, maxUses: null })

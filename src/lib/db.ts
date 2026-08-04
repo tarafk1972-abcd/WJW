@@ -1,5 +1,9 @@
 import type {
   Announcement,
+  Checkpoint,
+  PatrolLog,
+  PatrolLogStatus,
+  PatrolSchedule,
   Attachment,
   AuditEntry,
   Broadcast,
@@ -49,6 +53,9 @@ function emptyDB(): DBShape {
     announcements: [],
     broadcasts: [],
     contacts: [],
+    checkpoints: [],
+    schedules: [],
+    patrolLogs: [],
     invites: [],
     tickets: [],
     payments: [],
@@ -930,6 +937,215 @@ export function checkoutGuest(actorId: string, guestId: string) {
   g.checkOut = Date.now()
   audit(db, g.communityId, actorId, 'guest.out', g.name)
   saveDB(db)
+}
+
+/* ---------------- titik ronda & jadwal ---------------- */
+
+/** Jarak dua koordinat dalam meter (haversine). */
+export function distanceMeters(a: LatLng, b: LatLng): number {
+  const R = 6371000
+  const toRad = (d: number) => (d * Math.PI) / 180
+  const dLat = toRad(b.lat - a.lat)
+  const dLng = toRad(b.lng - a.lng)
+  const la1 = toRad(a.lat)
+  const la2 = toRad(b.lat)
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)))
+}
+
+export function addCheckpoint(
+  actorId: string,
+  c: Omit<Checkpoint, 'id' | 'createdAt' | 'createdBy' | 'order' | 'active'> &
+    Partial<Pick<Checkpoint, 'order' | 'active'>>,
+): Checkpoint {
+  const db = loadDB()
+  const existing = db.checkpoints.filter((x) => x.communityId === c.communityId)
+  const cp: Checkpoint = {
+    ...c,
+    id: uid('cp_'),
+    order: c.order ?? existing.length + 1,
+    active: c.active ?? true,
+    createdBy: actorId,
+    createdAt: Date.now(),
+  }
+  db.checkpoints.push(cp)
+  audit(db, c.communityId, actorId, 'checkpoint.add', cp.name)
+  saveDB(db)
+  return cp
+}
+
+export function removeCheckpoint(actorId: string, id: string) {
+  const db = loadDB()
+  const cp = db.checkpoints.find((x) => x.id === id)
+  if (!cp) return
+  db.checkpoints = db.checkpoints.filter((x) => x.id !== id)
+  audit(db, cp.communityId, actorId, 'checkpoint.remove', cp.name)
+  saveDB(db)
+}
+
+export function checkpointsOf(db: DBShape, communityId: string): Checkpoint[] {
+  return db.checkpoints
+    .filter((c) => c.communityId === communityId && c.active)
+    .sort((a, b) => a.order - b.order)
+}
+
+export function addSchedule(
+  actorId: string,
+  sch: Omit<PatrolSchedule, 'id' | 'createdAt' | 'active'> &
+    Partial<Pick<PatrolSchedule, 'active'>>,
+): PatrolSchedule {
+  const db = loadDB()
+  const s2: PatrolSchedule = {
+    ...sch,
+    id: uid('sc_'),
+    active: sch.active ?? true,
+    createdAt: Date.now(),
+  }
+  db.schedules.push(s2)
+  audit(db, sch.communityId, actorId, 'schedule.add', s2.label)
+  saveDB(db)
+  return s2
+}
+
+export function removeSchedule(actorId: string, id: string) {
+  const db = loadDB()
+  const sc = db.schedules.find((x) => x.id === id)
+  if (!sc) return
+  db.schedules = db.schedules.filter((x) => x.id !== id)
+  audit(db, sc.communityId, actorId, 'schedule.remove', sc.label)
+  saveDB(db)
+}
+
+export function minutesOfDay(ts: number): number {
+  const d = new Date(ts)
+  return d.getHours() * 60 + d.getMinutes()
+}
+
+/**
+ * Jadwal yang sedang berlaku pada waktu tertentu.
+ * Menangani jadwal yang melewati tengah malam (mis. 22:00–02:00).
+ */
+export function activeSchedule(
+  db: DBShape,
+  communityId: string,
+  at: number = Date.now(),
+): { schedule: PatrolSchedule; late: boolean } | null {
+  const mins = minutesOfDay(at)
+  const day = new Date(at).getDay()
+
+  for (const sc of db.schedules) {
+    if (sc.communityId !== communityId || !sc.active) continue
+    if (sc.days.length && !sc.days.includes(day)) continue
+
+    const overnight = sc.endMinute <= sc.startMinute
+    const end = overnight ? sc.endMinute + 1440 : sc.endMinute
+    const now = overnight && mins < sc.startMinute ? mins + 1440 : mins
+
+    if (now >= sc.startMinute && now <= end) {
+      return { schedule: sc, late: now > sc.startMinute + sc.graceMin }
+    }
+  }
+  return null
+}
+
+export interface RecordPatrolResult {
+  ok: boolean
+  log?: PatrolLog
+  error?: 'errNoCheckpoint' | 'errTooFar' | 'errAlreadyLogged'
+  distanceM?: number
+  checkpoint?: Checkpoint
+}
+
+/**
+ * Satu tombol ronda: cari titik terdekat, pastikan satpam benar-benar di
+ * sana, lalu catat sesuai jadwal yang sedang berlaku.
+ */
+export function recordPatrol(opts: {
+  communityId: string
+  satpamId: string
+  at: LatLng
+  /** Titik yang dipilih manual; bila kosong dipilih yang terdekat. */
+  checkpointId?: string
+  note?: string
+  /** Lewati pemeriksaan jarak (dipakai saat GPS tidak tersedia). */
+  force?: boolean
+  now?: number
+}): RecordPatrolResult {
+  const db = loadDB()
+  const now = opts.now ?? Date.now()
+  const list = checkpointsOf(db, opts.communityId)
+  if (!list.length) return { ok: false, error: 'errNoCheckpoint' }
+
+  let cp: Checkpoint | undefined
+  let dist = Infinity
+  if (opts.checkpointId) {
+    cp = list.find((c) => c.id === opts.checkpointId)
+    if (cp) dist = distanceMeters(opts.at, { lat: cp.lat, lng: cp.lng })
+  } else {
+    for (const c of list) {
+      const d = distanceMeters(opts.at, { lat: c.lat, lng: c.lng })
+      if (d < dist) {
+        dist = d
+        cp = c
+      }
+    }
+  }
+  if (!cp) return { ok: false, error: 'errNoCheckpoint' }
+
+  const inside = dist <= cp.radiusM
+  if (!inside && !opts.force)
+    return { ok: false, error: 'errTooFar', distanceM: dist, checkpoint: cp }
+
+  const act = activeSchedule(db, opts.communityId, now)
+  let status: PatrolLogStatus = 'offschedule'
+  if (act) status = act.late ? 'late' : 'ontime'
+
+  // Cegah dobel-catat di titik yang sama dalam 5 menit.
+  // Pakai selisih mutlak: tanpa itu, catatan yang waktunya lebih awal dari
+  // log terakhir menghasilkan selisih negatif dan ikut terblokir.
+  const recent = db.patrolLogs.find(
+    (l) =>
+      l.checkpointId === cp!.id &&
+      l.satpamId === opts.satpamId &&
+      Math.abs(now - l.at) < 5 * 60 * 1000,
+  )
+  if (recent) return { ok: false, error: 'errAlreadyLogged', checkpoint: cp }
+
+  const log: PatrolLog = {
+    id: uid('pl_'),
+    communityId: opts.communityId,
+    satpamId: opts.satpamId,
+    checkpointId: cp.id,
+    checkpointName: cp.name,
+    scheduleId: act?.schedule.id ?? null,
+    scheduleLabel: act?.schedule.label ?? '',
+    at: now,
+    lat: opts.at.lat,
+    lng: opts.at.lng,
+    distanceM: Math.round(dist),
+    insideRadius: inside,
+    status,
+    note: (opts.note || '').trim(),
+  }
+  db.patrolLogs.unshift(log)
+  if (db.patrolLogs.length > 1000) db.patrolLogs.length = 1000
+  audit(db, opts.communityId, opts.satpamId, 'patrol.log', `${cp.name} · ${status}`)
+  saveDB(db)
+  return { ok: true, log, checkpoint: cp, distanceM: dist }
+}
+
+/** Log ronda pada satu hari (untuk rekap admin). */
+export function logsForDay(
+  db: DBShape,
+  communityId: string,
+  dayStart: number,
+): PatrolLog[] {
+  const dayEnd = dayStart + DAY
+  return db.patrolLogs.filter(
+    (l) => l.communityId === communityId && l.at >= dayStart && l.at < dayEnd,
+  )
 }
 
 export function startPatrol(communityId: string, satpamId: string): Patrol {

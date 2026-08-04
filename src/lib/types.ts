@@ -236,6 +236,58 @@ export interface PatrolPoint {
   note: string
 }
 
+/** Titik ronda yang ditentukan admin di peta. */
+export interface Checkpoint {
+  id: string
+  communityId: string
+  name: string
+  lat: number
+  lng: number
+  /** Radius toleransi (meter) — satpam harus berada di dalamnya. */
+  radiusM: number
+  order: number
+  createdBy: string
+  createdAt: number
+  active: boolean
+}
+
+/** Jadwal ronda, mis. "Ronda Malam 22:00-23:00". */
+export interface PatrolSchedule {
+  id: string
+  communityId: string
+  label: string
+  /** Menit sejak tengah malam (22:00 = 1320). */
+  startMinute: number
+  endMinute: number
+  /** Hari aktif 0=Minggu..6=Sabtu; kosong = setiap hari. */
+  days: number[]
+  /** Toleransi keterlambatan (menit) sebelum ditandai "terlambat". */
+  graceMin: number
+  active: boolean
+  createdAt: number
+}
+
+export type PatrolLogStatus = 'ontime' | 'late' | 'offschedule'
+
+/** Satu rekaman "saya sudah ronda di titik ini" (satu tombol). */
+export interface PatrolLog {
+  id: string
+  communityId: string
+  satpamId: string
+  checkpointId: string
+  checkpointName: string
+  scheduleId: string | null
+  scheduleLabel: string
+  at: number
+  lat: number
+  lng: number
+  /** Jarak satpam ke titik ronda saat merekam (meter). */
+  distanceM: number
+  insideRadius: boolean
+  status: PatrolLogStatus
+  note: string
+}
+
 export interface Patrol {
   id: string
   communityId: string
@@ -337,6 +389,9 @@ export interface DBShape {
   announcements: Announcement[]
   broadcasts: Broadcast[]
   contacts: TrustedContact[]
+  checkpoints: Checkpoint[]
+  schedules: PatrolSchedule[]
+  patrolLogs: PatrolLog[]
   invites: Invite[]
   tickets: Ticket[]
   payments: Payment[]
