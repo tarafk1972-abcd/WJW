@@ -1534,3 +1534,125 @@ p {
     height: 20px;
   }
 }
+
+/* ---------- QR ---------- */
+
+.qr-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  max-height: 320px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+}
+
+.qr-frame video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.qr-reticle {
+  position: absolute;
+  width: 62%;
+  aspect-ratio: 1;
+  border-radius: 18px;
+  box-shadow: 0 0 0 2000px rgba(0, 0, 0, 0.45);
+  border: 2.5px solid var(--brand);
+  pointer-events: none;
+}
+
+.qr-status {
+  position: absolute;
+  bottom: 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+  background: rgba(0, 0, 0, 0.55);
+  padding: 5px 12px;
+  border-radius: 999px;
+}
+
+.qr-img,
+.qr-placeholder {
+  border-radius: 14px;
+  display: block;
+  margin: 0 auto;
+  background: #fff;
+}
+
+.qr-placeholder {
+  background: var(--surface-2);
+  animation: pulsebg 1.2s ease-in-out infinite;
+}
+
+@keyframes pulsebg {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.9; }
+}
+
+.code-display {
+  font-size: 30px;
+  font-weight: 900;
+  letter-spacing: 7px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.code-input {
+  text-align: center;
+  letter-spacing: 8px;
+  font-weight: 800;
+  font-size: 20px;
+  text-transform: uppercase;
+}
+
+.choice {
+  display: flex;
+  gap: 13px;
+  align-items: center;
+  width: 100%;
+  padding: 15px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1.5px solid var(--line-soft);
+  text-align: left;
+  transition: 0.15s;
+}
+
+.choice + .choice { margin-top: 10px; }
+
+.choice:active { transform: scale(0.99); }
+
+.choice .ic {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.result-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 13px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1.5px solid var(--line-soft);
+  text-align: left;
+  transition: 0.15s;
+}
+
+.result-row + .result-row { margin-top: 8px; }
+
+.result-row.on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}

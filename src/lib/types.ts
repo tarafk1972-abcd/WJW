@@ -46,6 +46,12 @@ export interface Member {
   rejectedReason?: string
   invitedBy?: string | null
   emergency?: EmergencyProfile
+  /** How this member asked to join, shown to the admin reviewing them. */
+  joinMethod?: JoinMethod
+  /** Invite code used, if any. */
+  joinCode?: string | null
+  /** Free-text note the applicant wrote when requesting to join. */
+  joinNote?: string
 }
 
 /** 'sos' = panic button, 'incident' = normal report, 'tip' = (optionally anonymous) intel */
@@ -266,12 +272,20 @@ export interface Invite {
   id: string
   communityId: string
   code: string
+  /** Role proposed by the invite; the approving admin can still change it. */
   role: Exclude<Role, 'superadmin'>
   createdBy: string
   createdAt: number
   expiresAt: number
-  usedBy: string | null
+  /** Every member who joined with this code (invites are reusable until revoked). */
+  usedBy: string[]
+  /** Optional cap on how many people may use the code. */
+  maxUses: number | null
+  revokedAt: number | null
 }
+
+/** How a member came to be in the approval queue. */
+export type JoinMethod = 'invite' | 'search' | 'founder'
 
 export interface TicketMessage {
   id: string

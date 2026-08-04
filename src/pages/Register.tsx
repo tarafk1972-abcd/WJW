@@ -1,54 +1,104 @@
 import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { register } from '../lib/db'
+import { useNavigate, useParams } from 'react-router-dom'
+import { lookupInvite, register, searchCommunities } from '../lib/db'
 import { LANGS, translate } from '../lib/i18n'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'
+import { QrScanner } from '../ui/QrScanner'
+import { Sheet } from '../ui/Sheet'
 import { useToast } from '../ui/Toast'
 import type { Key } from '../lib/i18n'
-import type { Lang } from '../lib/types'
+import type { Community, Lang, Role } from '../lib/types'
 
 const DEFAULT_CENTER = { lat: -6.9829, lng: 107.5197 } // Soreang, West Java
+
+type Path = 'invite' | 'search' | 'create'
+type Step = 'lang' | 'how' | 'community' | 'profile'
+
+function roleLabel(r: Role): Key {
+  return r === 'admin' ? 'roleAdmin' : r === 'satpam' ? 'roleSatpam' : 'roleWarga'
+}
 
 export default function Register() {
   const { db, lang, setLang } = useApp()
   const nav = useNavigate()
   const toast = useToast()
+  const { code: codeParam } = useParams<{ code: string }>()
 
-  const [step, setStep] = useState(0)
+  const [step, setStep] = useState<Step>(codeParam ? 'community' : 'lang')
+  const [path, setPath] = useState<Path>(codeParam ? 'invite' : 'invite')
   const [chosenLang, setChosenLang] = useState<Lang>(lang)
-  const [mode, setMode] = useState<'create' | 'join'>(
-    db.communities.length ? 'join' : 'create',
-  )
-  const [communityId, setCommunityId] = useState(db.communities[0]?.id ?? '')
+
+  // invite path
+  const [code, setCode] = useState(codeParam ?? '')
+  const [scanOpen, setScanOpen] = useState(false)
+  const [invitedRole, setInvitedRole] = useState<Role | null>(null)
+
+  // search path
+  const [query, setQuery] = useState('')
+
+  // resolved target
+  const [picked, setPicked] = useState<Community | null>(() => {
+    if (!codeParam) return null
+    const res = lookupInvite(codeParam)
+    return res.ok ? res.community : null
+  })
+  const [joinNote, setJoinNote] = useState('')
+
+  // create path
   const [cName, setCName] = useState('')
   const [cAddress, setCAddress] = useState('')
   const [cCity, setCCity] = useState('')
+
+  // profile
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [house, setHouse] = useState('')
-  const [invite, setInvite] = useState('')
   const [err, setErr] = useState<Key | ''>('')
 
-  const tr = (k: Key, v?: Record<string, string | number>) =>
-    translate(chosenLang, k, v)
+  const tr = (k: Key, v?: Record<string, string | number>) => translate(chosenLang, k, v)
 
-  const noCommunities = db.communities.length === 0
-
-  const willBeFirstAdmin = useMemo(() => {
-    if (mode === 'create') return true
-    const c = db.communities.find((x) => x.id === communityId)
-    if (!c) return false
-    return !db.members.some(
-      (m) => m.communityId === c.id && m.role === 'admin' && m.status === 'active',
-    )
-  }, [mode, communityId, db])
+  const results = useMemo(() => searchCommunities(query), [query, db.communities])
 
   const pickLang = (l: Lang) => {
     setChosenLang(l)
     setLang(l)
+  }
+
+  const applyCode = (raw: string) => {
+    setErr('')
+    const res = lookupInvite(raw)
+    if (!res.ok) {
+      setInvitedRole(null)
+      setPicked(null)
+      setErr(res.error)
+      return false
+    }
+    setPicked(res.community)
+    setInvitedRole(res.invite.role)
+    setCode(res.invite.code)
+    toast(tr('codeValid'))
+    return true
+  }
+
+  const back = () => {
+    setErr('')
+    if (step === 'profile') setStep('community')
+    else if (step === 'community') setStep('how')
+    else if (step === 'how') setStep('lang')
+    else nav('/')
+  }
+
+  const goProfile = () => {
+    setErr('')
+    if (path === 'create') {
+      if (!cName.trim()) return setErr('errRequired')
+    } else if (!picked) {
+      return setErr('errNoCommunity')
+    }
+    setStep('profile')
   }
 
   const submit = () => {
@@ -58,8 +108,6 @@ export default function Register() {
     if (!/^\S+@\S+\.\S+$/.test(email.trim())) return setErr('errEmail')
     if (phone.replace(/\D/g, '').length < 8) return setErr('errPhone')
     if (password.length < 6) return setErr('errPasswordShort')
-    if (mode === 'create' && !cName.trim()) return setErr('errRequired')
-    if (mode === 'join' && !communityId) return setErr('errNoCommunity')
 
     const res = register({
       name,
@@ -68,56 +116,54 @@ export default function Register() {
       password,
       house,
       language: chosenLang,
-      mode,
-      communityId,
+      mode: path === 'create' ? 'create' : 'join',
+      communityId: picked?.id,
       communityName: cName,
       communityAddress: cAddress,
       city: cCity,
       center: DEFAULT_CENTER,
-      inviteCode: invite,
+      inviteCode: path === 'invite' ? code : '',
+      joinNote,
     })
 
     if (!res.ok) return setErr(res.error as Key)
 
     if (res.member.status === 'active') {
-      toast(
-        res.firstAdmin
-          ? tr('youAreFirst')
-          : tr('memberAccepted', {
-              name: res.member.name,
-              role: tr(('role' + cap(res.member.role)) as Key),
-            }),
-      )
+      toast(tr('youAreFirst'))
       nav('/app')
     } else {
+      toast(tr('requestSent'))
       nav('/pending')
     }
   }
 
+  const stepIndex = { lang: 0, how: 1, community: 2, profile: 3 }[step]
+
   return (
     <div className="shell">
       <div className="topbar">
-        <button className="icon-btn" onClick={() => (step ? setStep(step - 1) : nav('/'))}>
+        <button className="icon-btn" onClick={back}>
           <Icon name="chevronLeft" size={18} />
         </button>
         <div className="grow">
           <h1>{tr('registerTitle')}</h1>
           <div className="sub">
-            {tr('appName')} · {step + 1}/3
+            {tr('appName')} · {stepIndex + 1}/4
           </div>
         </div>
       </div>
 
       <div className="page no-nav">
         <div className="stepper">
-          {[0, 1, 2].map((i) => (
-            <i key={i} className={i <= step ? 'on' : ''} />
+          {[0, 1, 2, 3].map((i) => (
+            <i key={i} className={i <= stepIndex ? 'on' : ''} />
           ))}
         </div>
 
         {err && <div className="error-box">{tr(err)}</div>}
 
-        {step === 0 && (
+        {/* ---------------- 1. language ---------------- */}
+        {step === 'lang' && (
           <>
             <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>
               {tr('chooseLanguage')}
@@ -148,120 +194,290 @@ export default function Register() {
             <button
               className="btn btn-primary"
               style={{ marginTop: 22 }}
-              onClick={() => setStep(1)}
+              onClick={() => setStep('how')}
             >
               {tr('next')} <Icon name="chevronRight" size={17} />
             </button>
           </>
         )}
 
-        {step === 1 && (
+        {/* ---------------- 2. how do you want to join ---------------- */}
+        {step === 'how' && (
           <>
             <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>
-              {tr('community')}
+              {tr('howToJoin')}
+            </h2>
+            <p className="muted" style={{ marginBottom: 16 }}>
+              {tr('joinOrCreate')}
+            </p>
+
+            <Choice
+              icon="key"
+              color="var(--brand)"
+              bg="var(--brand-soft)"
+              title={tr('optInvite')}
+              sub={tr('optInviteSub')}
+              onClick={() => {
+                setPath('invite')
+                setStep('community')
+              }}
+            />
+            <Choice
+              icon="search"
+              color="var(--info)"
+              bg="var(--info-soft)"
+              title={tr('optSearch')}
+              sub={tr('optSearchSub')}
+              onClick={() => {
+                setPath('search')
+                setPicked(null)
+                setStep('community')
+              }}
+            />
+            <Choice
+              icon="building"
+              color="var(--purple)"
+              bg="rgba(163,113,247,.16)"
+              title={tr('optCreate')}
+              sub={tr('optCreateSub')}
+              onClick={() => {
+                setPath('create')
+                setPicked(null)
+                setStep('community')
+              }}
+            />
+
+            <div className="disclaimer" style={{ marginTop: 16 }}>
+              <Icon name="info" size={15} />
+              <span>{tr('approvalRequired')}</span>
+            </div>
+          </>
+        )}
+
+        {/* ---------------- 3. community ---------------- */}
+        {step === 'community' && path === 'invite' && (
+          <>
+            <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>
+              {tr('enterCode')}
+            </h2>
+            <p className="muted" style={{ marginBottom: 16 }}>
+              {tr('optInviteSub')}
+            </p>
+
+            <input
+              className="input code-input"
+              value={code}
+              maxLength={12}
+              onChange={(e) => {
+                setCode(e.target.value.toUpperCase())
+                setPicked(null)
+                setInvitedRole(null)
+                setErr('')
+              }}
+              placeholder={tr('codePlaceholder')}
+              aria-label={tr('enterCode')}
+            />
+
+            <div className="btn-row" style={{ marginTop: 10 }}>
+              <button
+                className="btn btn-ghost grow"
+                onClick={() => setScanOpen(true)}
+              >
+                <Icon name="camera" size={16} /> {tr('scanQr')}
+              </button>
+              <button
+                className="btn btn-primary grow"
+                disabled={!code.trim()}
+                onClick={() => applyCode(code)}
+              >
+                <Icon name="check" size={16} /> {tr('checkCode')}
+              </button>
+            </div>
+
+            {picked && (
+              <>
+                <div className="banner banner-brand" style={{ marginTop: 16 }}>
+                  <Icon name="check" size={17} />
+                  <span>
+                    <b>{picked.name}</b>
+                    {picked.city ? ` · ${picked.city}` : ''}
+                    {invitedRole && (
+                      <>
+                        <br />
+                        {tr('inviteRole')}: {tr(roleLabel(invitedRole))}
+                      </>
+                    )}
+                  </span>
+                </div>
+                <label className="field">
+                  <span>{tr('joinNote')}</span>
+                  <textarea
+                    className="textarea"
+                    value={joinNote}
+                    onChange={(e) => setJoinNote(e.target.value)}
+                    placeholder={tr('joinNotePlaceholder')}
+                  />
+                </label>
+                <div className="disclaimer" style={{ marginBottom: 14 }}>
+                  <Icon name="info" size={15} />
+                  <span>{tr('approvalRequiredInvite')}</span>
+                </div>
+                <button className="btn btn-primary" onClick={goProfile}>
+                  {tr('next')} <Icon name="chevronRight" size={17} />
+                </button>
+              </>
+            )}
+
+            <Sheet open={scanOpen} onClose={() => setScanOpen(false)} title={tr('scanQr')}>
+              <QrScanner
+                onCode={(c) => {
+                  setScanOpen(false)
+                  applyCode(c)
+                }}
+                onClose={() => setScanOpen(false)}
+              />
+            </Sheet>
+          </>
+        )}
+
+        {step === 'community' && path === 'search' && (
+          <>
+            <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>
+              {tr('optSearch')}
+            </h2>
+            <p className="muted" style={{ marginBottom: 14 }}>
+              {tr('optSearchSub')}
+            </p>
+
+            <label className="field">
+              <span>{tr('searchCommunity')}</span>
+              <input
+                className="input"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="RW 05 / Bandung"
+                aria-label={tr('searchCommunity')}
+              />
+            </label>
+
+            {results.length === 0 ? (
+              <div className="empty">
+                <span className="em">🔎</span>
+                {tr('searchEmpty')}
+              </div>
+            ) : (
+              results.map((c) => {
+                const count = db.members.filter(
+                  (m) => m.communityId === c.id && m.status === 'active',
+                ).length
+                return (
+                  <button
+                    key={c.id}
+                    className={`result-row ${picked?.id === c.id ? 'on' : ''}`}
+                    onClick={() => setPicked(c)}
+                  >
+                    <div
+                      className="item-icon"
+                      style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}
+                    >
+                      <Icon name="building" size={19} />
+                    </div>
+                    <div className="grow">
+                      <div className="strong truncate">{c.name}</div>
+                      <div className="tiny truncate">
+                        {[c.address, c.city].filter(Boolean).join(' · ') || '—'}
+                      </div>
+                      <div className="tiny">
+                        {count} {tr('members1')}
+                      </div>
+                    </div>
+                    {picked?.id === c.id && (
+                      <Icon name="check" size={18} color="var(--brand)" />
+                    )}
+                  </button>
+                )
+              })
+            )}
+
+            {picked && (
+              <>
+                <label className="field" style={{ marginTop: 16 }}>
+                  <span>{tr('joinNote')}</span>
+                  <textarea
+                    className="textarea"
+                    value={joinNote}
+                    onChange={(e) => setJoinNote(e.target.value)}
+                    placeholder={tr('joinNotePlaceholder')}
+                  />
+                </label>
+                <div className="disclaimer" style={{ marginBottom: 14 }}>
+                  <Icon name="info" size={15} />
+                  <span>{tr('approvalRequired')}</span>
+                </div>
+                <button className="btn btn-primary" onClick={goProfile}>
+                  <Icon name="send" size={16} /> {tr('requestToJoin')}
+                </button>
+              </>
+            )}
+          </>
+        )}
+
+        {step === 'community' && path === 'create' && (
+          <>
+            <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>
+              {tr('optCreate')}
             </h2>
             <p className="muted" style={{ marginBottom: 16 }}>
               {tr('firstResidentNote')}
             </p>
 
-            <div className="tabs" style={{ marginBottom: 16 }}>
-              <button
-                className={mode === 'create' ? 'on' : ''}
-                onClick={() => setMode('create')}
-              >
-                {tr('createCommunity')}
-              </button>
-              <button
-                className={mode === 'join' ? 'on' : ''}
-                onClick={() => !noCommunities && setMode('join')}
-                disabled={noCommunities}
-                style={noCommunities ? { opacity: 0.4 } : undefined}
-              >
-                {tr('joinCommunity')}
-              </button>
+            <label className="field">
+              <span>{tr('communityName')} *</span>
+              <input
+                className="input"
+                value={cName}
+                onChange={(e) => setCName(e.target.value)}
+                placeholder="RW 05 Griya Soreang"
+              />
+            </label>
+            <label className="field">
+              <span>{tr('communityAddress')}</span>
+              <input
+                className="input"
+                value={cAddress}
+                onChange={(e) => setCAddress(e.target.value)}
+                placeholder="Jl. Raya Soreang No. 1"
+              />
+            </label>
+            <label className="field">
+              <span>{tr('city')}</span>
+              <input
+                className="input"
+                value={cCity}
+                onChange={(e) => setCCity(e.target.value)}
+                placeholder="Bandung"
+              />
+            </label>
+
+            <div className="banner banner-brand">
+              <Icon name="crown" size={17} />
+              <span>{tr('youAreFirst')}</span>
             </div>
 
-            {mode === 'create' ? (
-              <>
-                <label className="field">
-                  <span>{tr('communityName')} *</span>
-                  <input
-                    className="input"
-                    value={cName}
-                    onChange={(e) => setCName(e.target.value)}
-                    placeholder="RW 05 Griya Soreang"
-                  />
-                </label>
-                <label className="field">
-                  <span>{tr('communityAddress')}</span>
-                  <input
-                    className="input"
-                    value={cAddress}
-                    onChange={(e) => setCAddress(e.target.value)}
-                    placeholder="Jl. Raya Soreang No. 1"
-                  />
-                </label>
-                <label className="field">
-                  <span>{tr('city')}</span>
-                  <input
-                    className="input"
-                    value={cCity}
-                    onChange={(e) => setCCity(e.target.value)}
-                    placeholder="Bandung"
-                  />
-                </label>
-              </>
-            ) : (
-              <>
-                <label className="field">
-                  <span>{tr('selectCommunity')} *</span>
-                  <select
-                    className="select"
-                    value={communityId}
-                    onChange={(e) => setCommunityId(e.target.value)}
-                  >
-                    {db.communities.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} {c.city ? `· ${c.city}` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field">
-                  <span>
-                    {tr('inviteCode')}
-                  </span>
-                  <input
-                    className="input"
-                    value={invite}
-                    onChange={(e) => setInvite(e.target.value.toUpperCase())}
-                    placeholder="ABC123"
-                    style={{ letterSpacing: 2, fontWeight: 700 }}
-                  />
-                </label>
-              </>
-            )}
-
-            {willBeFirstAdmin && (
-              <div className="banner banner-brand">
-                <Icon name="crown" size={17} />
-                <span>{tr('youAreFirst')}</span>
-              </div>
-            )}
-
-            <button className="btn btn-primary" onClick={() => setStep(2)}>
+            <button className="btn btn-primary" onClick={goProfile}>
               {tr('next')} <Icon name="chevronRight" size={17} />
             </button>
           </>
         )}
 
-        {step === 2 && (
+        {/* ---------------- 4. profile ---------------- */}
+        {step === 'profile' && (
           <>
             <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 4 }}>
               {tr('profile')}
             </h2>
-            <p className="muted" style={{ marginBottom: 16 }}>
-              {tr('registerTitle')}
+            <p className="muted" style={{ marginBottom: 14 }}>
+              {path === 'create' ? cName : picked?.name}
             </p>
 
             <label className="field">
@@ -315,11 +531,11 @@ export default function Register() {
             </label>
 
             <button className="btn btn-primary" onClick={submit}>
-              <Icon name="check" size={17} /> {tr('register')}
+              <Icon name="check" size={17} />{' '}
+              {path === 'create' ? tr('createCommunity') : tr('requestToJoin')}
             </button>
             <p className="tiny center" style={{ marginTop: 12 }}>
-              {tr('trial')}: {14} {tr('days')} · {tr('haveAccount')}{' '}
-              <a onClick={() => nav('/login')}>{tr('login')}</a>
+              {tr('haveAccount')} <a onClick={() => nav('/login')}>{tr('login')}</a>
             </p>
           </>
         )}
@@ -328,6 +544,33 @@ export default function Register() {
   )
 }
 
-function cap(s: string) {
-  return s.charAt(0).toUpperCase() + s.slice(1)
+function Choice({
+  icon,
+  color,
+  bg,
+  title,
+  sub,
+  onClick,
+}: {
+  icon: Parameters<typeof Icon>[0]['name']
+  color: string
+  bg: string
+  title: string
+  sub: string
+  onClick: () => void
+}) {
+  return (
+    <button className="choice" onClick={onClick}>
+      <span className="ic" style={{ background: bg, color }}>
+        <Icon name={icon} size={21} />
+      </span>
+      <span className="grow">
+        <span className="strong" style={{ display: 'block', fontSize: 15 }}>
+          {title}
+        </span>
+        <span className="tiny">{sub}</span>
+      </span>
+      <Icon name="chevronRight" size={17} color="var(--text-3)" />
+    </button>
+  )
 }

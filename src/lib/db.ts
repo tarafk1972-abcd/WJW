@@ -258,7 +258,61 @@ export interface RegisterInput {
   communityAddress?: string
   city?: string
   center?: LatLng
+  /** Invite code (typed or scanned from a QR). Optional. */
   inviteCode?: string
+  /** Message shown to the admin reviewing the request. */
+  joinNote?: string
+}
+
+/** Normalise a code so 'abc-123' and 'ABC123' match the same invite. */
+export function normalizeCode(raw: string): string {
+  return raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+/** Payload encoded in a community QR code. */
+export function inviteLink(code: string): string {
+  return `${location.origin}${location.pathname}#/join/${code}`
+}
+
+/** Extract a code from a raw QR payload (accepts a bare code or a full link). */
+export function parseInvitePayload(raw: string): string {
+  const text = raw.trim()
+  const m = text.match(/#\/join\/([A-Za-z0-9-]+)/)
+  return normalizeCode(m ? m[1] : text)
+}
+
+export type InviteLookup =
+  | { ok: true; invite: Invite; community: Community }
+  | { ok: false; error: 'errInvite' | 'errInviteExpired' | 'errInviteUsed' }
+
+/** Validate an invite code without consuming it. */
+export function lookupInvite(rawCode: string): InviteLookup {
+  const db = loadDB()
+  const code = normalizeCode(rawCode)
+  if (!code) return { ok: false, error: 'errInvite' }
+  const invite = db.invites.find((i) => normalizeCode(i.code) === code)
+  if (!invite || invite.revokedAt) return { ok: false, error: 'errInvite' }
+  if (invite.expiresAt <= Date.now()) return { ok: false, error: 'errInviteExpired' }
+  if (invite.maxUses !== null && invite.usedBy.length >= invite.maxUses)
+    return { ok: false, error: 'errInviteUsed' }
+  const community = communityById(db, invite.communityId)
+  if (!community) return { ok: false, error: 'errInvite' }
+  return { ok: true, invite, community }
+}
+
+/** Search communities by name or city, for the "request to join" flow. */
+export function searchCommunities(query: string): Community[] {
+  const db = loadDB()
+  const q = query.trim().toLowerCase()
+  if (!q) return db.communities.slice(0, 20)
+  return db.communities
+    .filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        c.city.toLowerCase().includes(q) ||
+        c.address.toLowerCase().includes(q),
+    )
+    .slice(0, 20)
 }
 
 export type RegisterResult =
@@ -322,20 +376,17 @@ export function register(input: RegisterInput): RegisterResult {
       firstAdmin = true
     }
 
-    const code = (input.inviteCode || '').trim().toUpperCase()
+    const code = normalizeCode(input.inviteCode || '')
     if (code) {
-      invite =
-        db.invites.find(
-          (i) =>
-            i.code === code &&
-            i.communityId === community!.id &&
-            !i.usedBy &&
-            i.expiresAt > Date.now(),
-        ) ?? null
-      if (!invite) return { ok: false, error: 'errInvite' }
-      // Invited members skip the queue with the role written on the invite.
+      const found = lookupInvite(code)
+      if (!found.ok) return { ok: false, error: found.error }
+      if (found.invite.communityId !== community.id)
+        return { ok: false, error: 'errInvite' }
+      invite = found.invite
+      // An invite proposes a role but does NOT bypass the admin: every joiner
+      // still waits in the approval queue.
       role = invite.role
-      status = 'active'
+      if (!firstAdmin) status = 'pending'
     }
   }
 
@@ -353,13 +404,16 @@ export function register(input: RegisterInput): RegisterResult {
     deviceId: deviceId(),
     createdAt: Date.now(),
     decidedAt: status === 'active' ? Date.now() : null,
-    decidedBy: status === 'active' ? (invite ? invite.createdBy : null) : null,
+    decidedBy: null,
     invitedBy: invite ? invite.createdBy : null,
+    joinMethod: firstAdmin ? 'founder' : invite ? 'invite' : 'search',
+    joinCode: invite ? invite.code : null,
+    joinNote: (input.joinNote || '').trim(),
   }
   db.members.push(member)
 
   if (firstAdmin) community.createdBy = member.id
-  if (invite) invite.usedBy = member.id
+  if (invite) invite.usedBy.push(member.id)
 
   audit(
     db,
@@ -477,9 +531,19 @@ export function createInvite(
   actorId: string,
   communityId: string,
   role: Exclude<Role, 'superadmin'>,
+  opts: { days?: number; maxUses?: number | null } = {},
 ): Invite {
   const db = loadDB()
-  const code = Math.random().toString(36).slice(2, 8).toUpperCase()
+  // Avoid ambiguous glyphs (0/O, 1/I) so codes are easy to read aloud.
+  const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  let code = ''
+  do {
+    code = Array.from(
+      { length: 6 },
+      () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)],
+    ).join('')
+  } while (db.invites.some((i) => i.code === code))
+
   const inv: Invite = {
     id: uid('i_'),
     communityId,
@@ -487,13 +551,24 @@ export function createInvite(
     role,
     createdBy: actorId,
     createdAt: Date.now(),
-    expiresAt: Date.now() + 7 * DAY,
-    usedBy: null,
+    expiresAt: Date.now() + (opts.days ?? 7) * DAY,
+    usedBy: [],
+    maxUses: opts.maxUses ?? null,
+    revokedAt: null,
   }
   db.invites.unshift(inv)
   audit(db, communityId, actorId, 'invite.create', `${role} · ${code}`)
   saveDB(db)
   return inv
+}
+
+export function revokeInvite(actorId: string, inviteId: string) {
+  const db = loadDB()
+  const inv = db.invites.find((i) => i.id === inviteId)
+  if (!inv) return
+  inv.revokedAt = Date.now()
+  audit(db, inv.communityId, actorId, 'invite.revoke', inv.code)
+  saveDB(db)
 }
 
 /* ---------------- trusted contacts (safety network) ---------------- */

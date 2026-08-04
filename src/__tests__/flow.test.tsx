@@ -20,20 +20,22 @@ async function registerFirstResident(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: /Daftar Sekarang/i }))
   // step 1: language (Indonesian is preselected)
   await user.click(screen.getByRole('button', { name: /Lanjut/i }))
-  // step 2: community
+  // step 2: choose how to join → create a new neighbourhood
+  await user.click(screen.getByRole('button', { name: /Buat lingkungan baru/i }))
+  // step 3: community details
   await user.type(
     screen.getByPlaceholderText('RW 05 Griya Soreang'),
     'RW 05 Griya Soreang',
   )
   expect(screen.getByText(/Anda warga pertama/i)).toBeTruthy()
   await user.click(screen.getByRole('button', { name: /Lanjut/i }))
-  // step 3: profile
+  // step 4: profile
   await user.type(screen.getByPlaceholderText('Budi Santoso'), 'Budi Santoso')
   await user.type(screen.getByPlaceholderText('0812xxxxxxx'), '081234567890')
   await user.type(screen.getByPlaceholderText('nama@email.com'), 'budi@mail.com')
   await user.type(screen.getByPlaceholderText('••••••'), 'rahasia123')
   await user.type(screen.getByPlaceholderText('Blok C No. 12'), 'Blok C No. 12')
-  await user.click(screen.getByRole('button', { name: /^Daftar$/i }))
+  await user.click(screen.getByRole('button', { name: /Buat lingkungan baru/i }))
 }
 
 describe('Warga Jaga Warga', () => {
@@ -105,16 +107,21 @@ describe('Warga Jaga Warga', () => {
     window.location.hash = '#/register'
     const r2 = render(<App />)
     await user.click(screen.getByRole('button', { name: /Lanjut/i }))
-    await user.click(screen.getByRole('button', { name: /Lanjut/i })) // join mode preselected
+    // choose "search for a neighbourhood", pick the one Budi created
+    await user.click(screen.getByRole('button', { name: /Cari lingkungan/i }))
+    await user.click(await screen.findByText('RW 05 Griya Soreang'))
+    await user.click(screen.getByRole('button', { name: /Ajukan permintaan gabung/i }))
     await user.type(screen.getByPlaceholderText('Budi Santoso'), 'Siti Aminah')
     await user.type(screen.getByPlaceholderText('0812xxxxxxx'), '081298765432')
     await user.type(screen.getByPlaceholderText('nama@email.com'), 'siti@mail.com')
     await user.type(screen.getByPlaceholderText('••••••'), 'rahasia123')
     await user.type(screen.getByPlaceholderText('Blok C No. 12'), 'Blok A No. 3')
-    await user.click(screen.getByRole('button', { name: /^Daftar$/i }))
+    await user.click(screen.getByRole('button', { name: /Ajukan permintaan gabung/i }))
 
     await waitFor(() => expect(window.location.hash).toBe('#/pending'))
-    expect(screen.getByText(/Menunggu persetujuan admin/i)).toBeTruthy()
+    expect(
+      screen.getAllByText(/Menunggu persetujuan admin/i).length,
+    ).toBeGreaterThan(0)
     const siti = loadDB().members.find((m) => m.email === 'siti@mail.com')!
     expect(siti.status).toBe('pending')
     expect(siti.role).toBe('warga')

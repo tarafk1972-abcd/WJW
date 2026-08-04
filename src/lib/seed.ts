@@ -97,8 +97,8 @@ export function seedDemo(): string | null {
   // registration writes a session for each new member — restore the admin's
   setSession(aid)
 
-  createInvite(aid, cid, 'admin')
-  createInvite(aid, cid, 'satpam')
+  createInvite(aid, cid, 'admin', { days: 7, maxUses: 1 })
+  createInvite(aid, cid, 'warga', { days: 30, maxUses: null })
 
   addAnnouncement({
     communityId: cid,

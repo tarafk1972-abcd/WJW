@@ -9,7 +9,7 @@ Bahasa default **Indonesia**, dengan opsi Bahasa Inggris dan Basa Sunda.
 npm install
 npm run dev      # http://localhost:5173
 npm run build    # build produksi ke dist/
-npm test         # 44 tes (pendaftaran, peran, langganan, area, panik, kirim peringatan)
+npm test         # 59 tes (gabung/buat, peran, langganan, area, panik, kirim peringatan)
 ```
 
 
@@ -52,14 +52,50 @@ Tahan 2 detik, dan setelah terkirim tersedia **"Alarm palsu — batalkan"** sert
 **"Saya sudah aman"**. Frame animasi yang tertinggal tidak bisa memicu
 peringatan (dijaga session token + diuji).
 
+
+## Cara gabung atau buat lingkungan
+
+Saat mendaftar, pengguna memilih **satu dari tiga jalur** (langkah 2 dari 4):
+
+| Jalur | Alur | Hasil |
+| --- | --- | --- |
+| **Punya kode undangan** | Ketik kode 6 karakter **atau pindai QR** dari pengurus. Kode divalidasi langsung. | Masuk antrean, **tetap perlu persetujuan admin**. Kode hanya *mengusulkan* peran. |
+| **Cari lingkungan** | Cari berdasarkan nama / kota / alamat, pilih hasilnya, tulis pesan untuk admin. | Masuk antrean sebagai Warga, **perlu persetujuan admin**. |
+| **Buat lingkungan baru** | Isi nama, alamat, kota. | Langsung aktif sebagai **Admin** pendiri. |
+
+**Semua permintaan gabung harus disetujui admin** — termasuk yang memakai kode
+undangan. Kode undangan hanya mempercepat (mengisi lingkungan otomatis dan
+mengusulkan peran), bukan melewati antrean.
+
+### Kode & QR undangan
+
+Admin membuat undangan di **Admin → Undangan**:
+
+- Kode 6 karakter tanpa huruf/angka rancu (tanpa `O`, `0`, `I`, `1`).
+- **QR code** siap dipindai, plus tautan `#/join/<KODE>` yang membuka
+  pendaftaran dengan kode terisi otomatis.
+- Atur masa berlaku (1/3/7/30 hari) dan batas pemakaian (1/5/10/25 atau tanpa
+  batas). Bisa **dicabut** kapan saja.
+- Tombol *Bagikan* memakai Web Share API bila tersedia, jika tidak menyalin ke papan klip.
+
+Pemindaian QR memakai kamera belakang; bila kamera ditolak tersedia opsi
+**unggah gambar QR** dan pengetikan kode manual.
+
+### Yang dilihat admin
+
+Di antrean persetujuan, setiap pendaftar menampilkan **cara bergabung**
+(lewat kode undangan / lewat pencarian), kode yang dipakai, dan pesan yang
+ditulis pendaftar. Peran yang diusulkan undangan otomatis terpilih, dan admin
+tetap bebas mengubahnya ke Warga / Satpam / Admin sebelum menerima.
+
 ## Aturan utama
 
 | Aturan | Implementasi |
 | --- | --- |
 | Bahasa default Indonesia, bisa dipilih saat registrasi | `src/lib/i18n.ts` — kamus `id` / `en` / `su`. Bahasa dipilih di langkah 1 registrasi dan disimpan pada profil anggota (`member.language`), lalu jadi bahasa seluruh aplikasi. |
 | Warga pertama otomatis jadi Admin | `register()` di `src/lib/db.ts` — pembuat lingkungan langsung `role: 'admin'`, `status: 'active'`. |
-| Admin bisa mengajak Admin lain | Halaman Admin → tab **Undangan** → kode undangan berperan Admin/Satpam/Warga (berlaku 7 hari, sekali pakai). |
-| Admin accept/reject anggota baru & menetapkan peran | Halaman Admin → tab **Menunggu persetujuan** → terima sebagai Warga / Satpam / Admin, atau tolak dengan alasan. |
+| Admin bisa mengajak Admin lain | Halaman Admin → tab **Undangan** → kode + QR berperan Admin/Satpam/Warga, masa berlaku & batas pakai diatur, bisa dicabut. |
+| Admin accept/reject anggota baru & menetapkan peran | Halaman Admin → tab **Menunggu persetujuan** → terima sebagai Warga / Satpam / Admin, atau tolak dengan alasan. Berlaku untuk semua jalur gabung, termasuk kode undangan. |
 | Admin menentukan area lewat peta | Halaman **Peta** → *Gambar area*: ketuk peta untuk menambah titik batas, simpan. Poligon langsung tampil di aplikasi semua anggota, dan laporan dicek di dalam/luar area (`pointInPolygon`). |
 | Setelah disetujui, tombol daftar diganti sapaan | `src/pages/Landing.tsx` — jika `deviceId` cocok dengan anggota berstatus aktif, tombol *Daftar* hilang dan muncul **“Apa kabar hari ini, &lt;nama&gt;?”**. |
 | `tarafk1972@gmail.com` = superadmin | Akun dibuat otomatis (`ensureSuperadmin`). Login → **Konsol Superadmin**: pantau lingkungan & admin, verifikasi pembayaran, jawab tiket CS, catatan aktivitas. |
@@ -122,12 +158,13 @@ src/
   ui/      Icon.tsx  MapView.tsx  Sheet.tsx  Toast.tsx
   lib/     capture.ts (rekam suara 15 dtk + GPS langsung)
   ui/      BigSOS.tsx (tombol merah utama)  PanicGrid.tsx  Countdown.tsx
-           SafetyCheck.tsx
+           SafetyCheck.tsx  QrCode.tsx  QrScanner.tsx
   pages/   Landing  Register  Login  Pending  AppShell  Home  Reports
            MapPage  Guests  Patrol  Admin  Settings  Billing  Support  Console
            Panic (layar utama MVP)  Network  Broadcast  EmergencyProfile
   __tests__/  flow.test.tsx (alur UI)  rules.test.ts (aturan bisnis)
               panic.test.tsx (tombol panik)  alert.test.ts (isi & penerima peringatan)
+              join.test.ts (tiga jalur gabung)  qr.test.tsx
 ```
 
 ## Catatan penyimpanan
