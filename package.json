@@ -9,31 +9,44 @@
     "preview": "vite preview",
     "lint": "oxlint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "server": "tsx watch server/index.ts",
+    "server:start": "tsx server/index.ts",
+    "vapid": "node -e \"const w=require('web-push');const k=w.generateVAPIDKeys();console.log('VAPID_PUBLIC_KEY='+k.publicKey);console.log('VAPID_PRIVATE_KEY='+k.privateKey)\"",
+    "dev:all": "concurrently -n api,web -c cyan,green \"npm:server\" \"npm:dev\""
   },
   "dependencies": {
+    "@hono/node-server": "^2.1.0",
     "@types/leaflet": "^1.9.22",
     "@types/qrcode": "^1.5.6",
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^13.0.2",
+    "hono": "^4.13.0",
     "jsqr": "^1.4.0",
     "leaflet": "^1.9.4",
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-leaflet": "^5.0.0",
-    "react-router": "^8.3.0"
+    "react-router": "^8.3.0",
+    "web-push": "^3.6.7",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.3",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "@types/web-push": "^3.6.4",
     "@vitejs/plugin-react": "^6.0.4",
     "jsdom": "^30.0.1",
     "oxlint": "^1.75.0",
+    "tsx": "^4.23.5",
     "typescript": "~6.0.2",
     "vite": "^8.2.0",
     "vitest": "^4.1.10"
   },
-  "description": "Warga Jaga Warga — aplikasi keamanan lingkungan warga"
+  "description": "Warga Jaga Warga \u2014 aplikasi keamanan lingkungan warga"
 }
