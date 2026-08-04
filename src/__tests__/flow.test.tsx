@@ -65,7 +65,7 @@ describe('Warga Jaga Warga', () => {
 
     await waitFor(() => expect(window.location.hash).toBe('#/app'))
     // /app is now the one-screen panic view; the greeting lives on the feed tab
-    expect(screen.getByRole('button', { name: 'DARURAT' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'DARURAT' })).toBeTruthy()
     await user.click(screen.getByRole('link', { name: /Beranda/i }))
     expect(await screen.findByText(/Apa kabar hari ini, Budi\?/i)).toBeTruthy()
 
@@ -159,6 +159,6 @@ describe('Warga Jaga Warga', () => {
     await user.type(screen.getByPlaceholderText('••••••'), 'superadmin')
     await user.click(screen.getByRole('button', { name: /^Masuk$/i }))
     await waitFor(() => expect(window.location.hash).toBe('#/console'))
-    expect(screen.getByText(/Konsol Superadmin/i)).toBeTruthy()
+    expect(await screen.findByText(/Konsol Superadmin/i)).toBeTruthy()
   })
 })

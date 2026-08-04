@@ -1,5 +1,7 @@
 import { useNavigate } from 'react-router'
+import { profileApi } from '../lib/api'
 import { resetDB, setMemberLanguage } from '../lib/db'
+import { apiMode, mutate } from '../lib/sync'
 import { fmtDate, initials } from '../lib/format'
 import { LANGS } from '../lib/i18n'
 import { useApp } from '../lib/store'
@@ -42,6 +44,7 @@ export default function Settings() {
             className="list-link"
             onClick={() => {
               setMemberLanguage(me.id, l.code)
+              if (apiMode()) void mutate(() => profileApi.save({ language: l.code }))
               refresh()
             }}
             style={

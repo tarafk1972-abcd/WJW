@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
+import { adminApi } from '../lib/api'
 import { polygonCenter, saveArea } from '../lib/db'
+import { apiMode, mutate } from '../lib/sync'
 import { timeAgo } from '../lib/format'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'
@@ -78,6 +80,7 @@ export default function MapPage() {
   const commit = () => {
     if (draft.length < 3) return toast(t('areaSizeWarn'), 'err')
     saveArea(me.id, community.id, draft)
+    if (apiMode()) void mutate(() => adminApi.saveArea(draft))
     setEditing(false)
     toast(t('areaSaved'))
   }

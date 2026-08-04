@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
+import { profileApi } from '../lib/api'
 import { saveEmergencyProfile } from '../lib/db'
+import { apiMode, mutate } from '../lib/sync'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'
 import { useToast } from '../ui/Toast'
@@ -27,14 +29,16 @@ export default function EmergencyProfilePage() {
   if (!me) return null
 
   const save = () => {
-    saveEmergencyProfile(me.id, {
+    const profile = {
       bloodType,
       allergies: allergies.trim(),
       conditions: conditions.trim(),
       contactName: contactName.trim(),
       contactPhone: contactPhone.trim(),
       notes: notes.trim(),
-    })
+    }
+    saveEmergencyProfile(me.id, profile)
+    if (apiMode()) void mutate(() => profileApi.save({ emergency: profile }))
     toast(t('profileSaved'))
     nav(-1)
   }

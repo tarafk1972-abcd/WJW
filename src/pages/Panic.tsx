@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { alertApi } from '../lib/api'
 import { getFix, recordVoice, VOICE_SECONDS, watchLocation } from '../lib/capture'
+import { apiMode, mutate, syncState } from '../lib/sync'
 import {
   acknowledgeAlert,
   addAttachment,
@@ -89,9 +91,10 @@ export default function Panic() {
     }
     if (unwatch.current) return
     const id = active.id
-    unwatch.current = watchLocation((p) =>
-      pushLocation(id, { ...p, at: Date.now() }),
-    )
+    unwatch.current = watchLocation((p) => {
+      pushLocation(id, { ...p, at: Date.now() })
+      if (apiMode()) void alertApi.location(id, p.lat, p.lng, p.accuracy)
+    })
     return () => {
       unwatch.current?.()
       unwatch.current = null
@@ -104,12 +107,22 @@ export default function Panic() {
     setMicFailed(false)
 
     const fix = await getFix()
-    const report = raiseAlert({
-      member: me,
-      category: 'other',
-      at: fix ? { lat: fix.lat, lng: fix.lng } : null,
-      accuracy: fix?.accuracy ?? null,
-    })
+    const at = fix ? { lat: fix.lat, lng: fix.lng } : null
+
+    let report: Report
+    if (apiMode()) {
+      // Server yang menentukan penerima, agar tidak bisa dipalsukan klien.
+      const r = await alertApi.raise('other', at, fix?.accuracy ?? null)
+      report = r.report as unknown as Report
+      await syncState()
+    } else {
+      report = raiseAlert({
+        member: me,
+        category: 'other',
+        at,
+        accuracy: fix?.accuracy ?? null,
+      })
+    }
     setActiveId(report.id)
     setLocating(false)
     toast(t('sentTo', { n: report.recipients.length }), 'err')
@@ -355,6 +368,7 @@ export default function Panic() {
             onClick={() => {
               updateReport(me.id, active.id, { status: 'resolved' })
               stopLive(active.id)
+              if (apiMode()) void mutate(() => alertApi.close(active.id, false))
               setActiveId(null)
               toast(t('alertResolved'))
             }}
@@ -367,6 +381,7 @@ export default function Panic() {
           style={{ marginTop: 8 }}
           onClick={() => {
             cancelAlert(active.id, me.id)
+            if (apiMode()) void mutate(() => alertApi.close(active.id, true))
             setActiveId(null)
             toast(t('alertCancelled'))
           }}
@@ -436,6 +451,7 @@ export default function Panic() {
                   className="btn btn-sm btn-danger grow"
                   onClick={() => {
                     acknowledgeAlert(r.id, me.id)
+                    if (apiMode()) void mutate(() => alertApi.ack(r.id))
                     toast(t('acknowledged'))
                   }}
                 >

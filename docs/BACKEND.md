@@ -63,6 +63,27 @@ sehingga waktu respons tidak membocorkan email mana yang terdaftar.
 | Ronda | Jarak GPS diverifikasi **di server**, tidak bisa dipalsukan klien |
 | Superadmin | Sandi dari environment; bila kosong dibuat acak, bukan bawaan |
 
+## Bagaimana UI tersambung
+
+Halaman **tidak** memanggil `fetch` langsung. Alurnya:
+
+1. Halaman membaca dari cache lokal (`DBShape`) — instan, tanpa menunggu jaringan.
+2. Setiap perubahan dikirim ke server lewat `src/lib/api.ts`.
+3. `src/lib/sync.ts` menarik ulang `/api/state` dan menyegarkan cache.
+4. Polling tiap 8 detik saat tab terlihat, ditambah saat tab kembali aktif.
+
+Keuntungannya: layar tetap responsif, tetapi **server yang menentukan hasil
+akhir** — termasuk menolak aksi yang tidak diizinkan.
+
+### Mode luring
+
+Bila server tidak terjangkau, aplikasi tetap berjalan memakai penyimpanan
+lokal dan menampilkan pita peringatan. Tombol darurat tetap berfungsi.
+Login dan registrasi juga punya jalur cadangan lokal.
+
+> Catatan: perubahan yang dibuat saat luring belum dikirim ulang otomatis
+> ketika koneksi pulih. Antrean penyelarasan adalah pekerjaan berikutnya.
+
 ## Struktur
 
 ```

@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { adminApi } from '../lib/api'
+import { apiMode, mutate } from '../lib/sync'
 import {
   createInvite,
   decideMember,
@@ -56,23 +58,47 @@ export default function Admin() {
     )
   }
 
-  const accept = () => {
+  const accept = async () => {
     if (!target) return
-    decideMember(me.id, target.id, 'accept', pickRole)
-    toast(t('memberAccepted', { name: target.name, role: t(roleKey(pickRole)) }))
+    const name = target.name
+    if (apiMode()) {
+      const ok = await mutate(() => adminApi.decide(target.id, 'accept', pickRole))
+      if (!ok) return toast(t('errOffline'), 'err')
+    } else {
+      decideMember(me.id, target.id, 'accept', pickRole)
+    }
+    toast(t('memberAccepted', { name, role: t(roleKey(pickRole)) }))
     setTarget(null)
   }
 
-  const reject = () => {
+  const reject = async () => {
     if (!target) return
-    decideMember(me.id, target.id, 'reject', 'warga', reason.trim())
+    if (apiMode()) {
+      await mutate(() => adminApi.decide(target.id, 'reject', 'warga', reason.trim()))
+    } else {
+      decideMember(me.id, target.id, 'reject', 'warga', reason.trim())
+    }
     toast(t('memberRejected', { name: target.name }), 'err')
     setTarget(null)
     setRejecting(false)
     setReason('')
   }
 
-  const makeInvite = () => {
+  const makeInvite = async () => {
+    if (apiMode()) {
+      try {
+        const r = await adminApi.createInvite(inviteRole, inviteDays, inviteMax)
+        await mutate(async () => r)
+        setLastCode(r.invite.code)
+        const fresh = loadDBInvite(r.invite.id)
+        if (fresh) setShareInvite(fresh)
+        toast(t('inviteCreated'))
+        return
+      } catch {
+        toast(t('errOffline'), 'err')
+        return
+      }
+    }
     const inv = createInvite(me.id, community.id, inviteRole, {
       days: inviteDays,
       maxUses: inviteMax,
@@ -80,6 +106,11 @@ export default function Admin() {
     setLastCode(inv.code)
     setShareInvite(inv)
     toast(t('inviteCreated'))
+  }
+
+  /** Ambil undangan hasil server dari cache yang baru disegarkan. */
+  function loadDBInvite(id: string): Invite | null {
+    return db.invites.find((i) => i.id === id) ?? null
   }
 
   return (
@@ -337,7 +368,7 @@ export default function Admin() {
                     onChange={(e) => setReason(e.target.value)}
                   />
                 </label>
-                <button className="btn btn-danger" onClick={reject}>
+                <button className="btn btn-danger" onClick={() => void reject()}>
                   <Icon name="x" size={16} /> {t('reject')}
                 </button>
                 <button
@@ -377,7 +408,7 @@ export default function Admin() {
 
                 {target.status === 'pending' ? (
                   <>
-                    <button className="btn btn-primary" onClick={accept}>
+                    <button className="btn btn-primary" onClick={() => void accept()}>
                       <Icon name="check" size={16} /> {t('accept')} · {t(roleKey(pickRole))}
                     </button>
                     <button
@@ -395,6 +426,8 @@ export default function Admin() {
                       disabled={pickRole === target.role}
                       onClick={() => {
                         setRole(me.id, target.id, pickRole)
+                        if (apiMode())
+                          void mutate(() => adminApi.setRole(target.id, pickRole))
                         toast(
                           t('roleChanged', {
                             name: target.name,
@@ -526,7 +559,7 @@ export default function Admin() {
             </button>
           </>
         ) : (
-          <button className="btn btn-primary" onClick={makeInvite}>
+          <button className="btn btn-primary" onClick={() => void makeInvite()}>
             <Icon name="key" size={16} /> {t('inviteCreated')}
           </button>
         )}
@@ -604,6 +637,7 @@ export default function Admin() {
               style={{ marginTop: 8 }}
               onClick={() => {
                 revokeInvite(me.id, shareInvite.id)
+                if (apiMode()) void mutate(() => adminApi.revokeInvite(shareInvite.id))
                 setShareInvite(null)
                 toast(t('revoked'))
               }}

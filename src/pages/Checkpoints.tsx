@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { adminApi } from '../lib/api'
+import { apiMode, mutate } from '../lib/sync'
 import {
   addCheckpoint,
   addSchedule,
@@ -78,13 +80,24 @@ export default function Checkpoints() {
 
   const saveCheckpoint = () => {
     if (!draft || !name.trim()) return toast(t('errRequired'), 'err')
-    addCheckpoint(me.id, {
-      communityId: community.id,
-      name: name.trim(),
-      lat: draft.lat,
-      lng: draft.lng,
-      radiusM: radius,
-    })
+    if (apiMode()) {
+      void mutate(() =>
+        adminApi.addCheckpoint({
+          name: name.trim(),
+          lat: draft.lat,
+          lng: draft.lng,
+          radiusM: radius,
+        }),
+      )
+    } else {
+      addCheckpoint(me.id, {
+        communityId: community.id,
+        name: name.trim(),
+        lat: draft.lat,
+        lng: draft.lng,
+        radiusM: radius,
+      })
+    }
     setDraft(null)
     setName('')
     toast(t('checkpointSaved'))
@@ -92,14 +105,15 @@ export default function Checkpoints() {
 
   const saveSchedule = () => {
     if (!label.trim()) return toast(t('errRequired'), 'err')
-    addSchedule(me.id, {
-      communityId: community.id,
+    const payload = {
       label: label.trim(),
       startMinute: toMinutes(start),
       endMinute: toMinutes(end),
       days,
       graceMin: grace,
-    })
+    }
+    if (apiMode()) void mutate(() => adminApi.addSchedule(payload))
+    else addSchedule(me.id, { communityId: community.id, ...payload })
     setLabel('')
     setDays([])
     setSchOpen(false)
@@ -234,6 +248,7 @@ export default function Checkpoints() {
                   style={{ width: 32, height: 32 }}
                   onClick={() => {
                     removeCheckpoint(me.id, c.id)
+                    if (apiMode()) void mutate(() => adminApi.removeCheckpoint(c.id))
                     toast(t('checkpointRemoved'))
                   }}
                 >
@@ -282,7 +297,10 @@ export default function Checkpoints() {
                 <button
                   className="icon-btn"
                   style={{ width: 32, height: 32 }}
-                  onClick={() => removeSchedule(me.id, s.id)}
+                  onClick={() => {
+                    removeSchedule(me.id, s.id)
+                    if (apiMode()) void mutate(() => adminApi.removeSchedule(s.id))
+                  }}
                 >
                   <Icon name="trash" size={15} />
                 </button>

@@ -1,5 +1,7 @@
 import { useState } from 'react'
+import { broadcastApi } from '../lib/api'
 import { respondSafety } from '../lib/db'
+import { apiMode, mutate } from '../lib/sync'
 import { timeAgo } from '../lib/format'
 import { SEVERITY_META } from '../lib/meta'
 import { useApp } from '../lib/store'
@@ -30,6 +32,8 @@ export function SafetyCheck({ broadcast }: { broadcast: Broadcast }) {
 
   const answer = (status: 'safe' | 'need_help') => {
     respondSafety(broadcast.id, me.id, status, note.trim())
+    if (apiMode())
+      void mutate(() => broadcastApi.respond(broadcast.id, status, note.trim()))
     setAsking(false)
     setNote('')
     toast(t(status === 'safe' ? 'markedSafe' : 'markedHelp'), status === 'safe' ? 'ok' : 'err')

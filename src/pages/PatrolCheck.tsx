@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { ApiError, patrolApi } from '../lib/api'
 import { getFix } from '../lib/capture'
+import { apiMode, syncState } from '../lib/sync'
 import {
   activeSchedule,
   checkpointsOf,
@@ -100,6 +102,39 @@ export default function PatrolCheck() {
       return
     }
     setSaving(true)
+
+    if (apiMode()) {
+      try {
+        const r = await patrolApi.log(pos.lat, pos.lng, { force })
+        await syncState()
+        setSaving(false)
+        setTooFar(null)
+        const name = (r.log as { checkpointName: string }).checkpointName
+        toast(t('patrolRecorded', { name }))
+        if (navigator.vibrate) navigator.vibrate([90, 50, 90])
+        return
+      } catch (e) {
+        setSaving(false)
+        if (e instanceof ApiError) {
+          if (e.code === 'errTooFar') {
+            const d = Math.round(
+              ((e.data as { distanceM?: number })?.distanceM ?? 0) as number,
+            )
+            const near = nearest?.cp
+            if (near) setTooFar({ dist: d, cp: near })
+            toast(t('errTooFar', { n: d }), 'err')
+            return
+          }
+          if (e.status !== 0) {
+            toast(t(e.code as Parameters<typeof t>[0]), 'err')
+            return
+          }
+        }
+        // luring: lanjut ke pencatatan lokal di bawah
+        setSaving(true)
+      }
+    }
+
     const res = recordPatrol({
       communityId: community.id,
       satpamId: me.id,

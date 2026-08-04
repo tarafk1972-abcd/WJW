@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { SUPERADMIN_EMAIL, login } from '../lib/db'
+import { authApi, ApiError } from '../lib/api'
+import { SUPERADMIN_EMAIL, deviceId, login, setSession } from '../lib/db'
+import { syncState } from '../lib/sync'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'
 import type { Key } from '../lib/i18n'
@@ -12,14 +14,39 @@ export default function Login() {
   const [pw, setPw] = useState('')
   const [err, setErr] = useState<Key | ''>('')
 
-  const submit = (e: React.FormEvent) => {
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setErr('')
-    const res = login(id, pw)
-    if (!res.ok) return setErr(res.error as Key)
-    if (res.member.role === 'superadmin') nav('/console')
-    else if (res.member.status === 'active') nav('/app')
-    else nav('/pending')
+    setBusy(true)
+    try {
+      // Utamakan server; bila tidak terjangkau, jatuh ke data lokal.
+      const res = await authApi.login(id, pw, deviceId())
+      const m = res.member as { id: string; role: string; status: string }
+      setSession(m.id)
+      await syncState()
+      if (m.role === 'superadmin') nav('/console')
+      else if (m.status === 'active') nav('/app')
+      else nav('/pending')
+    } catch (e2) {
+      const offline = e2 instanceof ApiError && e2.status === 0
+      if (!offline) {
+        setErr((e2 instanceof ApiError ? e2.code : 'errLogin') as Key)
+        setBusy(false)
+        return
+      }
+      const local = login(id, pw)
+      if (!local.ok) {
+        setErr(local.error as Key)
+        setBusy(false)
+        return
+      }
+      if (local.member.role === 'superadmin') nav('/console')
+      else if (local.member.status === 'active') nav('/app')
+      else nav('/pending')
+    }
+    setBusy(false)
   }
 
   return (
@@ -34,7 +61,7 @@ export default function Login() {
         </div>
       </div>
 
-      <form className="page no-nav" onSubmit={submit}>
+      <form className="page no-nav" onSubmit={(e) => void submit(e)}>
         <div className="brand-mark" style={{ width: 54, height: 54, borderRadius: 17, fontSize: 18, margin: '10px auto 16px' }}>
           WJW
         </div>
@@ -68,8 +95,8 @@ export default function Login() {
           />
         </label>
 
-        <button className="btn btn-primary" type="submit">
-          <Icon name="lock" size={16} /> {t('login')}
+        <button className="btn btn-primary" type="submit" disabled={busy}>
+          <Icon name="lock" size={16} /> {busy ? t('loading') : t('login')}
         </button>
 
         <p className="tiny center" style={{ marginTop: 14 }}>

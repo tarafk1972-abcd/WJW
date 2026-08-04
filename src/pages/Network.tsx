@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { contactApi } from '../lib/api'
+import { apiMode, mutate } from '../lib/sync'
 import {
   addContact,
   alertAudience,
@@ -51,16 +53,22 @@ export default function Network() {
   const save = () => {
     if (!name.trim() || !phone.trim()) return toast(t('errRequired'), 'err')
     const isCommunity = COMMUNITY.includes(kind)
-    addContact({
-      ownerId: isCommunity ? null : me.id,
-      communityId: community.id,
-      name: name.trim(),
-      phone: phone.trim(),
-      kind,
-      // personal contacts are trusted by definition; community roles need admin sign-off
-      verified: isCommunity ? isAdmin : true,
-      memberId: null,
-    })
+    if (apiMode()) {
+      void mutate(() =>
+        contactApi.add({ name: name.trim(), phone: phone.trim(), kind }),
+      )
+    } else {
+      addContact({
+        ownerId: isCommunity ? null : me.id,
+        communityId: community.id,
+        name: name.trim(),
+        phone: phone.trim(),
+        kind,
+        // kontak pribadi otomatis tepercaya; peran komunitas perlu verifikasi admin
+        verified: isCommunity ? isAdmin : true,
+        memberId: null,
+      })
+    }
     setName('')
     setPhone('')
     setOpen(false)
@@ -120,7 +128,10 @@ export default function Network() {
               <button
                 className="icon-btn"
                 style={{ width: 32, height: 32 }}
-                onClick={() => removeContact(c.id)}
+                onClick={() => {
+                  removeContact(c.id)
+                  if (apiMode()) void mutate(() => contactApi.remove(c.id))
+                }}
               >
                 <Icon name="trash" size={15} />
               </button>
@@ -181,7 +192,10 @@ export default function Network() {
             {isAdmin ? (
               <button
                 className={`chip ${c.verified ? 'chip-brand' : 'chip-warn'}`}
-                onClick={() => setContactVerified(me.id, c.id, !c.verified)}
+                onClick={() => {
+                  setContactVerified(me.id, c.id, !c.verified)
+                  if (apiMode()) void mutate(() => contactApi.verify(c.id, !c.verified))
+                }}
               >
                 {t(c.verified ? 'verified' : 'verify')}
               </button>
@@ -194,7 +208,10 @@ export default function Network() {
               <button
                 className="icon-btn"
                 style={{ width: 32, height: 32 }}
-                onClick={() => removeContact(c.id)}
+                onClick={() => {
+                  removeContact(c.id)
+                  if (apiMode()) void mutate(() => contactApi.remove(c.id))
+                }}
               >
                 <Icon name="trash" size={15} />
               </button>

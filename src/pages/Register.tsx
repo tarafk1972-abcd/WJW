@@ -1,6 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
-import { lookupInvite, register, searchCommunities } from '../lib/db'
+import { ApiError, authApi, publicApi } from '../lib/api'
+import { deviceId, lookupInvite, register, searchCommunities, setSession } from '../lib/db'
+import { syncState } from '../lib/sync'
 import { LANGS, translate } from '../lib/i18n'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'
@@ -60,27 +62,59 @@ export default function Register() {
 
   const tr = (k: Key, v?: Record<string, string | number>) => translate(chosenLang, k, v)
 
-  const results = useMemo(() => searchCommunities(query), [query, db.communities])
+  const [remote, setRemote] = useState<Community[] | null>(null)
+  useEffect(() => {
+    let alive = true
+    publicApi
+      .searchCommunities(query)
+      .then((r) => alive && setRemote(r.communities as unknown as Community[]))
+      .catch(() => alive && setRemote(null))
+    return () => {
+      alive = false
+    }
+  }, [query])
+
+  // Hasil server bila tersedia; jika offline, pakai data lokal.
+  const results = useMemo(
+    () => remote ?? searchCommunities(query),
+    [remote, query, db.communities],
+  )
 
   const pickLang = (l: Lang) => {
     setChosenLang(l)
     setLang(l)
   }
 
-  const applyCode = (raw: string) => {
+  const applyCode = async (raw: string) => {
     setErr('')
-    const res = lookupInvite(raw)
-    if (!res.ok) {
-      setInvitedRole(null)
-      setPicked(null)
-      setErr(res.error)
-      return false
+    try {
+      const r = await publicApi.lookupInvite(raw)
+      setPicked(r.community as unknown as Community)
+      setInvitedRole(r.invite.role as Role)
+      setCode(r.invite.code)
+      toast(tr('codeValid'))
+      return true
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 0)) {
+        setInvitedRole(null)
+        setPicked(null)
+        setErr((e instanceof ApiError ? e.code : 'errInvite') as Key)
+        return false
+      }
+      // offline: pakai data lokal
+      const res = lookupInvite(raw)
+      if (!res.ok) {
+        setInvitedRole(null)
+        setPicked(null)
+        setErr(res.error)
+        return false
+      }
+      setPicked(res.community)
+      setInvitedRole(res.invite.role)
+      setCode(res.invite.code)
+      toast(tr('codeValid'))
+      return true
     }
-    setPicked(res.community)
-    setInvitedRole(res.invite.role)
-    setCode(res.invite.code)
-    toast(tr('codeValid'))
-    return true
   }
 
   const back = () => {
@@ -101,7 +135,9 @@ export default function Register() {
     setStep('profile')
   }
 
-  const submit = () => {
+  const [busy, setBusy] = useState(false)
+
+  const submit = async () => {
     setErr('')
     if (!name.trim() || !phone.trim() || !email.trim() || !password || !house.trim())
       return setErr('errRequired')
@@ -109,14 +145,14 @@ export default function Register() {
     if (phone.replace(/\D/g, '').length < 8) return setErr('errPhone')
     if (password.length < 6) return setErr('errPasswordShort')
 
-    const res = register({
+    const payload = {
       name,
       phone,
       email,
       password,
       house,
       language: chosenLang,
-      mode: path === 'create' ? 'create' : 'join',
+      mode: (path === 'create' ? 'create' : 'join') as 'create' | 'join',
       communityId: picked?.id,
       communityName: cName,
       communityAddress: cAddress,
@@ -124,10 +160,34 @@ export default function Register() {
       center: DEFAULT_CENTER,
       inviteCode: path === 'invite' ? code : '',
       joinNote,
-    })
+    }
 
+    setBusy(true)
+    try {
+      const res = await authApi.register({ ...payload, deviceId: deviceId() })
+      const m = res.member as { id: string; status: string }
+      setSession(m.id)
+      await syncState()
+      setBusy(false)
+      if (m.status === 'active') {
+        toast(tr('youAreFirst'))
+        nav('/app')
+      } else {
+        toast(tr('requestSent'))
+        nav('/pending')
+      }
+      return
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 0)) {
+        setBusy(false)
+        return setErr((e instanceof ApiError ? e.code : 'errRequired') as Key)
+      }
+    }
+
+    // offline: daftar ke penyimpanan lokal
+    const res = register(payload)
+    setBusy(false)
     if (!res.ok) return setErr(res.error as Key)
-
     if (res.member.status === 'active') {
       toast(tr('youAreFirst'))
       nav('/app')
@@ -288,7 +348,7 @@ export default function Register() {
               <button
                 className="btn btn-primary grow"
                 disabled={!code.trim()}
-                onClick={() => applyCode(code)}
+                onClick={() => void applyCode(code)}
               >
                 <Icon name="check" size={16} /> {tr('checkCode')}
               </button>
@@ -332,7 +392,7 @@ export default function Register() {
               <QrScanner
                 onCode={(c) => {
                   setScanOpen(false)
-                  applyCode(c)
+                  void applyCode(c)
                 }}
                 onClose={() => setScanOpen(false)}
               />
@@ -530,7 +590,7 @@ export default function Register() {
               />
             </label>
 
-            <button className="btn btn-primary" onClick={submit}>
+            <button className="btn btn-primary" disabled={busy} onClick={() => void submit()}>
               <Icon name="check" size={17} />{' '}
               {path === 'create' ? tr('createCommunity') : tr('requestToJoin')}
             </button>

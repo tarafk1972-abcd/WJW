@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { authApi, getToken } from './api'
 import {
   communityById,
   getSessionId,
@@ -17,6 +18,7 @@ import {
   setSession,
   storeLang,
 } from './db'
+import { apiMode, lastSyncError, startPolling, syncState } from './sync'
 import { DEFAULT_LANG, translate, type Key } from './i18n'
 import type { Community, DBShape, Lang, Member } from './types'
 
@@ -33,6 +35,12 @@ interface Ctx {
   isAdmin: boolean
   isSuperadmin: boolean
   isSatpam: boolean
+  /** true bila aplikasi terhubung ke server (bukan mode lokal saja). */
+  online: boolean
+  /** Kode error sinkronisasi terakhir, mis. 'errOffline'. */
+  syncError: string | null
+  /** Tarik ulang data dari server. */
+  reload: () => Promise<void>
 }
 
 const AppCtx = createContext<Ctx | null>(null)
@@ -44,6 +52,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   const refresh = useCallback(() => setTick((x) => x + 1), [])
+
+  // Sinkronisasi pertama harus selesai sebelum UI memutuskan pengguna
+  // belum login — kalau tidak, layar akan salah mengalihkan ke halaman depan.
+  const [booted, setBooted] = useState(() => !getToken())
+
+  useEffect(() => {
+    if (!apiMode()) {
+      setBooted(true)
+      return
+    }
+    let alive = true
+    void syncState().then(() => {
+      if (!alive) return
+      setBooted(true)
+      refresh()
+    })
+    const stop = startPolling()
+    return () => {
+      alive = false
+      stop()
+    }
+  }, [refresh])
+
+  const reload = useCallback(async () => {
+    await syncState()
+    refresh()
+  }, [refresh])
 
   useEffect(() => {
     const h = () => refresh()
@@ -60,7 +95,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return loadDB()
   }, [tick])
 
-  const me = useMemo(() => memberById(db, getSessionId()), [db, tick])
+  // Saat memakai server, identitas berasal dari token; jika tidak, dari sesi lokal.
+  const me = useMemo(() => {
+    void tick
+    const local = memberById(db, getSessionId())
+    if (local) return local
+    if (!getToken()) return null
+    // sesi lokal belum ada — pakai anggota yang datanya lengkap dari server
+    return db.members.find((m) => m.id === getSessionId()) ?? null
+  }, [db, tick])
   const community = useMemo(
     () => communityById(db, me?.communityId ?? null),
     [db, me, tick],
@@ -81,6 +124,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   const signOut = useCallback(() => {
+    if (apiMode()) void authApi.logout()
     setSession(null)
     refresh()
   }, [refresh])
@@ -95,9 +139,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refresh,
     signOut,
     plan: community ? planState(community) : null,
+    online: apiMode(),
+    syncError: lastSyncError(),
+    reload,
     isAdmin: me?.role === 'admin' || me?.role === 'superadmin',
     isSuperadmin: me?.role === 'superadmin',
     isSatpam: me?.role === 'satpam',
+  }
+
+  // Tampilkan layar tunggu singkat, bukan halaman kosong yang menyesatkan.
+  if (!booted) {
+    return (
+      <div className="boot">
+        <div className="brand-mark">WJW</div>
+        <span className="tiny">{translate(lang, 'loading')}</span>
+      </div>
+    )
   }
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>

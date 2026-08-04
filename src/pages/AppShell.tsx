@@ -1,10 +1,12 @@
 import { NavLink, Outlet, useNavigate } from 'react-router'
 import { useApp } from '../lib/store'
 import { Icon, type IconName } from '../ui/Icon'
+import { PushPrompt } from '../ui/PushPrompt'
 import { useEffect } from 'react'
 
 export default function AppShell() {
-  const { me, community, t, isAdmin, isSatpam, db, plan, signOut } = useApp()
+  const { me, community, t, isAdmin, isSatpam, db, plan, signOut, online, syncError } =
+    useApp()
   const nav = useNavigate()
 
   useEffect(() => {
@@ -85,6 +87,14 @@ export default function AppShell() {
           </button>
         )}
       </div>
+
+      {online && syncError && (
+        <div className="offline-strip">
+          <Icon name="info" size={13} /> {t('offlineBanner')}
+        </div>
+      )}
+
+      <PushPrompt />
 
       <Outlet />
 

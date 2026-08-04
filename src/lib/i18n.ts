@@ -567,6 +567,19 @@ const id = {
   yesterday: 'Kemarin',
   outsideRadius: 'Di luar radius',
   storageFull: 'Penyimpanan penuh — lampiran tidak tersimpan, tetapi peringatan tetap terkirim.',
+
+  // --- koneksi server ---
+  errOffline: 'Tidak terhubung ke server. Coba lagi.',
+  errUnknown: 'Terjadi kesalahan. Coba lagi.',
+  offlineBanner: 'Mode luring — perubahan hanya tersimpan di HP ini.',
+  syncing: 'Menyinkronkan…',
+  synced: 'Tersinkron',
+  reconnect: 'Hubungkan ulang',
+  pushEnable: 'Aktifkan notifikasi darurat',
+  pushEnabled: 'Notifikasi darurat aktif',
+  pushBlocked: 'Notifikasi diblokir. Izinkan lewat pengaturan browser.',
+  pushHint: 'Agar peringatan tetap berbunyi walau aplikasi tertutup.',
+  pushUnsupported: 'Perangkat ini tidak mendukung notifikasi.',
 }
 
 export type Dict = typeof id
@@ -1109,6 +1122,18 @@ const en: Dict = {
   yesterday: 'Yesterday',
   outsideRadius: 'Outside radius',
   storageFull: 'Storage full — the attachment was not saved, but the alert was still sent.',
+
+  errOffline: 'Cannot reach the server. Please try again.',
+  errUnknown: 'Something went wrong. Please try again.',
+  offlineBanner: 'Offline — changes are only saved on this phone.',
+  syncing: 'Syncing…',
+  synced: 'Synced',
+  reconnect: 'Reconnect',
+  pushEnable: 'Enable emergency notifications',
+  pushEnabled: 'Emergency notifications on',
+  pushBlocked: 'Notifications blocked. Allow them in your browser settings.',
+  pushHint: 'So alerts still sound when the app is closed.',
+  pushUnsupported: 'This device does not support notifications.',
 }
 
 const su: Dict = {
@@ -1286,6 +1311,9 @@ const su: Dict = {
   notYetVisited: 'Teu acan dironda',
   patrolHistory: 'Riwayat ronda',
   today: 'Dinten ieu',
+  errOffline: 'Teu nyambung ka server. Cobian deui.',
+  offlineBanner: 'Mode luring — parobahan ngan disimpen di HP ieu.',
+  pushEnable: 'Aktipkeun notifikasi darurat',
 }
 
 export const DICTS: Record<Lang, Dict> = { id, en, su }

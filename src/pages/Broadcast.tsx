@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { adminApi } from '../lib/api'
 import { deleteBroadcast, sendBroadcast } from '../lib/db'
+import { apiMode, mutate } from '../lib/sync'
 import { fmtDateTime } from '../lib/format'
 import { SEVERITY_META } from '../lib/meta'
 import { useApp } from '../lib/store'
@@ -50,15 +52,15 @@ export default function BroadcastPage() {
 
   const send = () => {
     if (!title.trim()) return toast(t('errRequired'), 'err')
-    sendBroadcast({
-      communityId: community.id,
-      authorId: me.id,
+    const payload = {
       severity,
       title: title.trim(),
       body: body.trim(),
       instruction: instruction.trim(),
       requireSafetyCheck: check,
-    })
+    }
+    if (apiMode()) void mutate(() => adminApi.broadcast(payload))
+    else sendBroadcast({ communityId: community.id, authorId: me.id, ...payload })
     setTitle('')
     setBody('')
     setInstruction('')

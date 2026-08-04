@@ -1,0 +1,129 @@
+/**
+ * Lapisan sinkronisasi antara UI dan API.
+ *
+ * Halaman tetap membaca dari cache lokal berbentuk `DBShape` (cepat, tanpa
+ * menunggu jaringan), sementara setiap perubahan dikirim ke server. Setelah
+ * server membalas, cache disegarkan dari sumber kebenaran di server.
+ *
+ * Pola ini membuat aplikasi tetap terasa instan, tetapi server yang
+ * menentukan hasil akhir — termasuk penolakan izin.
+ */
+import { api, ApiError, getToken } from './api'
+import { loadDB, saveDB } from './db'
+import type { DBShape } from './types'
+
+/** Aktif bila pengguna sudah punya token — artinya memakai server. */
+export function apiMode(): boolean {
+  return !!getToken()
+}
+
+let syncing: Promise<void> | null = null
+let lastError: string | null = null
+
+export function lastSyncError(): string | null {
+  return lastError
+}
+
+/** Bentuk balasan /api/state, semuanya opsional agar tahan perubahan. */
+interface StatePayload {
+  me?: Record<string, unknown>
+  community?: Record<string, unknown>
+  communities?: Record<string, unknown>[]
+  members?: Record<string, unknown>[]
+  reports?: Record<string, unknown>[]
+  checkpoints?: Record<string, unknown>[]
+  schedules?: Record<string, unknown>[]
+  patrolLogs?: Record<string, unknown>[]
+  invites?: Record<string, unknown>[]
+  contacts?: Record<string, unknown>[]
+  broadcasts?: Record<string, unknown>[]
+  announcements?: Record<string, unknown>[]
+  guests?: Record<string, unknown>[]
+  audit?: Record<string, unknown>[]
+}
+
+/**
+ * Tarik seluruh keadaan dari server ke cache lokal.
+ * Aman dipanggil berulang; panggilan bersamaan digabung menjadi satu.
+ */
+export function syncState(): Promise<void> {
+  if (!apiMode()) return Promise.resolve()
+  if (syncing) return syncing
+
+  syncing = (async () => {
+    try {
+      const s = (await api.get('/state')) as StatePayload
+      const db = loadDB()
+
+      const next: DBShape = {
+        ...db,
+        communities: (s.communities ??
+          (s.community ? [s.community] : [])) as unknown as DBShape['communities'],
+        members: (s.members ?? []) as unknown as DBShape['members'],
+        reports: (s.reports ?? []) as unknown as DBShape['reports'],
+        checkpoints: (s.checkpoints ?? []) as unknown as DBShape['checkpoints'],
+        schedules: (s.schedules ?? []) as unknown as DBShape['schedules'],
+        patrolLogs: (s.patrolLogs ?? []) as unknown as DBShape['patrolLogs'],
+        invites: (s.invites ?? []) as unknown as DBShape['invites'],
+        contacts: (s.contacts ?? []) as unknown as DBShape['contacts'],
+        broadcasts: (s.broadcasts ?? []) as unknown as DBShape['broadcasts'],
+        announcements: (s.announcements ?? []) as unknown as DBShape['announcements'],
+        guests: (s.guests ?? []) as unknown as DBShape['guests'],
+        audit: (s.audit ?? db.audit) as unknown as DBShape['audit'],
+      }
+
+      // Pastikan diri sendiri selalu ada di daftar anggota, walau server
+      // menyembunyikannya (mis. anggota yang masih menunggu persetujuan).
+      if (s.me && !next.members.some((m) => m.id === (s.me as { id: string }).id)) {
+        next.members = [...next.members, s.me as unknown as DBShape['members'][number]]
+      }
+
+      // Simpan tanpa menghapus media lama: data server adalah kebenaran.
+      saveDB(next)
+      lastError = null
+    } catch (e) {
+      lastError = e instanceof ApiError ? e.code : 'errOffline'
+      // Gagal sinkron tidak boleh menjatuhkan aplikasi — UI tetap memakai
+      // cache terakhir agar tombol darurat tetap bisa dipakai.
+    } finally {
+      syncing = null
+    }
+  })()
+
+  return syncing
+}
+
+/**
+ * Jalankan aksi tulis ke server lalu segarkan cache.
+ * Kembalikan false bila gagal, agar pemanggil bisa menampilkan pesan.
+ */
+export async function mutate(fn: () => Promise<unknown>): Promise<boolean> {
+  if (!apiMode()) return false
+  try {
+    await fn()
+    await syncState()
+    return true
+  } catch (e) {
+    lastError = e instanceof ApiError ? e.code : 'errOffline'
+    // tetap segarkan agar UI kembali selaras dengan server
+    await syncState()
+    return false
+  }
+}
+
+/** Mulai polling berkala; kembalikan fungsi penghenti. */
+export function startPolling(ms = 8000): () => void {
+  if (!apiMode()) return () => {}
+  void syncState()
+  const id = setInterval(() => {
+    if (document.visibilityState === 'visible') void syncState()
+  }, ms)
+  const onVisible = () => {
+    if (document.visibilityState === 'visible') void syncState()
+  }
+  document.addEventListener('visibilitychange', onVisible)
+  return () => {
+    clearInterval(id)
+    document.removeEventListener('visibilitychange', onVisible)
+  }
+}
