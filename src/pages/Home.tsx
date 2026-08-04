@@ -78,11 +78,11 @@ export default function Home() {
       go: () => nav('/app/patrol'),
     },
     {
-      icon: 'phone',
-      label: t('quickCall'),
+      icon: 'users',
+      label: t('myNetwork'),
       color: 'var(--warn)',
       bg: 'var(--warn-soft)',
-      go: () => nav('/app/settings#emergency'),
+      go: () => nav('/app/network'),
     },
   ]
 
@@ -159,9 +159,9 @@ export default function Home() {
       <PanicGrid onTrigger={(type) => setArmed(type)} />
 
       <div className="btn-row" style={{ marginTop: 12 }}>
-        <a className="btn btn-danger grow" href="tel:112">
-          <Icon name="phone" size={16} /> {t('call112')}
-        </a>
+        <button className="btn btn-danger grow" onClick={() => nav('/app')}>
+          <Icon name="siren" size={16} /> {t('sosBig')}
+        </button>
         {isAdmin && (
           <button className="btn btn-ghost grow" onClick={() => nav('/app/broadcast')}>
             <Icon name="broadcast" size={16} /> {t('broadcast')}

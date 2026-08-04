@@ -71,9 +71,71 @@ export type Severity = 'info' | 'warning' | 'critical'
 
 export interface Attachment {
   id: string
-  kind: 'photo'
+  kind: 'photo' | 'video'
   dataUrl: string
   at: number
+  bytes: number
+}
+
+/** Who an alert is delivered to. Deliberately excludes police / 911 / 112. */
+export type ContactKind =
+  | 'family'
+  | 'friend'
+  | 'responder'
+  | 'guard'
+  | 'volunteer'
+
+/**
+ * A person in someone's safety network. Family and friends are personal
+ * (owned by one member); responders, guards and volunteers are community-wide
+ * and must be verified by an admin before they receive alerts.
+ */
+export interface TrustedContact {
+  id: string
+  /** Owner for personal contacts (family/friend); null for community roles. */
+  ownerId: string | null
+  communityId: string
+  name: string
+  phone: string
+  kind: ContactKind
+  /** Community responders/volunteers only count once an admin verifies them. */
+  verified: boolean
+  /** Set when this contact is also an app member. */
+  memberId: string | null
+  createdAt: number
+}
+
+/** One point in the live location stream of an active alert. */
+export interface LocationPing {
+  lat: number
+  lng: number
+  at: number
+  accuracy: number | null
+}
+
+/** Copy of the caller's details, frozen at the moment the alert was raised. */
+export interface ProfileSnapshot {
+  name: string
+  phone: string
+  house: string
+  bloodType: string
+  allergies: string
+  conditions: string
+  contactName: string
+  contactPhone: string
+  notes: string
+}
+
+/** Delivery record: who the alert went to and when. */
+export interface Recipient {
+  id: string
+  name: string
+  phone: string
+  kind: ContactKind
+  memberId: string | null
+  deliveredAt: number
+  /** Set when that person acknowledges they are on the way. */
+  acknowledgedAt: number | null
 }
 
 /** One entry in an incident's two-way communication thread. */
@@ -108,6 +170,22 @@ export interface Report {
   messages: IncidentMessage[]
   /** Who has been dispatched/acknowledged, for real-time coordination. */
   responders: string[]
+
+  /* ---- MVP alert payload (SOS reports only) ---- */
+  /** Live location stream while the alert is active. */
+  track: LocationPing[]
+  /** True while location is still being streamed. */
+  live: boolean
+  liveEndedAt: number | null
+  /** 15-second voice recording captured automatically, as a data URL. */
+  audio: string | null
+  audioSeconds: number
+  /** Caller details frozen when the alert fired. */
+  snapshot: ProfileSnapshot | null
+  /** Everyone the alert was delivered to. */
+  recipients: Recipient[]
+  /** Set when the caller cancels a false alarm. */
+  cancelledAt: number | null
 }
 
 /**
@@ -244,6 +322,7 @@ export interface DBShape {
   guests: Guest[]
   announcements: Announcement[]
   broadcasts: Broadcast[]
+  contacts: TrustedContact[]
   invites: Invite[]
   tickets: Ticket[]
   payments: Payment[]

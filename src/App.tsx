@@ -12,6 +12,8 @@ import Home from './pages/Home'
 import Landing from './pages/Landing'
 import Login from './pages/Login'
 import MapPage from './pages/MapPage'
+import Network from './pages/Network'
+import Panic from './pages/Panic'
 import Patrol from './pages/Patrol'
 import Pending from './pages/Pending'
 import Register from './pages/Register'
@@ -41,7 +43,9 @@ export default function App() {
             />
             <Route path="/console" element={<Console />} />
             <Route path="/app" element={<AppShell />}>
-              <Route index element={<Home />} />
+              <Route index element={<Panic />} />
+              <Route path="feed" element={<Home />} />
+              <Route path="network" element={<Network />} />
               <Route path="reports" element={<Reports />} />
               <Route path="map" element={<MapPage />} />
               <Route path="guests" element={<Guests />} />

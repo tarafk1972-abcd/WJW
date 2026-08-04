@@ -1327,3 +1327,210 @@ p {
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
+
+/* ---------- MVP: one-screen alert ---------- */
+
+.sos-screen {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - var(--nav-h));
+  padding: 14px 16px calc(var(--nav-h) + 20px);
+}
+
+.sos-stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 16px 0;
+}
+
+/* the one big red button */
+.big-sos {
+  width: min(70vw, 246px);
+  height: min(70vw, 246px);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: radial-gradient(circle at 34% 28%, #ff5c6c, #c8102e);
+  box-shadow:
+    0 0 0 12px rgba(255, 77, 94, 0.1),
+    0 0 0 26px rgba(255, 77, 94, 0.05),
+    0 18px 46px rgba(200, 16, 46, 0.45);
+  position: relative;
+  touch-action: none;
+  user-select: none;
+  transition: transform 0.1s;
+  animation: pulse 2.6s ease-in-out infinite;
+}
+
+.big-sos:active,
+.big-sos.holding {
+  transform: scale(0.96);
+}
+
+.big-sos.holding {
+  animation: none;
+}
+
+.big-sos .cap {
+  font-size: clamp(26px, 8vw, 38px);
+  font-weight: 900;
+  letter-spacing: 2px;
+  line-height: 1;
+}
+
+.big-sos .sub {
+  font-size: 11.5px;
+  font-weight: 700;
+  opacity: 0.9;
+  margin-top: 8px;
+  letter-spacing: 0.3px;
+}
+
+/* progress ring drawn around the big button while holding */
+.big-sos .ring {
+  position: absolute;
+  inset: -9px;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.sos-ready-note {
+  text-align: center;
+  color: var(--text-2);
+  font-size: 13.5px;
+  line-height: 1.55;
+  max-width: 310px;
+}
+
+/* status rows shown while the alert is live */
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  font-size: 13px;
+}
+
+.status-row + .status-row {
+  margin-top: 7px;
+}
+
+.status-row .ic {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.status-row.ok {
+  border-color: rgba(46, 194, 126, 0.4);
+}
+
+.status-row.pending {
+  border-color: rgba(255, 181, 69, 0.4);
+}
+
+/* active-alert banner */
+.alert-hero {
+  border-radius: var(--radius);
+  padding: 16px;
+  background: linear-gradient(135deg, rgba(255, 77, 94, 0.24), rgba(200, 16, 46, 0.1));
+  border: 1.5px solid rgba(255, 77, 94, 0.55);
+  animation: livepulse 2s ease-in-out infinite;
+  margin-bottom: 14px;
+}
+
+.alert-hero h2 {
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 0.4px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.rec-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* recipient chips */
+.recip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: 11px;
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+}
+
+.recip + .recip {
+  margin-top: 7px;
+}
+
+.recip .who {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  flex: none;
+}
+
+.disclaimer {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 11px 13px;
+  border-radius: var(--radius-sm);
+  background: rgba(88, 166, 255, 0.09);
+  border: 1px dashed rgba(88, 166, 255, 0.4);
+  color: #a9cdf7;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.wave {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+}
+
+.wave i {
+  width: 3px;
+  border-radius: 2px;
+  background: var(--danger);
+  animation: wv 0.9s ease-in-out infinite;
+}
+
+@keyframes wv {
+  0%,
+  100% {
+    height: 6px;
+  }
+  50% {
+    height: 20px;
+  }
+}

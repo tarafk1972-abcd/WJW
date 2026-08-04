@@ -62,7 +62,10 @@ describe('Warga Jaga Warga', () => {
     await registerFirstResident(user)
 
     await waitFor(() => expect(window.location.hash).toBe('#/app'))
-    expect(screen.getByText(/Apa kabar hari ini, Budi\?/i)).toBeTruthy()
+    // /app is now the one-screen panic view; the greeting lives on the feed tab
+    expect(screen.getByRole('button', { name: 'DARURAT' })).toBeTruthy()
+    await user.click(screen.getByRole('link', { name: /Beranda/i }))
+    expect(await screen.findByText(/Apa kabar hari ini, Budi\?/i)).toBeTruthy()
 
     const db = loadDB()
     const budi = db.members.find((m) => m.email === 'budi@mail.com')!

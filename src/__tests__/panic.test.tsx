@@ -89,3 +89,69 @@ describe('PanicGrid hold-to-activate', () => {
     vi.useRealTimers()
   })
 })
+
+describe('BigSOS one-button behaviour', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    invalidateCache()
+  })
+
+  it('does not fire on a quick tap', async () => {
+    const { BigSOS } = await import('../ui/BigSOS')
+    const onTrigger = vi.fn()
+    const user = userEvent.setup()
+    render(wrap(<BigSOS onTrigger={onTrigger} />))
+    await user.click(screen.getByRole('button', { name: 'DARURAT' }))
+    expect(onTrigger).not.toHaveBeenCalled()
+  })
+
+  it('fires after a full 2-second hold', async () => {
+    const { BigSOS, SOS_HOLD_MS } = await import('../ui/BigSOS')
+    vi.useFakeTimers()
+    let now = 0
+    const perf = vi.spyOn(performance, 'now').mockImplementation(() => now)
+    const raf = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((cb: FrameRequestCallback) => setTimeout(() => cb(now), 16) as unknown as number)
+
+    const onTrigger = vi.fn()
+    render(wrap(<BigSOS onTrigger={onTrigger} />))
+    const btn = screen.getByRole('button', { name: 'DARURAT' })
+
+    btn.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    now += SOS_HOLD_MS + 50
+    await vi.advanceTimersByTimeAsync(64)
+    expect(onTrigger).toHaveBeenCalledTimes(1)
+
+    raf.mockRestore()
+    perf.mockRestore()
+    vi.useRealTimers()
+  })
+
+  it('never fires if the finger lifts early', async () => {
+    const { BigSOS, SOS_HOLD_MS } = await import('../ui/BigSOS')
+    vi.useFakeTimers()
+    let now = 0
+    const perf = vi.spyOn(performance, 'now').mockImplementation(() => now)
+    const raf = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((cb: FrameRequestCallback) => setTimeout(() => cb(now), 16) as unknown as number)
+
+    const onTrigger = vi.fn()
+    render(wrap(<BigSOS onTrigger={onTrigger} />))
+    const btn = screen.getByRole('button', { name: 'DARURAT' })
+
+    btn.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    now += SOS_HOLD_MS / 2
+    await vi.advanceTimersByTimeAsync(32)
+    btn.dispatchEvent(new Event('pointerup', { bubbles: true }))
+    now += SOS_HOLD_MS * 2
+    await vi.advanceTimersByTimeAsync(300)
+
+    expect(onTrigger).not.toHaveBeenCalled()
+
+    raf.mockRestore()
+    perf.mockRestore()
+    vi.useRealTimers()
+  })
+})

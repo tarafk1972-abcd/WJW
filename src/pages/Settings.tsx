@@ -6,12 +6,6 @@ import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'
 import { roleChip, roleKey } from '../lib/meta'
 
-const EMERGENCY = [
-  { key: 'police', num: '110', emoji: '🚓' },
-  { key: 'ambulance', num: '118', emoji: '🚑' },
-  { key: 'fireDept', num: '113', emoji: '🚒' },
-] as const
-
 export default function Settings() {
   const { me, community, t, lang, plan, signOut, isAdmin, refresh } = useApp()
   const nav = useNavigate()
@@ -76,20 +70,22 @@ export default function Settings() {
       </button>
 
       <div className="section-title" id="emergency">
-        {t('emergencyContacts')}
+        {t('myNetwork')}
       </div>
-      {EMERGENCY.map((e) => (
-        <a key={e.key} className="list-link" href={`tel:${e.num}`}>
-          <span style={{ fontSize: 20 }}>{e.emoji}</span>
-          <span className="grow strong">{t(e.key)}</span>
-          <span className="chip chip-danger">{e.num}</span>
-        </a>
-      ))}
-      <a className="list-link" href="tel:112">
-        <span style={{ fontSize: 20 }}>🛡️</span>
-        <span className="grow strong">{t('securityPost')}</span>
-        <span className="chip chip-info">112</span>
-      </a>
+      <button className="list-link" onClick={() => nav('/app/network')}>
+        <Icon name="users" size={19} color="var(--brand)" />
+        <span className="grow">
+          <span className="strong" style={{ display: 'block' }}>
+            {t('myNetwork')}
+          </span>
+          <span className="tiny">{t('networkHint')}</span>
+        </span>
+        <Icon name="chevronRight" size={16} color="var(--text-3)" />
+      </button>
+      <div className="disclaimer" style={{ marginTop: 10 }}>
+        <Icon name="info" size={15} />
+        <span>{t('noPolice')}</span>
+      </div>
 
       <div className="section-title">{t('community')}</div>
       <div className="card">

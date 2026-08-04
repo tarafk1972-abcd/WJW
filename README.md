@@ -9,8 +9,48 @@ Bahasa default **Indonesia**, dengan opsi Bahasa Inggris dan Basa Sunda.
 npm install
 npm run dev      # http://localhost:5173
 npm run build    # build produksi ke dist/
-npm test         # 31 tes (pendaftaran, peran, langganan, area, panik, siaran)
+npm test         # 44 tes (pendaftaran, peran, langganan, area, panik, kirim peringatan)
 ```
+
+
+## MVP (Versi 1) — satu layar, satu tombol
+
+Layar utama aplikasi (`/app`) hanya berisi **satu tombol merah besar**. Ditahan
+2 detik (cincin progres), lalu peringatan langsung terkirim membawa:
+
+| Data | Catatan |
+| --- | --- |
+| Lokasi GPS | Diambil sebelum peringatan dikirim, berikut akurasi (±m). |
+| Lokasi langsung | `watchPosition` terus mengirim titik selama peringatan aktif; bisa dihentikan kapan saja. |
+| Profil pengguna | Nama, HP, alamat, golongan darah, alergi, riwayat penyakit, kontak keluarga — dibekukan saat peringatan dibuat. |
+| Jenis darurat | Opsional, dipilih **setelah** peringatan terkirim agar tidak memperlambat. |
+| Rekaman suara 15 detik | Otomatis mulai setelah peringatan keluar. Mikrofon ditolak ≠ peringatan gagal. |
+| Foto/video | Opsional, dilampirkan saat kejadian berlangsung (maks 8 MB). |
+| Waktu kejadian | Dicatat otomatis. |
+
+### Dikirim ke siapa
+
+- Keluarga
+- Teman terpercaya
+- Responder komunitas terverifikasi
+- Satpam
+- Relawan
+
+Kelola di **Jaringan bantuan saya** (`/app/network`). Keluarga & teman bersifat
+pribadi per anggota; responder & relawan komunitas harus **diverifikasi admin**
+sebelum menerima peringatan. Penerima bisa menekan *"Saya menuju lokasi"*, dan
+pengirim melihat siapa saja yang sudah merespons.
+
+> **Tidak ada integrasi polisi / layanan darurat.** Aplikasi ini sengaja tidak
+> menghubungi 110/112/911 — itu menimbulkan kerumitan operasional dan regulasi.
+> Peringatan hanya mengalir ke jaringan warga. Pengguna diingatkan lewat catatan
+> tetap di layar utama untuk menghubungi pihak berwenang sendiri bila perlu.
+
+### Pengaman alarm palsu
+
+Tahan 2 detik, dan setelah terkirim tersedia **"Alarm palsu — batalkan"** serta
+**"Saya sudah aman"**. Frame animasi yang tertinggal tidak bisa memicu
+peringatan (dijaga session token + diuji).
 
 ## Aturan utama
 
@@ -59,9 +99,8 @@ lingkungan (Leaflet + OpenStreetMap) dengan editor area · buku tamu
 masuk/keluar · patroli satpam dengan jejak dan titik pantau · pengumuman ·
 kontak darurat · tiket dukungan ke superadmin.
 
-> Catatan: tombol *Telepon 112* memakai tautan `tel:` bawaan ponsel. Integrasi
-> langsung ke 911/112 seperti SaferWatch memerlukan kerja sama resmi dengan
-> pusat panggilan darurat.
+> Catatan: berbeda dengan SaferWatch, aplikasi ini **tidak** terhubung ke 911/112
+> atau kepolisian. Semua peringatan hanya mengalir ke jaringan warga.
 
 ## Akun demo
 
@@ -81,12 +120,14 @@ Tekan **“Isi data contoh”** di layar awal untuk membuat lingkungan contoh
 src/
   lib/     types.ts  db.ts (data + aturan bisnis)  i18n.ts  store.tsx  format.ts  seed.ts
   ui/      Icon.tsx  MapView.tsx  Sheet.tsx  Toast.tsx
-  ui/      PanicGrid.tsx (tombol tekan-tahan)  Countdown.tsx  SafetyCheck.tsx
+  lib/     capture.ts (rekam suara 15 dtk + GPS langsung)
+  ui/      BigSOS.tsx (tombol merah utama)  PanicGrid.tsx  Countdown.tsx
+           SafetyCheck.tsx
   pages/   Landing  Register  Login  Pending  AppShell  Home  Reports
            MapPage  Guests  Patrol  Admin  Settings  Billing  Support  Console
-           Broadcast  EmergencyProfile
+           Panic (layar utama MVP)  Network  Broadcast  EmergencyProfile
   __tests__/  flow.test.tsx (alur UI)  rules.test.ts (aturan bisnis)
-              panic.test.tsx (tombol panik)
+              panic.test.tsx (tombol panik)  alert.test.ts (isi & penerima peringatan)
 ```
 
 ## Catatan penyimpanan

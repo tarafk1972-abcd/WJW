@@ -651,11 +651,6 @@ function ReportDetail({
         </div>
       )}
 
-      {report.kind === 'sos' && report.status !== 'resolved' && (
-        <a className="btn btn-danger" style={{ marginTop: 8 }} href="tel:112">
-          <Icon name="phone" size={16} /> {t('call112')}
-        </a>
-      )}
     </>
   )
 }

@@ -1,6 +1,7 @@
 import {
   DAY,
   addAnnouncement,
+  addContact,
   addIncidentMessage,
   respondSafety,
   respondToReport,
@@ -196,6 +197,54 @@ export function seedDemo(): string | null {
     { lat: -6.9862, lng: 107.5171, note: 'Pos 4 aman' },
   ].forEach((p) => addPatrolPoint(patrol.id, p))
   endPatrol(patrol.id)
+
+  // Budi's personal safety network (family + trusted friends)
+  addContact({
+    ownerId: aid,
+    communityId: cid,
+    name: 'Siti Aminah (Istri)',
+    phone: '081298765432',
+    kind: 'family',
+    verified: true,
+    memberId: ids['Siti Aminah'] ?? null,
+  })
+  addContact({
+    ownerId: aid,
+    communityId: cid,
+    name: 'Eko Prasetyo (Kakak)',
+    phone: '081234000111',
+    kind: 'family',
+    verified: true,
+    memberId: null,
+  })
+  addContact({
+    ownerId: aid,
+    communityId: cid,
+    name: 'Dewi Lestari',
+    phone: '081211223344',
+    kind: 'friend',
+    verified: true,
+    memberId: ids['Dewi Lestari'] ?? null,
+  })
+  // community volunteers, verified by the admin
+  addContact({
+    ownerId: null,
+    communityId: cid,
+    name: 'Tim Relawan RW 05',
+    phone: '081277788899',
+    kind: 'volunteer',
+    verified: true,
+    memberId: null,
+  })
+  addContact({
+    ownerId: null,
+    communityId: cid,
+    name: 'Yanto (calon relawan)',
+    phone: '081266655544',
+    kind: 'volunteer',
+    verified: false,
+    memberId: null,
+  })
 
   saveEmergencyProfile(aid, {
     bloodType: 'O',

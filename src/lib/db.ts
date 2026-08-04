@@ -13,9 +13,13 @@ import type {
   Member,
   Patrol,
   Payment,
+  LocationPing,
+  ProfileSnapshot,
+  Recipient,
   Report,
   Role,
   Ticket,
+  TrustedContact,
 } from './types'
 
 export const SUPERADMIN_EMAIL = 'tarafk1972@gmail.com'
@@ -44,6 +48,7 @@ function emptyDB(): DBShape {
     guests: [],
     announcements: [],
     broadcasts: [],
+    contacts: [],
     invites: [],
     tickets: [],
     payments: [],
@@ -491,21 +496,246 @@ export function createInvite(
   return inv
 }
 
-export function addReport(
-  r: Omit<
-    Report,
-    | 'id'
-    | 'createdAt'
-    | 'status'
-    | 'handledBy'
-    | 'handledAt'
-    | 'insideArea'
-    | 'attachments'
-    | 'messages'
-    | 'responders'
-  > &
-    Partial<Pick<Report, 'attachments' | 'messages' | 'responders'>>,
-): Report {
+/* ---------------- trusted contacts (safety network) ---------------- */
+
+export function addContact(
+  c: Omit<TrustedContact, 'id' | 'createdAt'>,
+): TrustedContact {
+  const db = loadDB()
+  const contact: TrustedContact = { ...c, id: uid('ct_'), createdAt: Date.now() }
+  db.contacts.unshift(contact)
+  audit(db, c.communityId, c.ownerId ?? 'system', 'contact.add', `${c.kind}: ${c.name}`)
+  saveDB(db)
+  return contact
+}
+
+export function removeContact(id: string) {
+  const db = loadDB()
+  db.contacts = db.contacts.filter((c) => c.id !== id)
+  saveDB(db)
+}
+
+export function setContactVerified(
+  actorId: string,
+  id: string,
+  verified: boolean,
+) {
+  const db = loadDB()
+  const c = db.contacts.find((x) => x.id === id)
+  if (!c) return
+  c.verified = verified
+  audit(db, c.communityId, actorId, 'contact.verify', `${c.name} → ${verified}`)
+  saveDB(db)
+}
+
+/** Personal contacts (family & friends) belonging to one member. */
+export function personalContacts(db: DBShape, memberId: string): TrustedContact[] {
+  return db.contacts.filter((c) => c.ownerId === memberId)
+}
+
+/**
+ * Everyone who should receive this member's alert:
+ *   - their own family & friends
+ *   - verified community responders, guards and volunteers
+ *   - active guards/admins in the community (they are responders by role)
+ *
+ * Police and emergency services are intentionally NOT included.
+ */
+export function alertAudience(
+  db: DBShape,
+  member: Member,
+): Omit<Recipient, 'deliveredAt' | 'acknowledgedAt'>[] {
+  if (!member.communityId) return []
+  const out: Omit<Recipient, 'deliveredAt' | 'acknowledgedAt'>[] = []
+  const seen = new Set<string>()
+
+  const push = (r: Omit<Recipient, 'deliveredAt' | 'acknowledgedAt'>) => {
+    const key = r.memberId ?? r.phone.replace(/\D/g, '') ?? r.id
+    if (!key || seen.has(key)) return
+    seen.add(key)
+    out.push(r)
+  }
+
+  for (const c of db.contacts) {
+    if (c.communityId !== member.communityId) continue
+    const personal = c.ownerId === member.id
+    const community = c.ownerId === null && c.verified
+    if (!personal && !community) continue
+    push({
+      id: c.id,
+      name: c.name,
+      phone: c.phone,
+      kind: c.kind,
+      memberId: c.memberId,
+    })
+  }
+
+  for (const m of db.members) {
+    if (
+      m.communityId !== member.communityId ||
+      m.status !== 'active' ||
+      m.id === member.id
+    )
+      continue
+    if (m.role === 'satpam') {
+      push({ id: m.id, name: m.name, phone: m.phone, kind: 'guard', memberId: m.id })
+    } else if (m.role === 'admin') {
+      push({ id: m.id, name: m.name, phone: m.phone, kind: 'responder', memberId: m.id })
+    }
+  }
+
+  return out
+}
+
+export function profileSnapshot(m: Member): ProfileSnapshot {
+  return {
+    name: m.name,
+    phone: m.phone,
+    house: m.house,
+    bloodType: m.emergency?.bloodType ?? '',
+    allergies: m.emergency?.allergies ?? '',
+    conditions: m.emergency?.conditions ?? '',
+    contactName: m.emergency?.contactName ?? '',
+    contactPhone: m.emergency?.contactPhone ?? '',
+    notes: m.emergency?.notes ?? '',
+  }
+}
+
+/**
+ * Raise a panic alert: freezes the caller's profile, resolves the audience and
+ * marks the alert live so location streaming can begin.
+ */
+export function raiseAlert(opts: {
+  member: Member
+  category: Report['category']
+  at: LatLng | null
+  accuracy?: number | null
+}): Report {
+  const db = loadDB()
+  const { member, category, at } = opts
+  if (!member.communityId) throw new Error('member has no community')
+
+  const audience = alertAudience(db, member)
+  const now = Date.now()
+  const rep: Report = {
+    id: uid('r_'),
+    communityId: member.communityId,
+    authorId: member.id,
+    kind: 'sos',
+    category,
+    note: '',
+    at,
+    address: member.house,
+    status: 'open',
+    createdAt: now,
+    handledBy: null,
+    handledAt: null,
+    insideArea: null,
+    attachments: [],
+    messages: [],
+    responders: [],
+    track: at
+      ? [{ lat: at.lat, lng: at.lng, at: now, accuracy: opts.accuracy ?? null }]
+      : [],
+    live: true,
+    liveEndedAt: null,
+    audio: null,
+    audioSeconds: 0,
+    snapshot: profileSnapshot(member),
+    recipients: audience.map((a) => ({
+      ...a,
+      deliveredAt: now,
+      acknowledgedAt: null,
+    })),
+    cancelledAt: null,
+  }
+
+  const c = communityById(db, member.communityId)
+  rep.insideArea = c && c.area.length >= 3 && at ? pointInPolygon(at, c.area) : null
+
+  db.reports.unshift(rep)
+  audit(
+    db,
+    member.communityId,
+    member.id,
+    'alert.raise',
+    `${category} → ${rep.recipients.length} recipients`,
+  )
+  saveDB(db)
+  return rep
+}
+
+/** Append a live-location ping while the alert is active. */
+export function pushLocation(reportId: string, ping: LocationPing) {
+  const db = loadDB()
+  const r = db.reports.find((x) => x.id === reportId)
+  if (!r || !r.live) return
+  const last = r.track[r.track.length - 1]
+  // ignore duplicate fixes so the trail stays meaningful
+  if (last && last.lat === ping.lat && last.lng === ping.lng) return
+  r.track.push(ping)
+  r.at = { lat: ping.lat, lng: ping.lng }
+  if (r.track.length > 500) r.track.shift()
+  saveDB(db)
+}
+
+export function stopLive(reportId: string) {
+  const db = loadDB()
+  const r = db.reports.find((x) => x.id === reportId)
+  if (!r || !r.live) return
+  r.live = false
+  r.liveEndedAt = Date.now()
+  saveDB(db)
+}
+
+export function attachAudio(reportId: string, dataUrl: string, seconds: number) {
+  const db = loadDB()
+  const r = db.reports.find((x) => x.id === reportId)
+  if (!r) return
+  r.audio = dataUrl
+  r.audioSeconds = seconds
+  saveDB(db)
+}
+
+/** A recipient confirms they are on the way. */
+export function acknowledgeAlert(reportId: string, memberId: string) {
+  const db = loadDB()
+  const r = db.reports.find((x) => x.id === reportId)
+  if (!r) return
+  const rec = r.recipients.find((x) => x.memberId === memberId)
+  if (rec && !rec.acknowledgedAt) rec.acknowledgedAt = Date.now()
+  if (!r.responders.includes(memberId)) r.responders.push(memberId)
+  if (r.status === 'open') {
+    r.status = 'ack'
+    r.handledBy = memberId
+    r.handledAt = Date.now()
+  }
+  saveDB(db)
+}
+
+/** Caller cancels their own alert (false alarm). */
+export function cancelAlert(reportId: string, actorId: string) {
+  const db = loadDB()
+  const r = db.reports.find((x) => x.id === reportId)
+  if (!r) return
+  r.cancelledAt = Date.now()
+  r.status = 'resolved'
+  r.live = false
+  r.liveEndedAt = Date.now()
+  audit(db, r.communityId, actorId, 'alert.cancel', r.category)
+  saveDB(db)
+}
+
+/** Fields the caller supplies; everything else is derived by addReport. */
+type NewReport = Pick<
+  Report,
+  'communityId' | 'authorId' | 'kind' | 'category' | 'note' | 'at' | 'address'
+> &
+  Partial<
+    Pick<Report, 'anonymous' | 'attachments' | 'messages' | 'responders'>
+  >
+
+export function addReport(r: NewReport): Report {
   const db = loadDB()
   const c = communityById(db, r.communityId)
   const inside =
@@ -521,6 +751,14 @@ export function addReport(
     attachments: r.attachments ?? [],
     messages: r.messages ?? [],
     responders: r.responders ?? [],
+    track: [],
+    live: false,
+    liveEndedAt: null,
+    audio: null,
+    audioSeconds: 0,
+    snapshot: null,
+    recipients: [],
+    cancelledAt: null,
   }
   db.reports.unshift(rep)
   audit(db, r.communityId, r.authorId, `report.${r.kind}`, r.category)
@@ -564,11 +802,22 @@ export function respondToReport(actorId: string, reportId: string) {
   saveDB(db)
 }
 
-export function addAttachment(reportId: string, dataUrl: string) {
+export function addAttachment(
+  reportId: string,
+  dataUrl: string,
+  kind: Attachment['kind'] = 'photo',
+) {
   const db = loadDB()
   const r = db.reports.find((x) => x.id === reportId)
   if (!r) return
-  const a: Attachment = { id: uid('at_'), kind: 'photo', dataUrl, at: Date.now() }
+  const a: Attachment = {
+    id: uid('at_'),
+    kind,
+    dataUrl,
+    at: Date.now(),
+    // rough decoded size of the base64 payload
+    bytes: Math.round((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75),
+  }
   r.attachments.push(a)
   saveDB(db)
 }

@@ -26,7 +26,8 @@ export default function AppShell() {
   ).length
 
   const tabs: { to: string; icon: IconName; label: string; badge?: number }[] = [
-    { to: '/app', icon: 'home', label: t('navHome') },
+    { to: '/app', icon: 'siren', label: t('sosBig') },
+    { to: '/app/feed', icon: 'home', label: t('navHome') },
     { to: '/app/reports', icon: 'alert', label: t('navReports'), badge: openReports },
     { to: '/app/map', icon: 'map', label: t('navMap') },
     ...(isAdmin || isSatpam
