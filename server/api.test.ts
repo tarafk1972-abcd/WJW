@@ -378,3 +378,60 @@ describe('superadmin', () => {
     expect(bad.status).toBe(401)
   })
 })
+
+describe('pemulihan akses superadmin', () => {
+  it('menerapkan ulang sandi dari environment pada server yang sudah punya akun', async () => {
+    const { db, ensureSuperadmin, hashPassword, verifyPassword } = await import('./db.js')
+
+    // Simulasi akun terkunci: sandi acak yang catatannya hilang.
+    db.prepare('UPDATE members SET password_hash=? WHERE id=?').run(
+      hashPassword('sandi-acak-yang-hilang'),
+      'superadmin',
+    )
+    const before = db
+      .prepare('SELECT password_hash h FROM members WHERE id=?')
+      .get('superadmin') as { h: string }
+    expect(verifyPassword('super-secret', before.h)).toBe(false)
+
+    // Menjalankan ulang server dengan WJW_SUPERADMIN_PASSWORD memulihkan akses.
+    ensureSuperadmin()
+    const after = db
+      .prepare('SELECT password_hash h FROM members WHERE id=?')
+      .get('superadmin') as { h: string }
+    expect(verifyPassword('super-secret', after.h)).toBe(true)
+
+    const login = await call('POST', '/api/auth/login', {
+      identifier: 'tarafk1972@gmail.com',
+      password: 'super-secret',
+    })
+    expect(login.status).toBe(200)
+  })
+
+  it('reset-password mengganti sandi dan mencabut sesi lama', async () => {
+    const a = await makeAdmin()
+    const me = await call('GET', '/api/me', undefined, a.token)
+    const email = me.body.member.email
+
+    const { db, hashPassword } = await import('./db.js')
+    const sessionsBefore = db
+      .prepare('SELECT count(*) n FROM sessions WHERE member_id=?')
+      .get(a.id) as { n: number }
+    expect(sessionsBefore.n).toBeGreaterThan(0)
+
+    // Yang dilakukan skrip reset-password:
+    db.prepare('UPDATE members SET password_hash=? WHERE id=?').run(
+      hashPassword('sandi-baru-123'),
+      a.id,
+    )
+    db.prepare('DELETE FROM sessions WHERE member_id=?').run(a.id)
+
+    // token lama tidak berlaku
+    expect((await call('GET', '/api/me', undefined, a.token)).status).toBe(401)
+    // sandi baru berhasil
+    const login = await call('POST', '/api/auth/login', {
+      identifier: email,
+      password: 'sandi-baru-123',
+    })
+    expect(login.status).toBe(200)
+  })
+})

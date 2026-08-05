@@ -77,6 +77,26 @@ akhir** — termasuk menolak aksi yang tidak diizinkan.
 
 ### Masalah umum
 
+**"Email/HP atau kata sandi salah" padahal merasa benar**
+Akun disimpan di server, bukan di HP. Basis data yang baru dibuat masih
+kosong — akun demo `budi@warga.id` dan sejenisnya hanya ada di mode lokal
+(tombol "Isi data contoh"), bukan di server.
+
+Lihat akun yang benar-benar ada:
+
+```bash
+npm run reset-password -- --list
+```
+
+Ganti sandi yang terlupa:
+
+```bash
+npm run reset-password -- budi@warga.id sandibaru123
+```
+
+Untuk superadmin, cukup set `WJW_SUPERADMIN_PASSWORD` di `.env` lalu
+jalankan ulang server — sandinya diterapkan ulang otomatis.
+
 **"Terjadi kesalahan" saat memeriksa kode undangan**
 API belum jalan. Buka terminal kedua lalu `npm run server`. Aplikasi kini
 menampilkan pesan "Server tidak aktif" alih-alih error umum.

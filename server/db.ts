@@ -6,6 +6,22 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
+const ROOT = dirname(HERE)
+
+// Muat .env bila ada, tanpa dependensi tambahan. Nilai yang sudah ada di
+// environment tetap menang, agar bisa ditimpa saat menjalankan perintah.
+try {
+  const raw = readFileSync(join(ROOT, '.env'), 'utf8')
+  for (const line of raw.split('\n')) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i)
+    if (!m) continue
+    const key = m[1]
+    const val = m[2].replace(/^["']|["']$/g, '')
+    if (process.env[key] === undefined) process.env[key] = val
+  }
+} catch {
+  // .env opsional — abaikan bila tidak ada
+}
 
 export const SUPERADMIN_EMAIL = 'tarafk1972@gmail.com'
 export const TRIAL_DAYS = 14
@@ -157,15 +173,31 @@ export function audit(
 /* ---------------- superadmin ---------------- */
 
 /**
- * Memastikan akun superadmin ada. Sandi diambil dari WJW_SUPERADMIN_PASSWORD;
- * bila tidak diset, dibuat acak dan dicetak sekali ke log agar tidak ada
+ * Memastikan akun superadmin ada.
+ *
+ * Sandi diambil dari WJW_SUPERADMIN_PASSWORD. Bila diset, sandi itu juga
+ * diterapkan ulang setiap kali server dijalankan — supaya akun tidak pernah
+ * terkunci hanya karena log berisi sandi acak sudah hilang.
+ *
+ * Bila tidak diset, sandi dibuat acak dan dicetak sekali, agar tidak ada
  * sandi bawaan yang bisa ditebak di produksi.
  */
 export function ensureSuperadmin(): void {
   const existing = db
     .prepare('SELECT id FROM members WHERE lower(email) = lower(?)')
-    .get(SUPERADMIN_EMAIL)
-  if (existing) return
+    .get(SUPERADMIN_EMAIL) as { id: string } | undefined
+
+  if (existing) {
+    // Pulihkan akses bila operator menetapkan sandi lewat environment.
+    const fromEnv = process.env.WJW_SUPERADMIN_PASSWORD
+    if (fromEnv) {
+      db.prepare('UPDATE members SET password_hash = ? WHERE id = ?').run(
+        hashPassword(fromEnv),
+        existing.id,
+      )
+    }
+    return
+  }
 
   const plain =
     process.env.WJW_SUPERADMIN_PASSWORD || randomBytes(9).toString('base64url')
