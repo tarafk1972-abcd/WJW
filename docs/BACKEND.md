@@ -75,6 +75,15 @@ Halaman **tidak** memanggil `fetch` langsung. Alurnya:
 Keuntungannya: layar tetap responsif, tetapi **server yang menentukan hasil
 akhir** — termasuk menolak aksi yang tidak diizinkan.
 
+### Masalah umum
+
+**"Terjadi kesalahan" saat memeriksa kode undangan**
+API belum jalan. Buka terminal kedua lalu `npm run server`. Aplikasi kini
+menampilkan pesan "Server tidak aktif" alih-alih error umum.
+
+**`vite: not found` atau `Cannot find package`**
+`node_modules` hilang. Jalankan `npm install`.
+
 ### Mode luring
 
 Bila server tidak terjangkau, aplikasi tetap berjalan memakai penyimpanan

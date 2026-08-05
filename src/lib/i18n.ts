@@ -580,6 +580,8 @@ const id = {
   pushBlocked: 'Notifikasi diblokir. Izinkan lewat pengaturan browser.',
   pushHint: 'Agar peringatan tetap berbunyi walau aplikasi tertutup.',
   pushUnsupported: 'Perangkat ini tidak mendukung notifikasi.',
+  serverDown: 'Server tidak aktif — memakai data di HP ini saja.',
+  serverDownHint: 'Jalankan `npm run server` lalu coba lagi.',
 }
 
 export type Dict = typeof id
@@ -1134,6 +1136,8 @@ const en: Dict = {
   pushBlocked: 'Notifications blocked. Allow them in your browser settings.',
   pushHint: 'So alerts still sound when the app is closed.',
   pushUnsupported: 'This device does not support notifications.',
+  serverDown: 'Server is down — using data on this phone only.',
+  serverDownHint: 'Run `npm run server`, then try again.',
 }
 
 const su: Dict = {
@@ -1314,6 +1318,7 @@ const su: Dict = {
   errOffline: 'Teu nyambung ka server. Cobian deui.',
   offlineBanner: 'Mode luring — parobahan ngan disimpen di HP ieu.',
   pushEnable: 'Aktipkeun notifikasi darurat',
+  serverDown: 'Server teu aktip — nganggo data di HP ieu wungkul.',
 }
 
 export const DICTS: Record<Lang, Dict> = { id, en, su }

@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs'
 import Database from 'better-sqlite3'
 import { randomBytes } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -13,6 +13,10 @@ export const DAY = 86_400_000
 export const SESSION_DAYS = 30
 
 const DB_PATH = process.env.WJW_DB ?? join(HERE, 'data', 'wjw.sqlite')
+
+// Folder data tidak ikut Git (.gitignore), jadi pada clone baru folder ini
+// belum ada dan better-sqlite3 akan gagal. Buat lebih dulu.
+mkdirSync(dirname(DB_PATH), { recursive: true })
 
 export const db = new Database(DB_PATH)
 db.exec(readFileSync(join(HERE, 'schema.sql'), 'utf8'))

@@ -101,7 +101,8 @@ export default function Register() {
         setErr((e instanceof ApiError ? e.code : 'errInvite') as Key)
         return false
       }
-      // offline: pakai data lokal
+      // Server tidak terjangkau: beri tahu pengguna, lalu coba data lokal.
+      setOffline(true)
       const res = lookupInvite(raw)
       if (!res.ok) {
         setInvitedRole(null)
@@ -136,6 +137,7 @@ export default function Register() {
   }
 
   const [busy, setBusy] = useState(false)
+  const [offline, setOffline] = useState(false)
 
   const submit = async () => {
     setErr('')
@@ -182,6 +184,7 @@ export default function Register() {
         setBusy(false)
         return setErr((e instanceof ApiError ? e.code : 'errRequired') as Key)
       }
+      setOffline(true)
     }
 
     // offline: daftar ke penyimpanan lokal
@@ -221,6 +224,17 @@ export default function Register() {
         </div>
 
         {err && <div className="error-box">{tr(err)}</div>}
+
+        {offline && !err && (
+          <div className="banner banner-warn">
+            <Icon name="info" size={17} />
+            <span>
+              {tr('serverDown')}
+              <br />
+              <span className="tiny">{tr('serverDownHint')}</span>
+            </span>
+          </div>
+        )}
 
         {/* ---------------- 1. language ---------------- */}
         {step === 'lang' && (

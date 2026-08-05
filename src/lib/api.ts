@@ -55,8 +55,21 @@ async function request<T>(
     throw new ApiError('errOffline', 0)
   }
 
+  // Server perantara (proxy Vite, nginx) membalas 502/503/504 ketika API
+  // sedang mati. Itu sama artinya dengan "tidak terjangkau", bukan error
+  // aplikasi — perlakukan seperti luring agar jalur cadangan lokal jalan.
+  if (res.status === 502 || res.status === 503 || res.status === 504) {
+    throw new ApiError('errOffline', 0)
+  }
+
   const text = await res.text()
-  const data = text ? JSON.parse(text) : null
+  let data: unknown = null
+  try {
+    data = text ? JSON.parse(text) : null
+  } catch {
+    // balasan bukan JSON (mis. halaman error HTML dari proxy)
+    if (!res.ok) throw new ApiError('errOffline', 0)
+  }
 
   if (!res.ok) {
     // token kedaluwarsa → paksa login ulang
