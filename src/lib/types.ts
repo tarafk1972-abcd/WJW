@@ -362,7 +362,15 @@ export interface Payment {
   communityId: string
   plan: 'monthly' | 'yearly'
   amount: number
-  method: string
+  /**
+   * Satu-satunya metode pembayaran: QRIS ShopeePay.
+   *
+   * Dulu ini teks bebas ('Transfer Bank BCA', 'GoPay', 'OVO', …) yang
+   * dipilih admin dari daftar. Daftar itu sudah dihapus, tetapi datanya
+   * masih tersimpan di perangkat, jadi nilainya dinormalkan saat dibaca
+   * agar riwayat lama tidak lagi menyebut metode yang tidak berlaku.
+   */
+  method: 'QRIS ShopeePay'
   reference: string
   status: 'pending' | 'verified' | 'rejected'
   createdAt: number

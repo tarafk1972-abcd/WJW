@@ -99,8 +99,25 @@ export function loadDB(): DBShape {
     null,
   )
   cache = { ...emptyDB(), ...(stored ?? {}) }
+  migrate(cache)
   ensureSuperadmin(cache)
   return cache
+}
+
+/**
+ * Menyesuaikan data lama yang sudah tersimpan di perangkat.
+ *
+ * Data disimpan di localStorage, jadi memperbaiki kode saja tidak cukup:
+ * pembayaran yang dibuat versi lama tetap membawa metode pilihan admin
+ * ('Transfer Bank BCA', 'GoPay', 'OVO', …) dan akan terus tampil di
+ * riwayat meski daftar metodenya sudah dihapus.
+ */
+function migrate(db: DBShape) {
+  for (const p of db.payments) {
+    if (p.method !== PAYMENT_METHOD) {
+      p.method = PAYMENT_METHOD
+    }
+  }
 }
 
 /** Terlempar saat penyimpanan penuh dan tidak bisa dikosongkan lagi. */

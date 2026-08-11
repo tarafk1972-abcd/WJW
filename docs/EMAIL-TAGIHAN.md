@@ -1,7 +1,7 @@
 # Penagihan Langganan lewat Email
 
 Tidak ada penyedia pembayaran pihak ketiga. Tagihan dikirim lewat email,
-warga transfer, lalu pengelola memverifikasi.
+warga membayar lewat QRIS ShopeePay, lalu pengelola memverifikasi.
 
 ## Alur lengkap
 
@@ -15,7 +15,7 @@ warga transfer, lalu pengelola memverifikasi.
 5. **Langganan aktif** dan admin menerima email kuitansi.
 
 Langganan tidak pernah aktif otomatis — selalu ada manusia yang
-memeriksa. Ini disengaja karena tidak ada konfirmasi dari bank.
+memeriksa. Ini disengaja karena tidak ada konfirmasi otomatis dari ShopeePay.
 
 ## Empat template email
 

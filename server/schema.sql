@@ -218,7 +218,7 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_at ON audit(at DESC);
 
--- Tagihan langganan. Pembayaran lewat transfer, diverifikasi superadmin.
+-- Tagihan langganan. Pembayaran lewat QRIS ShopeePay, diverifikasi superadmin.
 CREATE TABLE IF NOT EXISTS invoices (
   id           TEXT PRIMARY KEY,
   community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
@@ -228,7 +228,7 @@ CREATE TABLE IF NOT EXISTS invoices (
   amount       INTEGER NOT NULL,
   -- pending → awaiting_verification → paid | expired
   status       TEXT NOT NULL DEFAULT 'pending',
-  -- nomor rujukan yang DITENTUKAN SISTEM, dicantumkan admin saat transfer.
+  -- nomor rujukan yang DITENTUKAN SISTEM, dicantumkan admin saat membayar.
   -- Bukan input pengguna, sehingga setiap pembayaran mudah dicocokkan.
   reference    TEXT NOT NULL DEFAULT '',
   -- catatan superadmin saat menolak klaim

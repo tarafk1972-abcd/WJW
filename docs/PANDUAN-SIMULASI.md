@@ -144,7 +144,8 @@ Sebagai **Budi (Admin)**:
 
 1. Sebagai Budi: **Admin → Langganan**.
 2. Terlihat sisa masa percobaan (11 hari pada data contoh).
-3. Pilih paket → isi metode & nomor referensi → **Kirim konfirmasi**.
+3. Pilih paket → **Buat tagihan**. Muncul QRIS ShopeePay beserta nomor
+   referensi yang dibuat sistem (tidak bisa diketik atau diubah).
 4. Masuk sebagai superadmin → **Pembayaran** → **Verifikasi**.
 5. Kembali sebagai Budi → status berubah **Aktif** beserta tanggal berakhir.
 

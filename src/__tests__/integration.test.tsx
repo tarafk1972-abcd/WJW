@@ -187,7 +187,10 @@ describe('UI ↔ server', () => {
     await waitFor(() => expect(document.body.textContent).toContain('Langganan'))
 
     await user.click(await screen.findByRole('button', { name: /Buat tagihan/i }))
-    await waitFor(() => expect(document.body.textContent).toContain('QRIS'), {
+
+    // Tunggu kartu QRIS-nya, bukan sekadar kata "QRIS": kata itu juga
+    // muncul pada keterangan di bawah tombol sebelum tagihan dibuat.
+    await waitFor(() => expect(document.querySelector('.qris-card')).toBeTruthy(), {
       timeout: 6000,
     })
 
@@ -197,7 +200,7 @@ describe('UI ↔ server', () => {
       .prepare('SELECT reference FROM invoices ORDER BY created_at DESC LIMIT 1')
       .get() as { reference: string }
     expect(row.reference).toMatch(/^WJW[A-HJ-NP-Z2-9]{5}$/)
-    expect(screen.getAllByText(row.reference).length).toBeGreaterThan(0)
+    expect(await screen.findAllByText(row.reference)).not.toHaveLength(0)
 
     // Tidak ada satu pun kolom isian: referensi tidak bisa diketik admin.
     expect(document.querySelectorAll('input')).toHaveLength(0)

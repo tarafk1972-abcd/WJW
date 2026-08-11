@@ -1400,7 +1400,7 @@ app.post('/api/billing/checkout', auth, active, async (c) => {
   )
 })
 
-/** Admin menandai sudah transfer; menunggu verifikasi superadmin. */
+/** Admin menandai sudah bayar lewat QRIS; menunggu verifikasi superadmin. */
 app.post('/api/billing/:id/claim', auth, active, (c) => {
   if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
   const me = c.get('me')
@@ -1451,7 +1451,7 @@ app.post('/api/billing/:id/verify', auth, async (c) => {
     if (!rejectPayment(inv.id, me.id, b.note ?? '')) return bad(c, 'errNotPending')
     void pushToMembers([inv.member_id], {
       title: 'Pembayaran belum dapat diverifikasi',
-      body: b.note?.trim() || 'Mohon periksa kembali bukti transfer Anda.',
+      body: b.note?.trim() || 'Mohon periksa kembali pembayaran QRIS Anda.',
       url: '#/app/billing',
       tag: `reject-${inv.id}`,
     })

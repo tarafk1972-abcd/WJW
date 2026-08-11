@@ -261,7 +261,7 @@ describe('verifikasi oleh superadmin', () => {
     await call(
       'POST',
       `/api/billing/${invoiceId}/verify`,
-      { approve: false, note: 'Bukti transfer tidak jelas' },
+      { approve: false, note: 'Nominal tidak cocok dengan tagihan' },
       st,
     )
 
@@ -269,7 +269,7 @@ describe('verifikasi oleh superadmin', () => {
       .prepare('SELECT status, note FROM invoices WHERE id=?')
       .get(invoiceId) as { status: string; note: string }
     expect(row.status).toBe('pending')
-    expect(row.note).toBe('Bukti transfer tidak jelas')
+    expect(row.note).toBe('Nominal tidak cocok dengan tagihan')
 
     // langganan tetap belum aktif
     const com = db

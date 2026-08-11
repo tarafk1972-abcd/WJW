@@ -161,3 +161,58 @@ describe('perubahan lokal terlihat oleh useMemo', () => {
     expect(after.length).toBe(countBefore + 1)
   })
 })
+
+/**
+ * Regresi: dulu halaman ini punya daftar pilihan metode berisi
+ * 'Transfer Bank BCA', 'Transfer Bank Mandiri', 'QRIS', 'GoPay', 'OVO'.
+ * Kini hanya ada satu metode, jadi tidak boleh ada daftar pilihan sama
+ * sekali — dan metode selain QRIS ShopeePay tidak boleh muncul di mana pun,
+ * termasuk pada riwayat pembayaran yang dibuat versi lama.
+ */
+describe('hanya satu metode pembayaran', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    invalidateCache()
+    window.location.hash = '#/'
+  })
+
+  const TERLARANG = /transfer bank|bca|mandiri|gopay|ovo|dana\b|virtual account|kartu kredit/i
+
+  it('tidak ada daftar pilihan metode di halaman langganan', async () => {
+    const f = makeAdmin()
+    submitPayment(f.community.id, f.member.id, 'monthly')
+    await openBilling()
+    await waitFor(() => expect(document.body.textContent).toContain('QRIS'))
+
+    expect(document.querySelectorAll('select')).toHaveLength(0)
+    expect(document.body.textContent).not.toMatch(TERLARANG)
+  })
+
+  it('metode lama yang tersimpan di perangkat ikut dibersihkan', async () => {
+    const f = makeAdmin()
+    const pay = submitPayment(f.community.id, f.member.id, 'monthly')
+
+    // Tiru data yang dibuat versi lama: metode dipilih admin dari daftar.
+    const raw = JSON.parse(localStorage.getItem('wjw.db.v1') as string)
+    raw.payments.find((p: { id: string }) => p.id === pay.id).method =
+      'Transfer Bank BCA'
+    localStorage.setItem('wjw.db.v1', JSON.stringify(raw))
+    invalidateCache()
+
+    expect(loadDB().payments.find((p) => p.id === pay.id)!.method).toBe(
+      PAYMENT_METHOD,
+    )
+
+    await openBilling()
+    await waitFor(() => expect(document.body.textContent).toContain('QRIS'))
+    expect(document.body.textContent).not.toMatch(TERLARANG)
+  })
+
+  it('tidak ada kunci bahasa yang menyebut metode selain QRIS', () => {
+    for (const [lang, dict] of Object.entries(DICTS)) {
+      for (const [key, value] of Object.entries(dict)) {
+        expect(TERLARANG.test(value), `${lang}.${key} = ${value}`).toBe(false)
+      }
+    }
+  })
+})
