@@ -587,6 +587,9 @@ const id = {
   serverDown: 'Server tidak aktif — memakai data di HP ini saja.',
   consoleLocalOnly:
     'Tidak terhubung ke server — angka di bawah hanya dari data perangkat ini, bukan data sebenarnya.',
+  consoleEmpty: 'Terhubung ke server, tetapi belum ada lingkungan terdaftar.',
+  consoleEmptyHint:
+    'Ini wajar pada pemasangan baru. Setiap server menyimpan datanya sendiri, jadi akun yang dibuat di komputer atau alamat lain tidak muncul di sini. Buat lingkungan pertama lewat menu Daftar.',
   serverDownHint: 'Jalankan `npm run server` lalu coba lagi.',
 
   // --- tagihan & pembayaran ---
@@ -1207,6 +1210,9 @@ const en: Dict = {
   serverDown: 'Server is down — using data on this phone only.',
   consoleLocalOnly:
     'Not connected to the server — the figures below come from this device only, not the real data.',
+  consoleEmpty: 'Connected to the server, but no neighbourhoods are registered yet.',
+  consoleEmptyHint:
+    'This is normal on a fresh install. Each server keeps its own data, so accounts created on another machine or address will not appear here. Create the first one via Register.',
   serverDownHint: 'Run `npm run server`, then try again.',
 
   payNow: 'Pay now',

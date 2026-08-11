@@ -135,6 +135,24 @@ export default function Console() {
 
         {tab === 'overview' && (
           <>
+            {/*
+              Terhubung ke server tetapi belum ada satu pun lingkungan.
+              Tanpa keterangan, deretan nol ini terbaca seperti kegagalan,
+              padahal itu keadaan wajar pemasangan baru: data tersimpan di
+              server masing-masing, jadi akun yang dibuat di tempat lain
+              tidak muncul di sini.
+            */}
+            {apiMode() && stats.total === 0 && (
+              <div className="banner banner-info" style={{ marginBottom: 14 }}>
+                <Icon name="info" size={17} />
+                <span>
+                  {t('consoleEmpty')}
+                  <br />
+                  <span className="tiny">{t('consoleEmptyHint')}</span>
+                </span>
+              </div>
+            )}
+
             <div className="stat-grid">
               <div className="stat">
                 <div className="n">{stats.total}</div>
