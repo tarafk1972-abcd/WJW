@@ -252,3 +252,17 @@ CREATE TABLE IF NOT EXISTS webhook_events (
   payload     TEXT NOT NULL,
   at          INTEGER NOT NULL
 );
+
+-- Riwayat email yang dikirim ke admin (tagihan, pengingat, kuitansi).
+CREATE TABLE IF NOT EXISTS emails (
+  id           TEXT PRIMARY KEY,
+  community_id TEXT,
+  member_id    TEXT,
+  kind         TEXT NOT NULL,          -- bill | reminder | expired | paid | test
+  to_email     TEXT NOT NULL,
+  subject      TEXT NOT NULL,
+  status       TEXT NOT NULL,          -- sent | failed | skipped
+  error        TEXT,
+  at           INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_emails_community ON emails(community_id, at DESC);

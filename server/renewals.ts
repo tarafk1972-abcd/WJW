@@ -13,8 +13,20 @@
  * tanpa menunggu hari berganti.
  */
 import { DAY, audit, db, now as realNow } from './db.js'
+import { billEmail, expiredEmail, reminderEmail } from './email-templates.js'
+import { sendMail } from './mailer.js'
 import { createInvoice, mayarEnabled } from './mayar.js'
 import { pushToMembers } from './push.js'
+
+/** Info rekening untuk pembayaran manual, bila tautan bayar tidak tersedia. */
+const BANK_INFO = process.env.WJW_BANK_INFO ?? ''
+
+/** Harga yang dipakai saat menagih tanpa Mayar. */
+function priceOf(plan: 'monthly' | 'yearly'): number {
+  return plan === 'monthly'
+    ? Number(process.env.WJW_PRICE_MONTHLY ?? 149000)
+    : Number(process.env.WJW_PRICE_YEARLY ?? 1490000)
+}
 
 /** Ambang hari sebelum jatuh tempo yang memicu tindakan. */
 export const REMIND_DAYS = [7, 3, 1] as const
@@ -126,6 +138,29 @@ export async function runRenewalCheck(
         )
         audit(c.id, 'scheduler', 'renewal.expired', c.name)
         out.expired.push(c.id)
+
+        if (admins[0]) {
+          const plan = c.plan_name === 'yearly' ? 'yearly' : 'monthly'
+          const ex = expiredEmail({
+            adminName: admins[0].name,
+            communityName: c.name,
+            plan,
+            amount: priceOf(plan),
+            payUrl: null,
+            dueAt: expiry,
+            invoiceNo: c.id.slice(-6).toUpperCase(),
+            bankInfo: BANK_INFO,
+          })
+          void sendMail({
+            to: admins[0].email,
+            subject: ex.subject,
+            html: ex.html,
+            text: ex.text,
+            kind: 'expired',
+            communityId: c.id,
+            memberId: admins[0].id,
+          })
+        }
       }
       continue
     }
@@ -150,7 +185,34 @@ export async function runRenewalCheck(
         )
         .get(c.id, now)
 
-      if (!pending && mayarEnabled()) {
+      if (!pending && !mayarEnabled()) {
+        // Tanpa penyedia pembayaran, tetap tagih lewat email dengan
+        // instruksi transfer manual.
+        const admin = admins[0]
+        const plan = c.plan_name === 'yearly' ? 'yearly' : 'monthly'
+        const mail = billEmail({
+          adminName: admin.name,
+          communityName: c.name,
+          plan,
+          amount: priceOf(plan),
+          payUrl: null,
+          dueAt: expiry,
+          daysLeft: left,
+          invoiceNo: `${c.id.slice(-6).toUpperCase()}-${new Date(expiry).getFullYear()}`,
+          bankInfo: BANK_INFO,
+        })
+        void sendMail({
+          to: admin.email,
+          subject: mail.subject,
+          html: mail.html,
+          text: mail.text,
+          kind: 'bill',
+          communityId: c.id,
+          memberId: admin.id,
+        })
+        audit(c.id, 'scheduler', 'renewal.billedManual', plan)
+        out.billed.push(c.id)
+      } else if (!pending && mayarEnabled()) {
         const admin = admins[0]
         // Perpanjang paket yang sama; masa percobaan default ke bulanan.
         const plan = c.plan_name === 'yearly' ? 'yearly' : 'monthly'
@@ -169,6 +231,28 @@ export async function runRenewalCheck(
           audit(c.id, 'scheduler', 'renewal.billed', `${plan} ${inv.amount}`)
           out.billed.push(c.id)
 
+          // Email tagihan ke admin — inilah pemberitahuan utamanya.
+          const mail = billEmail({
+            adminName: admin.name,
+            communityName: c.name,
+            plan,
+            amount: inv.amount,
+            payUrl: inv.pay_url,
+            dueAt: expiry,
+            daysLeft: left,
+            invoiceNo: inv.id,
+            bankInfo: BANK_INFO,
+          })
+          void sendMail({
+            to: admin.email,
+            subject: mail.subject,
+            html: mail.html,
+            text: mail.text,
+            kind: 'bill',
+            communityId: c.id,
+            memberId: admin.id,
+          })
+
           void pushToMembers(
             admins.map((a) => a.id),
             {
@@ -186,6 +270,31 @@ export async function runRenewalCheck(
             'renewal.billFailed',
             String(e instanceof Error ? e.message : e),
           )
+
+          // Admin tetap harus tahu bahwa ada tagihan. Kirim email dengan
+          // instruksi transfer manual sebagai cadangan — jangan sampai
+          // langganan berakhir diam-diam hanya karena gangguan penyedia.
+          const fb = billEmail({
+            adminName: admin.name,
+            communityName: c.name,
+            plan,
+            amount: priceOf(plan),
+            payUrl: null,
+            dueAt: expiry,
+            daysLeft: left,
+            invoiceNo: `${c.id.slice(-6).toUpperCase()}-${new Date(expiry).getFullYear()}`,
+            bankInfo: BANK_INFO,
+          })
+          void sendMail({
+            to: admin.email,
+            subject: fb.subject,
+            html: fb.html,
+            text: fb.text,
+            kind: 'bill',
+            communityId: c.id,
+            memberId: admin.id,
+          })
+          out.billed.push(c.id)
         }
       }
     }
@@ -205,6 +314,37 @@ export async function runRenewalCheck(
         )
         audit(c.id, 'scheduler', 'renewal.remind', `H-${d}`)
         out.reminded.push(c.id)
+
+        const openInv = db
+          .prepare(
+            `SELECT id, amount, plan, pay_url FROM invoices
+             WHERE community_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1`,
+          )
+          .get(c.id) as
+          | { id: string; amount: number; plan: string; pay_url: string | null }
+          | undefined
+
+        const plan = (openInv?.plan ?? c.plan_name) === 'yearly' ? 'yearly' : 'monthly'
+        const rm = reminderEmail({
+          adminName: admins[0].name,
+          communityName: c.name,
+          plan,
+          amount: openInv?.amount ?? priceOf(plan),
+          payUrl: openInv?.pay_url ?? null,
+          dueAt: expiry,
+          daysLeft: d,
+          invoiceNo: openInv?.id ?? c.id.slice(-6).toUpperCase(),
+          bankInfo: BANK_INFO,
+        })
+        void sendMail({
+          to: admins[0].email,
+          subject: rm.subject,
+          html: rm.html,
+          text: rm.text,
+          kind: 'reminder',
+          communityId: c.id,
+          memberId: admins[0].id,
+        })
       }
     }
   }

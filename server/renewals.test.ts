@@ -213,6 +213,25 @@ describe('tagihan perpanjangan otomatis', () => {
     expect(res.billed).not.toContain(a.communityId)
   })
 
+  it('tetap mengirim email tagihan manual bila Mayar gagal', async () => {
+    const a = await makeCommunity()
+    const now = Date.now()
+    setExpiry(a.communityId, now + 7 * DAY)
+
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{"messages":"gagal"}', { status: 500 }))
+    const res = await runRenewalCheck(now)
+    spy.mockRestore()
+
+    // admin tetap ditagih, tidak dibiarkan tanpa kabar
+    expect(res.billed).toContain(a.communityId)
+    const mail = db
+      .prepare("SELECT kind, subject FROM emails WHERE community_id=? AND kind='bill'")
+      .get(a.communityId) as { kind: string; subject: string } | undefined
+    expect(mail).toBeTruthy()
+  })
+
   it('kegagalan Mayar tidak menghentikan lingkungan lain', async () => {
     const a = await makeCommunity()
     const b = await makeCommunity()
@@ -237,8 +256,10 @@ describe('tagihan perpanjangan otomatis', () => {
     const res = await runRenewalCheck(now)
     spy.mockRestore()
 
-    // satu gagal, satu tetap berhasil ditagih
-    expect(res.billed).toHaveLength(1)
+    // Keduanya tetap ditagih: satu lewat Mayar, satu lewat email cadangan.
+    // Yang penting, kegagalan satu lingkungan tidak menghentikan yang lain.
+    expect(res.billed).toContain(a.communityId)
+    expect(res.billed).toContain(b.communityId)
     expect(res.checked).toBeGreaterThanOrEqual(2)
   })
 })

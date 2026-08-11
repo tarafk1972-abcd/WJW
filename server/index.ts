@@ -40,6 +40,8 @@ import {
   recordEvent,
   type MayarWebhookPayload,
 } from './mayar.js'
+import { billEmail, paidEmail } from './email-templates.js'
+import { mailEnabled, sendMail, verifyMail } from './mailer.js'
 import { runRenewalCheck, startRenewalScheduler } from './renewals.js'
 import {
   pushEnabled,
@@ -1406,6 +1408,37 @@ app.post('/api/webhooks/mayar', async (c) => {
         url: '#/app/billing',
         tag: `paid-${inv.id}`,
       })
+
+      // Kuitansi lewat email
+      const info = db
+        .prepare(
+          `SELECT m.name, m.email, c.name AS cname, c.paid_until
+           FROM members m JOIN communities c ON c.id = m.community_id
+           WHERE m.id = ?`,
+        )
+        .get(inv.member_id) as
+        | { name: string; email: string; cname: string; paid_until: number }
+        | undefined
+      if (info) {
+        const mail = paidEmail({
+          adminName: info.name,
+          communityName: info.cname,
+          plan: inv.plan as 'monthly' | 'yearly',
+          amount: inv.amount,
+          dueAt: inv.expires_at ?? now(),
+          invoiceNo: inv.id,
+          activeUntil: info.paid_until,
+        })
+        void sendMail({
+          to: info.email,
+          subject: mail.subject,
+          html: mail.html,
+          text: mail.text,
+          kind: 'paid',
+          communityId: inv.community_id,
+          memberId: inv.member_id,
+        })
+      }
     }
   }
 
@@ -1430,6 +1463,82 @@ app.post('/api/billing/run-renewals', auth, async (c) => {
   if (me.role !== 'superadmin') return bad(c, 'forbidden', 403)
   const result = await runRenewalCheck()
   return c.json(result)
+})
+
+/* ================= email ================= */
+
+app.get('/api/email/status', auth, active, (c) => {
+  const me = c.get('me')
+  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
+  const rows = db
+    .prepare(
+      'SELECT id, kind, to_email, subject, status, error, at FROM emails WHERE community_id=? ORDER BY at DESC LIMIT 30',
+    )
+    .all(me.community_id) as Record<string, unknown>[]
+  return c.json({ enabled: mailEnabled(), emails: rows })
+})
+
+/** Uji setelan SMTP (superadmin). */
+app.post('/api/email/test', auth, async (c) => {
+  const me = c.get('me')
+  if (me.role !== 'superadmin') return bad(c, 'forbidden', 403)
+  const v = await verifyMail()
+  if (!v.ok) return c.json({ ok: false, error: v.error }, 200)
+
+  const b = (await c.req.json().catch(() => ({}))) as { to?: string }
+  const preview = billEmail({
+    adminName: 'Contoh Admin',
+    communityName: 'RW 05 Contoh',
+    plan: 'monthly',
+    amount: 149000,
+    payUrl: 'https://contoh.mayar.shop/invoices/contoh',
+    dueAt: now() + 7 * DAY,
+    invoiceNo: 'CONTOH-001',
+  })
+  const r = await sendMail({
+    to: b.to || me.email,
+    subject: `[UJI] ${preview.subject}`,
+    html: preview.html,
+    text: preview.text,
+    kind: 'test',
+  })
+  return c.json(r)
+})
+
+/** Kirim ulang email tagihan yang masih menunggu pembayaran. */
+app.post('/api/billing/:id/resend', auth, active, async (c) => {
+  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
+  const me = c.get('me')
+  const inv = db
+    .prepare('SELECT * FROM invoices WHERE id=?')
+    .get(c.req.param('id')) as Record<string, unknown> | undefined
+  if (!inv || !sameCommunity(me, inv.community_id as string))
+    return bad(c, 'forbidden', 403)
+  if (inv.status !== 'pending') return bad(c, 'errNotPending')
+
+  const com = db
+    .prepare('SELECT name FROM communities WHERE id=?')
+    .get(inv.community_id) as { name: string }
+  const mail = billEmail({
+    adminName: me.name,
+    communityName: com.name,
+    plan: inv.plan as 'monthly' | 'yearly',
+    amount: inv.amount as number,
+    payUrl: (inv.pay_url as string) ?? null,
+    dueAt: (inv.expires_at as number) ?? now(),
+    invoiceNo: inv.id as string,
+    bankInfo: process.env.WJW_BANK_INFO ?? '',
+  })
+  const r = await sendMail({
+    to: me.email,
+    subject: mail.subject,
+    html: mail.html,
+    text: mail.text,
+    kind: 'bill',
+    communityId: inv.community_id as string,
+    memberId: me.id,
+  })
+  return c.json(r)
 })
 
 /* ================= start ================= */
