@@ -5,6 +5,7 @@ import { SUPERADMIN_EMAIL, deviceId, login, setSession } from '../lib/db'
 import { syncState } from '../lib/sync'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'
+import { Sheet } from '../ui/Sheet'
 import type { Key } from '../lib/i18n'
 
 export default function Login() {
@@ -15,6 +16,9 @@ export default function Login() {
   const [err, setErr] = useState<Key | ''>('')
 
   const [busy, setBusy] = useState(false)
+  // Server tidak terjangkau pada percobaan terakhir.
+  const [offline, setOffline] = useState(false)
+  const [help, setHelp] = useState(false)
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -36,6 +40,7 @@ export default function Login() {
         setBusy(false)
         return
       }
+      setOffline(true)
       const local = login(id, pw)
       if (!local.ok) {
         setErr(local.error as Key)
@@ -72,7 +77,20 @@ export default function Login() {
           {t('appTagline')}
         </p>
 
-        {err && <div className="error-box">{t(err)}</div>}
+        {err && (
+          <div className="error-box">
+            {t(err)}
+            {err === 'errLogin' && (
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => setHelp(true)}
+              >
+                {t('forgotPassword')}
+              </button>
+            )}
+          </div>
+        )}
 
         <label className="field">
           <span>{t('email')} / {t('phone')}</span>
@@ -103,16 +121,35 @@ export default function Login() {
           {t('noAccount')} <a onClick={() => nav('/register')}>{t('register')}</a>
         </p>
 
-        <div className="divider" />
-        <div className="card card-tight">
-          <div className="tiny strong" style={{ marginBottom: 6 }}>
-            <Icon name="key" size={12} /> {t('demoLogins')}
-          </div>
-          <div className="tiny">
-            Superadmin: <b>{SUPERADMIN_EMAIL}</b> / <b>superadmin</b>
-          </div>
-        </div>
+        {/*
+          Sandi contoh hanya berlaku pada data demo di perangkat ini.
+          Saat memakai server, sandi superadmin ditentukan operator lewat
+          WJW_SUPERADMIN_PASSWORD, jadi menampilkannya di sini justru
+          menyesatkan: pengguna mencobanya lalu ditolak.
+        */}
+        {offline && (
+          <>
+            <div className="divider" />
+            <div className="card card-tight">
+              <div className="tiny strong" style={{ marginBottom: 6 }}>
+                <Icon name="key" size={12} /> {t('demoLogins')}
+              </div>
+              <div className="tiny">
+                Superadmin: <b>{SUPERADMIN_EMAIL}</b> / <b>superadmin</b>
+              </div>
+              <div className="tiny" style={{ marginTop: 6 }}>
+                {t('demoLocalOnly')}
+              </div>
+            </div>
+          </>
+        )}
       </form>
+
+      <Sheet open={help} onClose={() => setHelp(false)} title={t('forgotPassword')}>
+        <p className="tiny" style={{ whiteSpace: 'pre-line', lineHeight: 1.7 }}>
+          {t('forgotPasswordHelp')}
+        </p>
+      </Sheet>
     </div>
   )
 }

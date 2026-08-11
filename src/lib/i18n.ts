@@ -310,6 +310,11 @@ const id = {
   you: 'Anda',
   demoData: 'Isi data contoh',
   demoLogins: 'Akun demo',
+  demoLocalOnly:
+    'Hanya berlaku untuk data contoh di perangkat ini, bukan untuk server.',
+  forgotPassword: 'Lupa sandi?',
+  forgotPasswordHelp:
+    'Sandi superadmin ditentukan saat server dipasang. Bila lupa, jalankan di komputer server:\n\nnpm run reset-password -- <email> <sandi-baru>\n\nUntuk melihat daftar akun: npm run reset-password -- --list',
 
   // --- panic / SaferWatch-style additions ---
   holdToReport: 'Tekan & tahan untuk melaporkan darurat',
@@ -934,6 +939,10 @@ const en: Dict = {
   you: 'You',
   demoData: 'Load sample data',
   demoLogins: 'Demo accounts',
+  demoLocalOnly: 'Only valid for sample data on this device, not on the server.',
+  forgotPassword: 'Forgot password?',
+  forgotPasswordHelp:
+    'The superadmin password is set when the server is installed. If it is lost, run this on the server machine:\n\nnpm run reset-password -- <email> <new-password>\n\nTo list accounts: npm run reset-password -- --list',
 
   holdToReport: 'Press & hold to report an emergency',
   holdToSend: 'Hold {n}s…',
