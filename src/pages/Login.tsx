@@ -5,6 +5,7 @@ import { SUPERADMIN_EMAIL, deviceId, login, setSession } from '../lib/db'
 import { syncState } from '../lib/sync'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'
+import { PasswordField } from '../ui/PasswordField'
 import { Sheet } from '../ui/Sheet'
 import type { Key } from '../lib/i18n'
 
@@ -102,16 +103,12 @@ export default function Login() {
             autoCapitalize="none"
           />
         </label>
-        <label className="field">
-          <span>{t('password')}</span>
-          <input
-            className="input"
-            type="password"
-            value={pw}
-            onChange={(e) => setPw(e.target.value)}
-            placeholder="••••••"
-          />
-        </label>
+        <PasswordField
+          label={t('password')}
+          value={pw}
+          onChange={setPw}
+          autoComplete="current-password"
+        />
 
         <button className="btn btn-primary" type="submit" disabled={busy}>
           <Icon name="lock" size={16} /> {busy ? t('loading') : t('login')}

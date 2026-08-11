@@ -6,6 +6,7 @@ import { syncState } from '../lib/sync'
 import { LANGS, translate } from '../lib/i18n'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'
+import { PasswordField } from '../ui/PasswordField'
 import { QrScanner } from '../ui/QrScanner'
 import { Sheet } from '../ui/Sheet'
 import { useToast } from '../ui/Toast'
@@ -584,16 +585,13 @@ export default function Register() {
                 autoCapitalize="none"
               />
             </label>
-            <label className="field">
-              <span>{tr('password')} *</span>
-              <input
-                className="input"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••"
-              />
-            </label>
+            <PasswordField
+              label={`${tr('password')} *`}
+              value={password}
+              onChange={setPassword}
+              autoComplete="new-password"
+              hint={tr('passwordHint')}
+            />
             <label className="field">
               <span>{tr('house')} *</span>
               <input

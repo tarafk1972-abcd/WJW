@@ -1807,3 +1807,50 @@ p {
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* ---------- kolom kata sandi ---------- */
+
+.pw-wrap {
+  position: relative;
+  display: block;
+}
+
+/* Beri ruang agar teks tidak tertutup tombol mata. */
+.pw-input {
+  padding-right: 46px;
+}
+
+.pw-toggle {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Sasaran sentuh nyaman di ponsel. */
+  width: 40px;
+  height: 40px;
+  background: none;
+  border: 0;
+  border-radius: 10px;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: 0.15s;
+}
+
+.pw-toggle:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.pw-toggle:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
+}
+
+.pw-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-3);
+}
