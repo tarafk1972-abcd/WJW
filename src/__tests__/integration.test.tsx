@@ -163,4 +163,44 @@ describe('UI ↔ server', () => {
       { timeout: 6000 },
     )
   }, 20000)
+
+  /**
+   * Langganan lewat server: satu-satunya cara bayar adalah QRIS ShopeePay,
+   * dan nomor referensinya datang dari server — tidak ada kolom isian
+   * apa pun di halaman itu untuk mengetiknya.
+   */
+  it('halaman langganan memakai QRIS dengan referensi dari server', async () => {
+    const user = userEvent.setup()
+    const { authApi, setToken: st } = await import('../lib/api')
+    const { setSession } = await import('../lib/db')
+
+    const admin = await authApi.register({
+      name: 'Admin Tagihan', phone: '081700000009', email: 'bill@x.id',
+      password: 'rahasia123', house: 'A1', mode: 'create',
+      communityName: 'RW Tagihan', language: 'id',
+    })
+    st(admin.token)
+    setSession((admin.member as { id: string }).id)
+
+    window.location.hash = '#/app/billing'
+    render(<App />)
+    await waitFor(() => expect(document.body.textContent).toContain('Langganan'))
+
+    await user.click(await screen.findByRole('button', { name: /Buat tagihan/i }))
+    await waitFor(() => expect(document.body.textContent).toContain('QRIS'), {
+      timeout: 6000,
+    })
+
+    // Referensi yang tampil harus sama persis dengan yang tersimpan di server.
+    const db = await serverDb()
+    const row = db
+      .prepare('SELECT reference FROM invoices ORDER BY created_at DESC LIMIT 1')
+      .get() as { reference: string }
+    expect(row.reference).toMatch(/^WJW[A-HJ-NP-Z2-9]{5}$/)
+    expect(screen.getAllByText(row.reference).length).toBeGreaterThan(0)
+
+    // Tidak ada satu pun kolom isian: referensi tidak bisa diketik admin.
+    expect(document.querySelectorAll('input')).toHaveLength(0)
+    expect(document.body.textContent).not.toMatch(/bukti transfer/i)
+  }, 20000)
 })

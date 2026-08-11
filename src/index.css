@@ -1787,3 +1787,10 @@ p {
   color: var(--warn);
   margin-top: 4px;
 }
+
+.qris-missing {
+  padding: 26px 14px;
+  border: 2px dashed var(--line);
+  border-radius: 12px;
+  line-height: 1.5;
+}

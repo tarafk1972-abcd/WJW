@@ -3,18 +3,18 @@ import { useNavigate } from 'react-router'
 import { ApiError, billingApi, type InvoiceDto } from '../lib/api'
 import { PRICE_MONTHLY, PRICE_YEARLY, submitPayment } from '../lib/db'
 import { fmtDate, fmtDateTime, fmtMoney } from '../lib/format'
+import { QRIS_LOCAL } from '../lib/qris'
 import { useApp } from '../lib/store'
 import { apiMode } from '../lib/sync'
 import { Icon } from '../ui/Icon'
+import { QrisCard } from '../ui/QrisCard'
 import { Sheet } from '../ui/Sheet'
 import { useToast } from '../ui/Toast'
 import type { Key } from '../lib/i18n'
-
-/** Satu-satunya metode pembayaran. */
-const METHOD_LOCAL = 'QRIS ShopeePay'
+import type { Payment } from '../lib/types'
 
 export default function Billing() {
-  const { db, me, community, t, lang, plan, isAdmin } = useApp()
+  const { db, me, community, t, lang, plan, isAdmin, refresh } = useApp()
   const nav = useNavigate()
   const toast = useToast()
 
@@ -22,13 +22,10 @@ export default function Billing() {
   const [busy, setBusy] = useState(false)
   const [invoices, setInvoices] = useState<InvoiceDto[] | null>(null)
   const [prices, setPrices] = useState({ monthly: PRICE_MONTHLY, yearly: PRICE_YEARLY })
-  const [qris, setQris] = useState({ name: '', phone: '', imageUrl: '', info: '' })
+  const [qris, setQris] = useState(QRIS_LOCAL)
 
   // sheet konfirmasi pembayaran
   const [claiming, setClaiming] = useState<InvoiceDto | null>(null)
-
-  // mode lokal (tanpa server)
-  const [ref, setRef] = useState('')
 
   const load = useCallback(async () => {
     if (!apiMode()) return
@@ -58,6 +55,9 @@ export default function Billing() {
     (i) => i.status === 'pending' || i.status === 'awaiting_verification',
   )
 
+  /** Tagihan lokal yang masih menunggu verifikasi. */
+  const openLocal: Payment | undefined = localPayments.find((p) => p.status === 'pending')
+
   const createBill = async () => {
     setBusy(true)
     try {
@@ -84,11 +84,13 @@ export default function Billing() {
     setBusy(false)
   }
 
-  const submitLocal = () => {
-    if (!ref.trim()) return toast(t('errRequired'), 'err')
-    submitPayment(community.id, me.id, choice, METHOD_LOCAL, ref.trim())
-    setRef('')
-    toast(t('paymentPending'))
+  /** Mode lokal: buat tagihan dengan nomor referensi dari sistem. */
+  const createLocalBill = () => {
+    submitPayment(community.id, me.id, choice)
+    // Tulisan ke penyimpanan lokal tidak memicu render ulang dengan
+    // sendirinya — minta store membaca ulang agar tagihannya tampil.
+    refresh()
+    toast(t('billCreatedLocal'))
   }
 
   const chipClass = (s: InvoiceDto['status']) =>
@@ -199,58 +201,11 @@ export default function Billing() {
                     </div>
                   )}
 
-                  {/* QRIS ShopeePay */}
-                  <div
-                    className="card card-tight"
-                    style={{ background: 'var(--bg-2)', marginBottom: 10, textAlign: 'center' }}
-                  >
-                    <div className="tiny strong" style={{ marginBottom: 10 }}>
-                      {t('qrisShopee')}
-                    </div>
-
-                    {qris.imageUrl ? (
-                      <img
-                        src={qris.imageUrl}
-                        alt="QRIS"
-                        className="qris-img"
-                        onError={(e) => {
-                          e.currentTarget.style.display = 'none'
-                        }}
-                      />
-                    ) : (
-                      <div className="tiny" style={{ padding: 20 }}>
-                        {t('qrisNotSet')}
-                      </div>
-                    )}
-
-                    {qris.name && (
-                      <div className="strong" style={{ fontSize: 13.5, marginTop: 8 }}>
-                        {t('onBehalf')} {qris.name}
-                      </div>
-                    )}
-                    <div className="tiny" style={{ marginTop: 6, lineHeight: 1.5 }}>
-                      {t('scanQris')}
-                    </div>
-
-                    {/* nomor referensi — ditentukan sistem */}
-                    <div className="ref-box">
-                      <div className="tiny">{t('refFixed')}</div>
-                      <div className="ref-code">{openInvoice.reference}</div>
-                      <button
-                        className="btn btn-sm btn-ghost"
-                        style={{ marginTop: 8 }}
-                        onClick={() => {
-                          navigator.clipboard?.writeText(openInvoice.reference)
-                          toast(t('copied'))
-                        }}
-                      >
-                        <Icon name="copy" size={13} /> {t('copyRef')}
-                      </button>
-                      <div className="tiny" style={{ marginTop: 8 }}>
-                        {t('refWhy')}
-                      </div>
-                    </div>
-                  </div>
+                  <QrisCard
+                    qris={qris}
+                    reference={openInvoice.reference}
+                    amount={openInvoice.amount}
+                  />
 
                   <button
                     className="btn btn-primary"
@@ -278,8 +233,24 @@ export default function Billing() {
             </div>
           )}
 
+          {/* tagihan berjalan — mode lokal */}
+          {!apiMode() && openLocal && (
+            <div className="card" style={{ marginTop: 14, borderColor: 'var(--warn)' }}>
+              <div className="row-between" style={{ marginBottom: 10 }}>
+                <span className="strong">{t('billPending')}</span>
+                <span className="chip chip-warn">{fmtMoney(openLocal.amount, lang)}</span>
+              </div>
+              <QrisCard
+                qris={qris}
+                reference={openLocal.reference}
+                amount={openLocal.amount}
+              />
+              <p className="tiny center">{t('localBillNote')}</p>
+            </div>
+          )}
+
           {/* pilih paket — hanya bila tidak ada tagihan berjalan */}
-          {!openInvoice && (
+          {!openInvoice && !(!apiMode() && openLocal) && (
             <>
               <div className="section-title">{t('subscribe')}</div>
               <div className="col" style={{ gap: 10 }}>
@@ -339,24 +310,18 @@ export default function Billing() {
                   </p>
                 </>
               ) : (
-                /* mode lokal */
+                /* mode lokal — tanpa server, tanpa email */
                 <>
-                  <div className="banner banner-info" style={{ marginTop: 16 }}>
-                    <Icon name="credit" size={17} />
-                    <span>{t('qrisShopee')}</span>
-                  </div>
-                  <label className="field">
-                    <span>{t('paymentRef')}</span>
-                    <input
-                      className="input"
-                      value={ref}
-                      onChange={(e) => setRef(e.target.value)}
-                      placeholder="TRX-000123"
-                    />
-                  </label>
-                  <button className="btn btn-primary" onClick={submitLocal}>
-                    <Icon name="credit" size={16} /> {t('submitPayment')}
+                  <button
+                    className="btn btn-primary"
+                    style={{ marginTop: 16 }}
+                    onClick={createLocalBill}
+                  >
+                    <Icon name="credit" size={16} /> {t('createBill')}
                   </button>
+                  <p className="tiny center" style={{ marginTop: 10 }}>
+                    {t('localBillNote')}
+                  </p>
                 </>
               )}
             </>

@@ -73,7 +73,8 @@ curl -X POST http://localhost:8787/api/email/test \
 
 Aplikasi tetap berjalan. Email dicatat berstatus `skipped` dan muncul di
 riwayat, sehingga terlihat apa yang *seharusnya* terkirim. Admin tetap
-bisa melihat nomor rekening dan menandai sudah bayar lewat aplikasi.
+bisa melihat QRIS beserta nomor referensinya di halaman Langganan dan
+menandai sudah bayar lewat aplikasi.
 
 ## Nomor referensi
 
@@ -87,6 +88,14 @@ lewat pengecekan basis data.
 
 Inilah yang Anda pakai untuk mencocokkan mutasi ShopeePay dengan klaster
 yang membayar.
+
+Di halaman Langganan tidak ada kolom isian apa pun untuk nomor ini —
+admin hanya bisa menyalinnya. Tidak ada pula permintaan unggah bukti
+transfer: pencocokan dilakukan lewat nomor referensi saja.
+
+Saat aplikasi dipakai tanpa server (mode luring), nomor referensi tetap
+dibuat sistem dengan format yang sama, tetapi tagihannya hanya tersimpan
+di perangkat itu.
 
 ## Menyiapkan gambar QRIS
 

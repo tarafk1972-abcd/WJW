@@ -157,13 +157,10 @@ describe('billing', () => {
     db.communities[0].trialEndsAt = Date.now() - DAY
     saveDB(db)
 
-    const pay = submitPayment(
-      res.community.id,
-      res.member.id,
-      'yearly',
-      'QRIS',
-      'TRX-1',
-    )
+    const pay = submitPayment(res.community.id, res.member.id, 'yearly')
+    // nomor referensi ditentukan sistem, bukan diisi admin
+    expect(pay.reference).toMatch(/^WJW[A-HJ-NP-Z2-9]{5}$/)
+    expect(pay.method).toBe('QRIS ShopeePay')
     expect(pay.amount).toBe(PRICE_YEARLY)
     expect(planState(loadDB().communities[0]).status).toBe('expired')
 
@@ -179,7 +176,7 @@ describe('billing', () => {
     const db = loadDB()
     db.communities[0].trialEndsAt = Date.now() - DAY
     saveDB(db)
-    const pay = submitPayment(res.community.id, res.member.id, 'monthly', 'QRIS', 'X')
+    const pay = submitPayment(res.community.id, res.member.id, 'monthly')
     verifyPayment('superadmin', pay.id, false)
     expect(planState(loadDB().communities[0]).status).toBe('expired')
   })

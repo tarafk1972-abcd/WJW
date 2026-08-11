@@ -33,6 +33,9 @@ export const DAY = 24 * 60 * 60 * 1000
 export const PRICE_MONTHLY = 149000
 export const PRICE_YEARLY = 1490000
 
+/** Satu-satunya metode pembayaran langganan. */
+export const PAYMENT_METHOD = 'QRIS ShopeePay'
+
 const STORAGE_KEY = 'wjw.db.v1'
 const SESSION_KEY = 'wjw.session.v1'
 const DEVICE_KEY = 'wjw.device.v1'
@@ -141,6 +144,25 @@ function evictOldMedia(db: DBShape): boolean {
 }
 
 /**
+ * Salinan dangkal dengan identitas array yang baru untuk setiap koleksi.
+ *
+ * Penulisan dilakukan dengan mengubah isi array langsung
+ * (`db.payments.unshift(...)`), sehingga identitas arraynya tidak berubah.
+ * Padahal banyak layar memakai `useMemo(..., [db.payments])`: tanpa
+ * identitas baru, memo tidak pernah dihitung ulang dan data baru tidak
+ * muncul sampai halaman dimuat ulang. Isi tiap array tetap dibagi
+ * bersama, jadi biayanya kecil.
+ */
+function snapshot(db: DBShape): DBShape {
+  const out = { ...db } as unknown as Record<string, unknown>
+  for (const key of Object.keys(out)) {
+    const v = out[key]
+    if (Array.isArray(v)) out[key] = [...v]
+  }
+  return out as unknown as DBShape
+}
+
+/**
  * Menyimpan basis data.
  *
  * Penyimpanan browser hanya sekitar 5 MB, sementara satu video bisa
@@ -153,6 +175,8 @@ export function saveDB(db: DBShape) {
   for (let attempt = 0; attempt < 12; attempt++) {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(db))
+      // Ganti cache dengan salinan bersnapshot agar layar ikut diperbarui.
+      cache = snapshot(db)
       window.dispatchEvent(new CustomEvent('wjw:db'))
       return
     } catch (e) {
@@ -1310,12 +1334,34 @@ export function closeTicket(ticketId: string) {
   saveDB(db)
 }
 
+/**
+ * Nomor referensi pembayaran — ditentukan sistem, tidak bisa diisi
+ * atau diubah admin. Bentuknya sama dengan yang dibuat server
+ * (server/billing.ts): "WJW" + 5 karakter tanpa glif rancu.
+ */
+export function paymentReference(db: DBShape = loadDB()): string {
+  const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  let code = ''
+  do {
+    code =
+      'WJW' +
+      Array.from(
+        { length: 5 },
+        () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)],
+      ).join('')
+  } while (db.payments.some((p) => p.reference === code))
+  return code
+}
+
+/**
+ * Buat tagihan lokal (mode tanpa server).
+ * Metode pembayaran selalu QRIS ShopeePay dan nomor referensinya
+ * dibuat sistem — admin hanya mencantumkannya saat membayar.
+ */
 export function submitPayment(
   communityId: string,
   createdBy: string,
   plan: 'monthly' | 'yearly',
-  method: string,
-  reference: string,
 ): Payment {
   const db = loadDB()
   const p: Payment = {
@@ -1323,8 +1369,8 @@ export function submitPayment(
     communityId,
     plan,
     amount: plan === 'monthly' ? PRICE_MONTHLY : PRICE_YEARLY,
-    method,
-    reference,
+    method: PAYMENT_METHOD,
+    reference: paymentReference(db),
     status: 'pending',
     createdAt: Date.now(),
     verifiedAt: null,

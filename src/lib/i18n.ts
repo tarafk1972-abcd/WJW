@@ -248,7 +248,7 @@ const id = {
   perYear: '/tahun',
   paidUntil: 'Aktif sampai',
   paymentMethod: 'Metode pembayaran',
-  paymentRef: 'Nomor referensi / bukti transfer',
+  paymentRef: 'Nomor referensi',
   submitPayment: 'Kirim konfirmasi pembayaran',
   paymentPending: 'Pembayaran menunggu verifikasi superadmin.',
   paymentVerified: 'Pembayaran terverifikasi. Terima kasih!',
@@ -626,6 +626,10 @@ const id = {
   saveQris: 'Simpan gambar QR',
   qrisNotSet: 'QRIS belum disiapkan. Hubungi pengelola.',
   onBehalf: 'a.n.',
+  copyFailed: 'Gagal menyalin. Catat nomornya secara manual.',
+  billCreatedLocal: 'Tagihan dibuat. Bayar lewat QRIS, lalu tekan “Saya sudah bayar”.',
+  localBillNote:
+    'Mode luring: tagihan hanya tersimpan di perangkat ini. Nomor referensi dibuat sistem dan tidak dapat diubah.',
 }
 
 export type Dict = typeof id
@@ -860,7 +864,7 @@ const en: Dict = {
   perYear: '/year',
   paidUntil: 'Active until',
   paymentMethod: 'Payment method',
-  paymentRef: 'Reference / transfer proof no.',
+  paymentRef: 'Reference number',
   submitPayment: 'Submit payment confirmation',
   paymentPending: 'Payment awaiting superadmin verification.',
   paymentVerified: 'Payment verified. Thank you!',
@@ -1225,6 +1229,10 @@ const en: Dict = {
   saveQris: 'Save QR image',
   qrisNotSet: 'QRIS is not set up yet. Contact the operator.',
   onBehalf: 'a.n.',
+  copyFailed: 'Could not copy. Please write the number down.',
+  billCreatedLocal: 'Bill created. Pay via QRIS, then tap “I have paid”.',
+  localBillNote:
+    'Offline mode: this bill is stored on this device only. The reference number is system-assigned and cannot be changed.',
 }
 
 const su: Dict = {
@@ -1413,6 +1421,13 @@ const su: Dict = {
   awaitingVerification: 'Ngantosan verifikasi',
   payWithQris: 'Mayar nganggo QRIS',
   refFixed: 'Serat nomer ieu dina catetan pambayaran',
+  paymentRef: 'Nomer référénsi',
+  copyRef: 'Salin nomer référénsi',
+  copyFailed: 'Teu tiasa nyalin. Mangga catet nomerna.',
+  refWhy: 'Tanpa nomer ieu, pambayaran Anjeun hese dicocogkeun.',
+  billCreatedLocal: 'Tagihan parantos didamel. Mayar via QRIS, teras pencét “Abdi parantos mayar”.',
+  localBillNote:
+    'Mode luar jaringan: tagihan ieu ngan disimpen di HP ieu. Nomer référénsi didamel ku sistem sareng teu tiasa dirobih.',
 }
 
 export const DICTS: Record<Lang, Dict> = { id, en, su }
