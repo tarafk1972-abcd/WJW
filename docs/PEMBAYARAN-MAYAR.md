@@ -103,10 +103,51 @@ server/billing.test.ts  13 tes
 src/pages/Billing.tsx   halaman langganan
 ```
 
+## Pengingat & tagihan otomatis
+
+Server memeriksa seluruh lingkungan setiap 6 jam dan bertindak menjelang
+jatuh tempo:
+
+| Waktu | Tindakan |
+| --- | --- |
+| **H-7** | Tagihan perpanjangan dibuat → Mayar mengirim email tautan bayar |
+| **H-3** | Pengingat lewat notifikasi |
+| **H-1** | Pengingat terakhir |
+| **Jatuh tempo** | Pemberitahuan bahwa langganan berakhir |
+
+Admin tidak perlu mengingat kapan harus memperpanjang.
+
+### Pengaman
+
+| Risiko | Penanganan |
+| --- | --- |
+| Tagihan ganda | Setiap tindakan dicatat dengan kunci unik per periode |
+| Menimpa tagihan admin | Dilewati bila sudah ada tagihan menunggu pembayaran |
+| Server sempat mati | Lingkungan yang baru terlihat di H-3 tetap ditagih |
+| Satu lingkungan error | Kegagalan dicatat; lingkungan lain tetap diproses |
+| Lingkungan ditangguhkan | Dilewati sepenuhnya |
+
+Paket diperpanjang sesuai yang terakhir dipakai (bulanan/tahunan). Masa
+percobaan yang habis ditagih sebagai bulanan.
+
+### Menjalankan manual
+
+Superadmin dapat memicu pemeriksaan kapan saja:
+
+```bash
+curl -X POST http://localhost:8787/api/billing/run-renewals \
+  -H "Authorization: Bearer TOKEN_SUPERADMIN"
+```
+
+Balasannya berisi daftar lingkungan yang ditagih, diingatkan, dan berakhir.
+
 ## Yang masih perlu dipertimbangkan
 
-- **Perpanjangan otomatis.** Saat ini admin membuat tagihan baru setiap
-  periode. Untuk langganan berulang otomatis, Mayar punya produk
-  *Membership (SaaS)* yang perlu integrasi terpisah.
-- **Pengingat sebelum jatuh tempo.** Belum ada penjadwal yang mengirim
-  tagihan otomatis menjelang masa aktif habis.
+- **Perpanjangan otomatis penuh (auto-debit).** Saat ini admin tetap
+  menekan tombol bayar pada tautan yang dikirim. Untuk pemotongan
+  otomatis tanpa campur tangan, Mayar menyediakan produk
+  *Membership (SaaS)*. Integrasinya butuh `MAYAR_PRODUCT_ID` dan
+  `MAYAR_TIER_ID` dari dashboard Anda, serta penanganan kejadian
+  `membership.memberExpired` dan `membership.memberUnsubscribed`.
+- **Email pengingat sendiri.** Saat ini pengingat memakai notifikasi
+  aplikasi; email hanya dikirim Mayar saat tagihan dibuat.

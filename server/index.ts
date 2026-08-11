@@ -40,6 +40,7 @@ import {
   recordEvent,
   type MayarWebhookPayload,
 } from './mayar.js'
+import { runRenewalCheck, startRenewalScheduler } from './renewals.js'
 import {
   pushEnabled,
   pushToMembers,
@@ -1423,11 +1424,20 @@ app.post('/api/webhooks/mayar', async (c) => {
   return c.json({ ok: true })
 })
 
+/** Picu pemeriksaan perpanjangan secara manual (superadmin). */
+app.post('/api/billing/run-renewals', auth, async (c) => {
+  const me = c.get('me')
+  if (me.role !== 'superadmin') return bad(c, 'forbidden', 403)
+  const result = await runRenewalCheck()
+  return c.json(result)
+})
+
 /* ================= start ================= */
 
 // Hanya membuka port saat dijalankan langsung; saat di-import oleh tes,
 // aplikasi diuji lewat app.fetch() tanpa menyentuh jaringan.
 if (process.env.WJW_NO_LISTEN !== '1') {
+  startRenewalScheduler()
   const port = Number(process.env.PORT ?? 8787)
   serve({ fetch: app.fetch, hostname: '0.0.0.0', port }, (info) => {
     console.log(`[WJW] API berjalan di http://0.0.0.0:${info.port}`)
