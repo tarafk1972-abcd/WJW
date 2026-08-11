@@ -5,12 +5,21 @@ Bahasa default **Indonesia**, dengan opsi Bahasa Inggris dan Basa Sunda.
 
 ## Menjalankan
 
+Perlu dua terminal: satu untuk API, satu untuk tampilan web.
+
 ```bash
 npm install
-npm run dev      # http://localhost:5173
+npm run server   # terminal 1 — API di http://localhost:8787
+npm run dev      # terminal 2 — web di http://localhost:5173
 npm run build    # build produksi ke dist/
-npm test         # 59 tes (gabung/buat, peran, langganan, area, panik, kirim peringatan)
+npm test         # tes otomatis
 ```
+
+Pengguna Windows: jangan menyalin komentar `# ...` ke Command Prompt —
+tidak dianggap catatan, melainkan ikut dijalankan dan menimbulkan galat.
+
+Cara memperbarui salinan di Windows (termasuk bila `git` belum terpasang)
+ada di [docs/UPDATE-DI-WINDOWS.md](docs/UPDATE-DI-WINDOWS.md).
 
 
 ## MVP (Versi 1) — satu layar, satu tombol
