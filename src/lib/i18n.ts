@@ -585,6 +585,8 @@ const id = {
   pushHint: 'Agar peringatan tetap berbunyi walau aplikasi tertutup.',
   pushUnsupported: 'Perangkat ini tidak mendukung notifikasi.',
   serverDown: 'Server tidak aktif — memakai data di HP ini saja.',
+  consoleLocalOnly:
+    'Tidak terhubung ke server — angka di bawah hanya dari data perangkat ini, bukan data sebenarnya.',
   serverDownHint: 'Jalankan `npm run server` lalu coba lagi.',
 
   // --- tagihan & pembayaran ---
@@ -1203,6 +1205,8 @@ const en: Dict = {
   pushHint: 'So alerts still sound when the app is closed.',
   pushUnsupported: 'This device does not support notifications.',
   serverDown: 'Server is down — using data on this phone only.',
+  consoleLocalOnly:
+    'Not connected to the server — the figures below come from this device only, not the real data.',
   serverDownHint: 'Run `npm run server`, then try again.',
 
   payNow: 'Pay now',

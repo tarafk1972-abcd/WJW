@@ -100,6 +100,23 @@ export default function Console() {
       </div>
 
       <div className="page no-nav">
+        {/*
+          Tanpa server, Konsol hanya melihat data di perangkat ini — yang
+          pada perangkat baru berarti kosong. Tanpa keterangan, deretan
+          angka nol terbaca sebagai "belum ada lingkungan", padahal
+          artinya "tidak terhubung ke server".
+        */}
+        {!apiMode() && (
+          <div className="banner banner-warn" style={{ marginBottom: 14 }}>
+            <Icon name="info" size={17} />
+            <span>
+              {t('consoleLocalOnly')}
+              <br />
+              <span className="tiny">{t('serverDownHint')}</span>
+            </span>
+          </div>
+        )}
+
         <div className="tabs" style={{ marginBottom: 16 }}>
           {(
             [
