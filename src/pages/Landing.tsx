@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router'
-import { deviceId, setSession } from '../lib/db'
+import { deviceId, resetDB, setSession } from '../lib/db'
 import { LANGS } from '../lib/i18n'
 import { seedDemo } from '../lib/seed'
 import { useApp } from '../lib/store'
@@ -32,6 +32,9 @@ export default function Landing() {
   )
   const approved = deviceMember?.status === 'active'
   const pending = deviceMember?.status === 'pending'
+
+  /** Data contoh dikenali dari akun bawaan yang dibuat seedDemo(). */
+  const isDemo = db.members.some((m) => m.email === 'budi@warga.id')
 
   const enter = () => {
     if (deviceMember) setSession(deviceMember.id)
@@ -142,6 +145,23 @@ export default function Landing() {
             <button className="btn btn-ghost" onClick={() => nav('/login')}>
               <Icon name="user" size={16} /> {t('signInOther')}
             </button>
+            {/*
+              Jalan keluar dari data contoh. Sebelumnya hanya ada di
+              Pengaturan, yang baru bisa dibuka setelah masuk — sulit
+              ditemukan justru ketika data contoh menghalangi.
+            */}
+            {isDemo && (
+              <button
+                className="btn btn-ghost tiny-btn"
+                onClick={() => {
+                  if (!confirm(t('resetDemoConfirm'))) return
+                  resetDB()
+                  nav('/')
+                }}
+              >
+                <Icon name="trash" size={15} /> {t('resetDemo')}
+              </button>
+            )}
           </>
         ) : (
           <>
@@ -155,16 +175,26 @@ export default function Landing() {
               <Icon name="lock" size={16} /> {t('login')}
             </button>
             {db.communities.length === 0 && (
-              <button
-                className="btn btn-ghost"
-                style={{ borderStyle: 'dashed' }}
-                onClick={() => {
-                  const id = seedDemo()
-                  if (id) nav('/app')
-                }}
-              >
-                <Icon name="gift" size={16} /> {t('demoData')}
-              </button>
+              <>
+                {/*
+                  Data contoh hanya hidup di peramban ini: ia tidak pernah
+                  sampai ke server, dan Konsol tetap kosong karenanya.
+                  Tombolnya juga langsung menjadikan perangkat ini milik
+                  "Budi Santoso", jadi katakan akibatnya lebih dulu.
+                */}
+                <button
+                  className="btn btn-ghost"
+                  style={{ borderStyle: 'dashed' }}
+                  onClick={() => {
+                    if (!confirm(t('demoDataConfirm'))) return
+                    const id = seedDemo()
+                    if (id) nav('/app')
+                  }}
+                >
+                  <Icon name="gift" size={16} /> {t('demoData')}
+                </button>
+                <p className="tiny center">{t('demoDataNote')}</p>
+              </>
             )}
           </>
         )}

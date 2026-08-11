@@ -1854,3 +1854,9 @@ p {
   margin-top: 6px;
   color: var(--text-3);
 }
+
+.tiny-btn {
+  font-size: 12.5px;
+  padding: 9px 12px;
+  color: var(--text-3);
+}

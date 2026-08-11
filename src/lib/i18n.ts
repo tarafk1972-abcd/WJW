@@ -312,7 +312,11 @@ const id = {
   agoHour: '{n} jam lalu',
   agoDay: '{n} hari lalu',
   you: 'Anda',
-  demoData: 'Isi data contoh',
+  demoData: 'Coba dengan data contoh',
+  demoDataNote:
+    'Hanya untuk mencoba-coba. Datanya tersimpan di peramban ini saja, tidak dikirim ke server.',
+  demoDataConfirm:
+    'Isi aplikasi dengan lingkungan contoh?\n\nDatanya hanya tersimpan di peramban ini, tidak masuk ke server, dan Konsol Superadmin tetap kosong.\n\nPerangkat ini akan dikenali sebagai "Budi Santoso". Untuk membatalkannya nanti: Pengaturan -> Reset data demo.',
   demoLogins: 'Akun demo',
   demoLocalOnly:
     'Hanya berlaku untuk data contoh di perangkat ini, bukan untuk server.',
@@ -950,7 +954,11 @@ const en: Dict = {
   agoHour: '{n} h ago',
   agoDay: '{n} d ago',
   you: 'You',
-  demoData: 'Load sample data',
+  demoData: 'Try with sample data',
+  demoDataNote:
+    'For trying things out. The data stays in this browser and is never sent to the server.',
+  demoDataConfirm:
+    'Fill the app with a sample neighbourhood?\n\nThe data stays in this browser only, never reaches the server, and the Superadmin Console stays empty.\n\nThis device will be recognised as "Budi Santoso". To undo it later: Settings -> Reset demo data.',
   demoLogins: 'Demo accounts',
   demoLocalOnly: 'Only valid for sample data on this device, not on the server.',
   forgotPassword: 'Forgot password?',
