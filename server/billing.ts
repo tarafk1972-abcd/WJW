@@ -1,14 +1,18 @@
 /**
  * Penagihan langganan lewat email + konfirmasi manual.
  *
- * Alurnya:
- *   1. Sistem membuat tagihan → email berisi instruksi transfer dikirim
- *      ke admin klaster.
- *   2. Admin transfer, lalu menandai "sudah bayar" di aplikasi
- *      (atau membalas email dengan bukti transfer).
- *   3. Superadmin memverifikasi → langganan aktif.
+ * Pembayaran memakai satu cara saja: QRIS ShopeePay.
  *
- * Tidak ada penyedia pembayaran pihak ketiga.
+ * Alurnya:
+ *   1. Sistem membuat tagihan berikut NOMOR REFERENSI tetap, lalu
+ *      mengirim email berisi QRIS dan nomor tersebut.
+ *   2. Admin memindai QRIS, membayar, dan mencantumkan nomor referensi
+ *      pada catatan/berita pembayaran.
+ *   3. Admin menekan "Saya sudah bayar" di aplikasi.
+ *   4. Superadmin mencocokkan dengan mutasi ShopeePay lalu menyetujui.
+ *
+ * Nomor referensi ditentukan sistem, bukan diisi admin — supaya setiap
+ * pembayaran bisa dicocokkan dengan pasti dan tidak bisa dipalsukan.
  */
 import { DAY, audit, db, now, uid } from './db.js'
 
@@ -19,8 +23,21 @@ export const PRICE_YEARLY = Number(process.env.WJW_PRICE_YEARLY ?? 1490000)
 /** Berapa lama tagihan berlaku sebelum dianggap kedaluwarsa. */
 export const INVOICE_VALID_DAYS = Number(process.env.WJW_INVOICE_DAYS ?? 14)
 
-/** Rekening tujuan transfer, ditampilkan di email dan aplikasi. */
-export const BANK_INFO = process.env.WJW_BANK_INFO ?? ''
+/** Nama pemilik akun QRIS ShopeePay. */
+export const QRIS_NAME = process.env.WJW_QRIS_NAME ?? ''
+
+/** Nomor HP terdaftar pada akun QRIS (untuk verifikasi manual). */
+export const QRIS_PHONE = process.env.WJW_QRIS_PHONE ?? ''
+
+/**
+ * Berkas gambar QRIS yang dilayani di /qris.png.
+ * Ditaruh di public/ agar bisa ditampilkan di aplikasi dan email.
+ */
+export const QRIS_IMAGE_URL =
+  process.env.WJW_QRIS_IMAGE_URL ?? '/qris.png'
+
+/** Keterangan tambahan bila QRIS belum disiapkan. */
+export const PAYMENT_INFO = process.env.WJW_PAYMENT_INFO ?? ''
 
 export function priceOf(plan: 'monthly' | 'yearly'): number {
   return plan === 'monthly' ? PRICE_MONTHLY : PRICE_YEARLY
@@ -34,8 +51,8 @@ export interface InvoiceRow {
   amount: number
   /** pending → awaiting_verification → paid | rejected | expired */
   status: string
-  /** Nomor rujukan transfer yang diisi admin. */
-  reference: string | null
+  /** Nomor referensi tetap, ditentukan sistem saat tagihan dibuat. */
+  reference: string
   /** Catatan dari superadmin saat menolak. */
   note: string | null
   created_at: number
@@ -56,6 +73,28 @@ export function invoiceNumber(communityId: string, at: number): string {
   return `WJW-${ym}-${suffix}`
 }
 
+/**
+ * Nomor referensi pembayaran — ditentukan sistem dan tidak bisa diubah.
+ * Dicantumkan admin pada catatan pembayaran QRIS agar mudah dicocokkan.
+ *
+ * Sengaja pendek (8 karakter) supaya muat di kolom catatan ShopeePay dan
+ * mudah diketik ulang, tetapi tetap unik lewat pengecekan basis data.
+ */
+export function generateReference(): string {
+  // Tanpa huruf/angka rancu (O/0, I/1) karena akan diketik manual.
+  const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  for (let attempt = 0; attempt < 20; attempt++) {
+    let code = 'WJW'
+    for (let i = 0; i < 5; i++) {
+      code += ALPHABET[Math.floor(Math.random() * ALPHABET.length)]
+    }
+    const taken = db.prepare('SELECT 1 FROM invoices WHERE reference=?').get(code)
+    if (!taken) return code
+  }
+  // Sangat kecil kemungkinannya; jatuh ke id acak agar tidak pernah gagal.
+  return `WJW${uid('').slice(-5).toUpperCase()}`
+}
+
 export interface CreateInvoiceInput {
   communityId: string
   memberId: string
@@ -68,16 +107,20 @@ export function createInvoice(input: CreateInvoiceInput): InvoiceRow {
   const createdAt = now()
   const amount = priceOf(input.plan)
 
+  const reference = generateReference()
+
   db.prepare(
     `INSERT INTO invoices
-     (id, community_id, member_id, plan, amount, status, created_at, expires_at, created_by)
-     VALUES (?,?,?,?,?,'pending',?,?,?)`,
+     (id, community_id, member_id, plan, amount, status, reference,
+      created_at, expires_at, created_by)
+     VALUES (?,?,?,?,?,'pending',?,?,?,?)`,
   ).run(
     id,
     input.communityId,
     input.memberId,
     input.plan,
     amount,
+    reference,
     createdAt,
     createdAt + INVOICE_VALID_DAYS * DAY,
     input.memberId,
@@ -110,20 +153,19 @@ export function openInvoiceOf(communityId: string): InvoiceRow | null {
 }
 
 /**
- * Admin menandai sudah transfer. Belum mengaktifkan apa pun —
- * superadmin yang memutuskan.
+ * Admin menandai sudah membayar. Belum mengaktifkan apa pun —
+ * superadmin yang memutuskan setelah mencocokkan mutasi.
+ *
+ * Nomor referensi tidak diterima dari admin: nomor itu sudah melekat
+ * pada tagihan sejak dibuat.
  */
-export function claimPayment(
-  invoiceId: string,
-  actorId: string,
-  reference: string,
-): boolean {
+export function claimPayment(invoiceId: string, actorId: string): boolean {
   const inv = getInvoice(invoiceId)
   if (!inv || inv.status !== 'pending') return false
   db.prepare(
-    "UPDATE invoices SET status='awaiting_verification', reference=?, claimed_at=? WHERE id=?",
-  ).run(reference.trim(), now(), invoiceId)
-  audit(inv.community_id, actorId, 'billing.claim', reference.trim())
+    "UPDATE invoices SET status='awaiting_verification', claimed_at=? WHERE id=?",
+  ).run(now(), invoiceId)
+  audit(inv.community_id, actorId, 'billing.claim', inv.reference)
   return true
 }
 

@@ -15,7 +15,22 @@
 import { DAY, audit, db, now as realNow } from './db.js'
 import { billEmail, expiredEmail, reminderEmail } from './email-templates.js'
 import { sendMail } from './mailer.js'
-import { BANK_INFO, createInvoice, invoiceNumber, openInvoiceOf, priceOf } from './billing.js'
+import {
+  PAYMENT_INFO,
+  QRIS_IMAGE_URL,
+  QRIS_NAME,
+  createInvoice,
+  invoiceNumber,
+  openInvoiceOf,
+  priceOf,
+} from './billing.js'
+
+/** URL gambar QRIS yang bisa dibuka klien email. */
+function qrisUrl(): string {
+  if (/^https?:\/\//.test(QRIS_IMAGE_URL)) return QRIS_IMAGE_URL
+  const base = (process.env.WJW_APP_URL ?? '').replace(/\/+$|#.*$/g, '')
+  return base ? `${base}${QRIS_IMAGE_URL}` : QRIS_IMAGE_URL
+}
 import { pushToMembers } from './push.js'
 
 /** Ambang hari sebelum jatuh tempo yang memicu tindakan. */
@@ -137,7 +152,10 @@ export async function runRenewalCheck(
             amount: priceOf(plan),
             dueAt: expiry,
             invoiceNo: invoiceNumber(c.id, expiry),
-            bankInfo: BANK_INFO,
+            reference: '',
+            qrisName: QRIS_NAME,
+            qrisImageUrl: qrisUrl(),
+            paymentInfo: PAYMENT_INFO,
           })
           void sendMail({
             to: admins[0].email,
@@ -184,7 +202,10 @@ export async function runRenewalCheck(
           dueAt: expiry,
           daysLeft: left,
           invoiceNo: invoiceNumber(c.id, inv.created_at),
-          bankInfo: BANK_INFO,
+          reference: inv.reference,
+          qrisName: QRIS_NAME,
+          qrisImageUrl: qrisUrl(),
+          paymentInfo: PAYMENT_INFO,
         })
         void sendMail({
           to: admin.email,
@@ -237,7 +258,10 @@ export async function runRenewalCheck(
           dueAt: expiry,
           daysLeft: d,
           invoiceNo: invoiceNumber(c.id, openInv?.created_at ?? expiry),
-          bankInfo: BANK_INFO,
+          reference: openInv?.reference ?? '',
+          qrisName: QRIS_NAME,
+          qrisImageUrl: qrisUrl(),
+          paymentInfo: PAYMENT_INFO,
         })
         void sendMail({
           to: admins[0].email,

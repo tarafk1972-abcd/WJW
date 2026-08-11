@@ -10,7 +10,8 @@ import { Sheet } from '../ui/Sheet'
 import { useToast } from '../ui/Toast'
 import type { Key } from '../lib/i18n'
 
-const METHODS = ['Transfer Bank BCA', 'Transfer Bank Mandiri', 'QRIS', 'GoPay', 'OVO']
+/** Satu-satunya metode pembayaran. */
+const METHOD_LOCAL = 'QRIS ShopeePay'
 
 export default function Billing() {
   const { db, me, community, t, lang, plan, isAdmin } = useApp()
@@ -21,14 +22,12 @@ export default function Billing() {
   const [busy, setBusy] = useState(false)
   const [invoices, setInvoices] = useState<InvoiceDto[] | null>(null)
   const [prices, setPrices] = useState({ monthly: PRICE_MONTHLY, yearly: PRICE_YEARLY })
-  const [bankInfo, setBankInfo] = useState('')
+  const [qris, setQris] = useState({ name: '', phone: '', imageUrl: '', info: '' })
 
   // sheet konfirmasi pembayaran
   const [claiming, setClaiming] = useState<InvoiceDto | null>(null)
-  const [reference, setReference] = useState('')
 
   // mode lokal (tanpa server)
-  const [method, setMethod] = useState(METHODS[0])
   const [ref, setRef] = useState('')
 
   const load = useCallback(async () => {
@@ -37,7 +36,7 @@ export default function Billing() {
       const r = await billingApi.fetch()
       setInvoices(r.invoices)
       setPrices(r.prices)
-      setBankInfo(r.bankInfo)
+      setQris(r.qris)
     } catch {
       setInvoices(null)
     }
@@ -72,13 +71,12 @@ export default function Billing() {
   }
 
   const sendClaim = async () => {
-    if (!claiming || !reference.trim()) return toast(t('errRequired'), 'err')
+    if (!claiming) return
     setBusy(true)
     try {
-      await billingApi.claim(claiming.id, reference.trim())
+      await billingApi.claim(claiming.id)
       await load()
       setClaiming(null)
-      setReference('')
       toast(t('claimSent'))
     } catch (e) {
       toast(t((e instanceof ApiError ? e.code : 'errUnknown') as Key), 'err')
@@ -88,7 +86,7 @@ export default function Billing() {
 
   const submitLocal = () => {
     if (!ref.trim()) return toast(t('errRequired'), 'err')
-    submitPayment(community.id, me.id, choice, method, ref.trim())
+    submitPayment(community.id, me.id, choice, METHOD_LOCAL, ref.trim())
     setRef('')
     toast(t('paymentPending'))
   }
@@ -190,8 +188,7 @@ export default function Billing() {
 
               {openInvoice.status === 'awaiting_verification' ? (
                 <p className="tiny">
-                  {t('verifyWithin')}
-                  {openInvoice.reference && ` · ${openInvoice.reference}`}
+                  {t('verifyWithin')} · {openInvoice.reference}
                 </p>
               ) : (
                 <>
@@ -202,31 +199,62 @@ export default function Billing() {
                     </div>
                   )}
 
+                  {/* QRIS ShopeePay */}
                   <div
                     className="card card-tight"
-                    style={{ background: 'var(--bg-2)', marginBottom: 10 }}
+                    style={{ background: 'var(--bg-2)', marginBottom: 10, textAlign: 'center' }}
                   >
-                    <div className="tiny" style={{ marginBottom: 4 }}>
-                      {t('transferTo')}
+                    <div className="tiny strong" style={{ marginBottom: 10 }}>
+                      {t('qrisShopee')}
                     </div>
-                    <div
-                      className="strong"
-                      style={{ fontSize: 14, whiteSpace: 'pre-line', lineHeight: 1.6 }}
-                    >
-                      {bankInfo || t('noBankInfo')}
+
+                    {qris.imageUrl ? (
+                      <img
+                        src={qris.imageUrl}
+                        alt="QRIS"
+                        className="qris-img"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none'
+                        }}
+                      />
+                    ) : (
+                      <div className="tiny" style={{ padding: 20 }}>
+                        {t('qrisNotSet')}
+                      </div>
+                    )}
+
+                    {qris.name && (
+                      <div className="strong" style={{ fontSize: 13.5, marginTop: 8 }}>
+                        {t('onBehalf')} {qris.name}
+                      </div>
+                    )}
+                    <div className="tiny" style={{ marginTop: 6, lineHeight: 1.5 }}>
+                      {t('scanQris')}
                     </div>
-                    <div className="divider" />
-                    <div className="tiny">
-                      {t('includeRef', { no: openInvoice.invoiceNo })}
+
+                    {/* nomor referensi — ditentukan sistem */}
+                    <div className="ref-box">
+                      <div className="tiny">{t('refFixed')}</div>
+                      <div className="ref-code">{openInvoice.reference}</div>
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        style={{ marginTop: 8 }}
+                        onClick={() => {
+                          navigator.clipboard?.writeText(openInvoice.reference)
+                          toast(t('copied'))
+                        }}
+                      >
+                        <Icon name="copy" size={13} /> {t('copyRef')}
+                      </button>
+                      <div className="tiny" style={{ marginTop: 8 }}>
+                        {t('refWhy')}
+                      </div>
                     </div>
                   </div>
 
                   <button
                     className="btn btn-primary"
-                    onClick={() => {
-                      setClaiming(openInvoice)
-                      setReference('')
-                    }}
+                    onClick={() => setClaiming(openInvoice)}
                   >
                     <Icon name="check" size={16} /> {t('iHavePaid')}
                   </button>
@@ -313,18 +341,10 @@ export default function Billing() {
               ) : (
                 /* mode lokal */
                 <>
-                  <label className="field" style={{ marginTop: 16 }}>
-                    <span>{t('paymentMethod')}</span>
-                    <select
-                      className="select"
-                      value={method}
-                      onChange={(e) => setMethod(e.target.value)}
-                    >
-                      {METHODS.map((m) => (
-                        <option key={m}>{m}</option>
-                      ))}
-                    </select>
-                  </label>
+                  <div className="banner banner-info" style={{ marginTop: 16 }}>
+                    <Icon name="credit" size={17} />
+                    <span>{t('qrisShopee')}</span>
+                  </div>
                   <label className="field">
                     <span>{t('paymentRef')}</span>
                     <input
@@ -379,7 +399,7 @@ export default function Billing() {
                   {fmtMoney(i.amount, lang)} ·{' '}
                   {t(i.plan === 'monthly' ? 'planMonthly' : 'planYearly')}
                 </div>
-                <div className="tiny">{i.invoiceNo}</div>
+                <div className="tiny">{i.invoiceNo} · {i.reference}</div>
                 <div className="tiny">{fmtDateTime(i.createdAt, lang)}</div>
               </div>
               <span className={`chip ${chipClass(i.status)}`}>{chipLabel(i.status)}</span>
@@ -422,15 +442,12 @@ export default function Billing() {
         title={t('iHavePaid')}
         subtitle={claiming ? claiming.invoiceNo : ''}
       >
-        <label className="field">
-          <span>{t('refNumber')}</span>
-          <input
-            className="input"
-            value={reference}
-            onChange={(e) => setReference(e.target.value)}
-            placeholder="1234"
-          />
-        </label>
+        <div className="card card-tight" style={{ marginBottom: 14, textAlign: 'center' }}>
+          <div className="tiny">{t('refNumber')}</div>
+          <div className="ref-code" style={{ marginTop: 4 }}>
+            {claiming?.reference}
+          </div>
+        </div>
         <button className="btn btn-primary" disabled={busy} onClick={() => void sendClaim()}>
           <Icon name="check" size={16} /> {t('submit')}
         </button>

@@ -228,8 +228,9 @@ CREATE TABLE IF NOT EXISTS invoices (
   amount       INTEGER NOT NULL,
   -- pending → awaiting_verification → paid | expired
   status       TEXT NOT NULL DEFAULT 'pending',
-  -- nomor rujukan transfer yang diisi admin
-  reference    TEXT,
+  -- nomor rujukan yang DITENTUKAN SISTEM, dicantumkan admin saat transfer.
+  -- Bukan input pengguna, sehingga setiap pembayaran mudah dicocokkan.
+  reference    TEXT NOT NULL DEFAULT '',
   -- catatan superadmin saat menolak klaim
   note         TEXT,
   created_at   INTEGER NOT NULL,

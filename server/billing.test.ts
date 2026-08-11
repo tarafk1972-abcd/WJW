@@ -15,7 +15,8 @@ beforeAll(async () => {
   process.env.WJW_DB = pathJoin(mkdtempSync(pathJoin(tmpdir(), 'wjw-bill-')), 't.sqlite')
   process.env.WJW_NO_LISTEN = '1'
   process.env.WJW_SUPERADMIN_PASSWORD = 'super-secret'
-  process.env.WJW_BANK_INFO = 'BCA 1234567890 a.n. Yayasan Uji'
+  process.env.WJW_QRIS_NAME = 'FADLUL KHAIRA'
+  process.env.WJW_QRIS_PHONE = '+6281****781'
   app = (await import('./index.js')).app
   db = (await import('./db.js')).db
 })
@@ -81,12 +82,42 @@ describe('membuat tagihan', () => {
     expect(mail.to_email).toBe(a.email)
   })
 
-  it('membagikan info rekening lewat GET /api/billing', async () => {
+  it('membagikan info QRIS lewat GET /api/billing', async () => {
     const a = await makeAdmin()
     const r = await call('GET', '/api/billing', undefined, a.token)
-    expect(r.body.bankInfo).toContain('BCA 1234567890')
+    expect(r.body.qris.name).toBe('FADLUL KHAIRA')
+    expect(r.body.qris.imageUrl).toBeTruthy()
     expect(r.body.prices.monthly).toBe(149000)
     expect(r.body.prices.yearly).toBe(1490000)
+  })
+
+  it('memberi nomor referensi tetap yang tidak bisa diubah admin', async () => {
+    const a = await makeAdmin()
+    const r = await call('POST', '/api/billing/checkout', { plan: 'monthly' }, a.token)
+    const ref = r.body.invoice.reference as string
+
+    // dibuat sistem, format tetap, tanpa huruf/angka rancu
+    expect(ref).toMatch(/^WJW[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{5}$/)
+
+    // admin mencoba mengirim nomor sendiri — harus diabaikan
+    await call(
+      'POST',
+      `/api/billing/${r.body.invoice.id}/claim`,
+      { reference: 'NOMOR-PALSU' },
+      a.token,
+    )
+    const row = db
+      .prepare('SELECT reference FROM invoices WHERE id=?')
+      .get(r.body.invoice.id) as { reference: string }
+    expect(row.reference).toBe(ref)
+  })
+
+  it('nomor referensi unik antar tagihan', async () => {
+    const a = await makeAdmin()
+    const b = await makeAdmin()
+    const r1 = await call('POST', '/api/billing/checkout', { plan: 'monthly' }, a.token)
+    const r2 = await call('POST', '/api/billing/checkout', { plan: 'monthly' }, b.token)
+    expect(r1.body.invoice.reference).not.toBe(r2.body.invoice.reference)
   })
 
   it('memakai ulang tagihan berjalan, tidak membuat dua kali', async () => {
@@ -140,19 +171,15 @@ describe('konfirmasi pembayaran oleh admin', () => {
     const a = await makeAdmin()
     const inv = await call('POST', '/api/billing/checkout', { plan: 'monthly' }, a.token)
 
-    const r = await call(
-      'POST',
-      `/api/billing/${inv.body.invoice.id}/claim`,
-      { reference: '4821' },
-      a.token,
-    )
+    const r = await call('POST', `/api/billing/${inv.body.invoice.id}/claim`, {}, a.token)
     expect(r.status).toBe(200)
 
     const row = db
       .prepare('SELECT status, reference FROM invoices WHERE id=?')
       .get(inv.body.invoice.id) as { status: string; reference: string }
     expect(row.status).toBe('awaiting_verification')
-    expect(row.reference).toBe('4821')
+    // referensi tetap milik sistem
+    expect(row.reference).toBe(inv.body.invoice.reference)
 
     // langganan BELUM aktif — superadmin yang memutuskan
     const com = db
@@ -162,28 +189,24 @@ describe('konfirmasi pembayaran oleh admin', () => {
     expect(com.paid_until).toBeNull()
   })
 
-  it('menolak klaim tanpa nomor rujukan', async () => {
+  it('menolak klaim dua kali untuk tagihan yang sama', async () => {
     const a = await makeAdmin()
     const inv = await call('POST', '/api/billing/checkout', { plan: 'monthly' }, a.token)
-    const r = await call(
+    await call('POST', `/api/billing/${inv.body.invoice.id}/claim`, {}, a.token)
+    const again = await call(
       'POST',
       `/api/billing/${inv.body.invoice.id}/claim`,
-      { reference: '  ' },
+      {},
       a.token,
     )
-    expect(r.status).toBe(400)
+    expect(again.status).toBe(400)
   })
 
   it('admin lain tidak bisa mengklaim tagihan bukan miliknya', async () => {
     const a = await makeAdmin()
     const b = await makeAdmin()
     const inv = await call('POST', '/api/billing/checkout', { plan: 'monthly' }, a.token)
-    const r = await call(
-      'POST',
-      `/api/billing/${inv.body.invoice.id}/claim`,
-      { reference: '1' },
-      b.token,
-    )
+    const r = await call('POST', `/api/billing/${inv.body.invoice.id}/claim`, {}, b.token)
     expect(r.status).toBe(403)
   })
 })
@@ -192,24 +215,24 @@ describe('verifikasi oleh superadmin', () => {
   async function claimed() {
     const a = await makeAdmin()
     const inv = await call('POST', '/api/billing/checkout', { plan: 'monthly' }, a.token)
-    await call(
-      'POST',
-      `/api/billing/${inv.body.invoice.id}/claim`,
-      { reference: '9911' },
-      a.token,
-    )
-    return { admin: a, invoiceId: inv.body.invoice.id as string }
+    await call('POST', `/api/billing/${inv.body.invoice.id}/claim`, {}, a.token)
+    return {
+      admin: a,
+      invoiceId: inv.body.invoice.id as string,
+      reference: inv.body.invoice.reference as string,
+    }
   }
 
   it('mencantumkan tagihan yang menunggu verifikasi', async () => {
-    const { admin, invoiceId } = await claimed()
+    const { admin, invoiceId, reference } = await claimed()
     const st = await superToken()
     const r = await call('GET', '/api/billing/pending', undefined, st)
 
     const found = r.body.invoices.find((i: { id: string }) => i.id === invoiceId)
     expect(found).toBeTruthy()
     expect(found.memberEmail).toBe(admin.email)
-    expect(found.reference).toBe('9911')
+    // superadmin melihat nomor referensi untuk dicocokkan dengan mutasi
+    expect(found.reference).toBe(reference)
   })
 
   it('menyetujui pembayaran mengaktifkan langganan dan mengirim kuitansi', async () => {
@@ -271,12 +294,7 @@ describe('verifikasi oleh superadmin', () => {
       { plan: 'monthly' },
       admin.token,
     )
-    await call(
-      'POST',
-      `/api/billing/${inv2.body.invoice.id}/claim`,
-      { reference: '2' },
-      admin.token,
-    )
+    await call('POST', `/api/billing/${inv2.body.invoice.id}/claim`, {}, admin.token)
     await call('POST', `/api/billing/${inv2.body.invoice.id}/verify`, { approve: true }, st)
 
     const second = db

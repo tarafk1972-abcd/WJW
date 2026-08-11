@@ -22,37 +22,53 @@ const base = {
   amount: 149000,
   dueAt: new Date('2026-09-01T00:00:00+07:00').getTime(),
   invoiceNo: 'INV-001',
+  reference: 'WJWABC23',
 }
 
 describe('template email', () => {
-  it('tagihan memuat nama, jumlah dan instruksi transfer', () => {
-    const m = billEmail({ ...base, bankInfo: 'BCA 1234567890 a.n. Yayasan RW 05' })
+  it('tagihan memuat nama, jumlah dan cara bayar QRIS', () => {
+    const m = billEmail({ ...base, qrisName: 'FADLUL KHAIRA' })
     expect(m.subject).toContain('RW 05 Griya Soreang')
     expect(m.subject).toContain('Rp 149.000')
     expect(m.html).toContain('Budi Santoso')
-    expect(m.html).toContain('Cara pembayaran')
-    expect(m.html).toContain('BCA 1234567890')
+    expect(m.html).toContain('QRIS')
+    expect(m.html).toContain('ShopeePay')
+    expect(m.html).toContain('FADLUL KHAIRA')
     // versi teks juga lengkap, untuk klien tanpa HTML
     expect(m.text).toContain('Rp 149.000')
-    expect(m.text).toContain('BCA 1234567890')
+    expect(m.text).toContain('QRIS ShopeePay')
   })
 
-  it('meminta nomor tagihan dicantumkan pada berita transfer', () => {
-    const m = billEmail({ ...base, bankInfo: 'BCA 123' })
-    expect(m.html).toContain(base.invoiceNo)
-    expect(m.html).toContain('berita transfer')
-    expect(m.text).toContain('berita transfer')
+  it('menampilkan gambar QRIS bila URL tersedia', () => {
+    const m = billEmail({
+      ...base,
+      qrisName: 'FADLUL KHAIRA',
+      qrisImageUrl: 'https://app.contoh.id/qris.png',
+    })
+    expect(m.html).toContain('<img src="https://app.contoh.id/qris.png"')
+    expect(m.html).toContain('alt="QRIS ShopeePay"')
+  })
+
+  it('menonjolkan nomor referensi yang harus dicantumkan', () => {
+    const m = billEmail({ ...base })
+    // muncul di kotak besar dan di tabel rincian
+    expect(m.html).toContain('WJWABC23')
+    expect(m.html).toContain('catatan pembayaran')
+    expect(m.text).toContain('WJWABC23')
+    expect(m.html).toContain('No. referensi')
   })
 
   it('mengarahkan admin menandai sudah bayar di aplikasi', () => {
-    const m = billEmail({ ...base, bankInfo: 'BCA 123' })
+    const m = billEmail({ ...base, qrisName: 'FADLUL KHAIRA' })
     expect(m.html).toContain('Saya sudah bayar')
     expect(m.text).toContain('Saya sudah bayar')
   })
 
-  it('memberi petunjuk bila rekening belum diatur', () => {
+  it('tetap utuh walau QRIS belum disiapkan', () => {
     const m = billEmail({ ...base })
-    expect(m.html).toContain('Hubungi pengelola')
+    expect(m.html).toContain('QRIS')
+    expect(m.html).toContain('WJWABC23')
+    expect(m.html).not.toContain('<img src="undefined"')
   })
 
   it('memformat rupiah dan tanggal dalam bahasa Indonesia', () => {
@@ -100,7 +116,7 @@ describe('template email', () => {
     const all = [
       billEmail({ ...base }),
       reminderEmail({ ...base, daysLeft: 1 }),
-      expiredEmail({ ...base, bankInfo: 'BCA 1' }),
+      expiredEmail({ ...base, qrisName: 'FADLUL KHAIRA' }),
       paidEmail({ ...base, activeUntil: Date.now() }),
     ]
     for (const m of all) {

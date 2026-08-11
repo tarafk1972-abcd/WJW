@@ -19,8 +19,14 @@ export interface BillEmailData {
   daysLeft?: number
   /** Nomor tagihan untuk rujukan. */
   invoiceNo: string
-  /** Rekening tujuan transfer. */
-  bankInfo?: string
+  /** Nomor referensi tetap yang harus dicantumkan saat membayar. */
+  reference: string
+  /** Nama pemilik akun QRIS ShopeePay. */
+  qrisName?: string
+  /** URL gambar QRIS (absolut, agar tampil di klien email). */
+  qrisImageUrl?: string
+  /** Keterangan tambahan bila QRIS belum disiapkan. */
+  paymentInfo?: string
 }
 
 const BRAND = '#2ec27e'
@@ -129,6 +135,7 @@ function detailTable(d: BillEmailData): string {
     ['Paket', planLabel(d.plan)],
     ['Jatuh tempo', tanggal(d.dueAt)],
     ['No. tagihan', esc(d.invoiceNo)],
+    ['No. referensi', esc(d.reference)],
   ]
   return `
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid ${BORDER};border-radius:10px;margin:0 0 20px;">
@@ -147,19 +154,52 @@ function detailTable(d: BillEmailData): string {
 </table>`
 }
 
-/** Petunjuk transfer bank. */
-function manualBox(bankInfo: string, invoiceNo: string): string {
+/** Petunjuk pembayaran QRIS ShopeePay. */
+function payBox(d: BillEmailData): string {
+  const qr = d.qrisImageUrl
+    ? `<img src="${esc(d.qrisImageUrl)}" width="200" height="200" alt="QRIS ShopeePay"
+         style="display:block;margin:0 auto 10px;border:1px solid ${BORDER};border-radius:10px;background:#fff;">`
+    : ''
+
+  const nama = d.qrisName
+    ? `<div style="font-size:13px;color:#78350f;margin-bottom:10px;">a.n. <strong>${esc(d.qrisName)}</strong></div>`
+    : ''
+
+  const catatan = d.paymentInfo
+    ? `<div style="font-size:12px;color:#92400e;margin-top:10px;white-space:pre-line;">${esc(d.paymentInfo)}</div>`
+    : ''
+
   return `
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;margin:0 0 20px;">
-  <tr><td style="padding:14px 16px;">
-    <div style="font-size:13px;font-weight:bold;color:#92400e;margin-bottom:8px;">Cara pembayaran</div>
-    <div style="font-size:14px;color:#78350f;line-height:1.8;white-space:pre-line;font-weight:600;">${esc(bankInfo)}</div>
-    <div style="font-size:13px;color:#78350f;margin-top:10px;padding-top:10px;border-top:1px dashed #fcd34d;">
-      Cantumkan <strong>${esc(invoiceNo)}</strong> pada berita transfer.
+  <tr><td style="padding:18px 16px;text-align:center;">
+    <div style="font-size:13px;font-weight:bold;color:#92400e;margin-bottom:12px;">
+      Bayar dengan QRIS &mdash; ShopeePay
     </div>
-    <div style="font-size:12px;color:#92400e;margin-top:10px;line-height:1.6;">
-      Setelah transfer, tandai <strong>&ldquo;Saya sudah bayar&rdquo;</strong> di aplikasi
-      pada halaman Langganan, atau balas email ini dengan bukti transfer.
+    ${qr}
+    ${nama}
+    <div style="font-size:12px;color:#78350f;line-height:1.6;">
+      Pindai dengan ShopeePay, atau aplikasi apa pun yang mendukung QRIS.
+    </div>
+    ${catatan}
+  </td></tr>
+
+  <tr><td style="padding:0 16px 18px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:2px dashed #f59e0b;border-radius:10px;">
+      <tr><td style="padding:14px;text-align:center;">
+        <div style="font-size:12px;color:#92400e;margin-bottom:6px;">
+          Tulis nomor ini pada catatan pembayaran
+        </div>
+        <div style="font-size:24px;font-weight:bold;color:#78350f;letter-spacing:3px;font-family:monospace;">
+          ${esc(d.reference)}
+        </div>
+        <div style="font-size:11px;color:#a16207;margin-top:8px;line-height:1.6;">
+          Tanpa nomor ini pembayaran Anda sulit kami cocokkan.
+        </div>
+      </td></tr>
+    </table>
+    <div style="font-size:12px;color:#92400e;margin-top:12px;line-height:1.6;text-align:center;">
+      Setelah membayar, tandai <strong>&ldquo;Saya sudah bayar&rdquo;</strong> di aplikasi
+      pada halaman Langganan.
     </div>
   </td></tr>
 </table>`
@@ -178,10 +218,7 @@ export interface RenderedEmail {
 export function billEmail(d: BillEmailData): RenderedEmail {
   const subject = `Tagihan langganan ${d.communityName} — ${rupiah(d.amount)}`
 
-  const action = manualBox(
-    d.bankInfo || 'Hubungi pengelola untuk informasi rekening.',
-    d.invoiceNo,
-  )
+  const action = payBox(d)
 
   const html = layout({
     preheader: `Tagihan ${rupiah(d.amount)} untuk ${d.communityName}, jatuh tempo ${tanggal(d.dueAt)}.`,
@@ -215,15 +252,20 @@ Mohon diselesaikan sebelum ${tanggal(d.dueAt)} agar layanan tetap berjalan.
   Paket        : ${planLabel(d.plan)}
   Jatuh tempo  : ${tanggal(d.dueAt)}
   No. tagihan  : ${d.invoiceNo}
+  No. referensi: ${d.reference}
   Total        : ${rupiah(d.amount)}
 
-Cara pembayaran:
-${d.bankInfo || 'Hubungi pengelola untuk informasi rekening.'}
+Cara pembayaran: QRIS ShopeePay${d.qrisName ? ` (a.n. ${d.qrisName})` : ''}
+Pindai QRIS pada email versi HTML, atau buka halaman Langganan di aplikasi.
 
-Cantumkan ${d.invoiceNo} pada berita transfer.
+PENTING — tulis nomor ini pada catatan pembayaran:
 
-Setelah transfer, tandai "Saya sudah bayar" di aplikasi pada halaman
-Langganan, atau balas email ini dengan bukti transfer.
+    ${d.reference}
+
+Tanpa nomor tersebut pembayaran Anda sulit kami cocokkan.
+
+Setelah membayar, tandai "Saya sudah bayar" di aplikasi pada halaman
+Langganan.
 
 --
 Warga Jaga Warga`
@@ -242,10 +284,7 @@ export function reminderEmail(d: BillEmailData): RenderedEmail {
     ? `Terakhir: langganan ${d.communityName} berakhir besok`
     : `Pengingat: langganan ${d.communityName} berakhir ${n} hari lagi`
 
-  const action = manualBox(
-    d.bankInfo || 'Hubungi pengelola untuk informasi rekening.',
-    d.invoiceNo,
-  )
+  const action = payBox(d)
 
   const html = layout({
     preheader: `Sisa ${n} hari sebelum layanan ${d.communityName} terhenti.`,
@@ -275,11 +314,11 @@ Setelah itu tombol darurat dan fitur lain akan dibatasi.
 
   Paket        : ${planLabel(d.plan)}
   No. tagihan  : ${d.invoiceNo}
+  No. referensi: ${d.reference}
   Total        : ${rupiah(d.amount)}
 
-Cara pembayaran:
-${d.bankInfo || 'Hubungi pengelola untuk informasi rekening.'}
-Cantumkan ${d.invoiceNo} pada berita transfer.
+Cara pembayaran: QRIS ShopeePay
+Tulis nomor referensi ini pada catatan pembayaran: ${d.reference}
 
 --
 Warga Jaga Warga`
@@ -308,7 +347,7 @@ export function expiredEmail(d: BillEmailData): RenderedEmail {
   Data warga Anda tetap tersimpan dan akan pulih setelah perpanjangan.
 </p>
 ${detailTable(d)}
-${manualBox(d.bankInfo || 'Hubungi pengelola untuk informasi rekening.', d.invoiceNo)}`,
+${payBox(d)}`,
   })
 
   const text = `Warga Jaga Warga — Langganan berakhir
@@ -322,8 +361,8 @@ setelah perpanjangan.
   Paket : ${planLabel(d.plan)}
   Total : ${rupiah(d.amount)}
 
-Cara perpanjangan:
-${d.bankInfo || 'Hubungi pengelola untuk informasi rekening.'}
+Cara perpanjangan: QRIS ShopeePay
+Tulis nomor referensi ini pada catatan pembayaran: ${d.reference}
 
 --
 Warga Jaga Warga`

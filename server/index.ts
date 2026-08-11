@@ -29,8 +29,11 @@ import {
   type LatLng,
 } from './geo.js'
 import {
-  BANK_INFO,
+  PAYMENT_INFO,
   PRICE_MONTHLY,
+  QRIS_IMAGE_URL,
+  QRIS_NAME,
+  QRIS_PHONE,
   PRICE_YEARLY,
   claimPayment,
   createInvoice,
@@ -1324,10 +1327,22 @@ app.get('/api/billing', auth, active, (c) => {
     .all(me.community_id) as Record<string, unknown>[]
   return c.json({
     prices: { monthly: PRICE_MONTHLY, yearly: PRICE_YEARLY },
-    bankInfo: BANK_INFO,
+    qris: {
+      name: QRIS_NAME,
+      phone: QRIS_PHONE,
+      imageUrl: QRIS_IMAGE_URL,
+      info: PAYMENT_INFO,
+    },
     invoices: rows.map(mapInvoice),
   })
 })
+
+/** URL gambar QRIS yang bisa dibuka klien email (harus absolut). */
+function qrisUrl(): string {
+  if (/^https?:\/\//.test(QRIS_IMAGE_URL)) return QRIS_IMAGE_URL
+  const base = (process.env.WJW_APP_URL ?? '').replace(/\/+$|#.*$/g, '')
+  return base ? `${base}${QRIS_IMAGE_URL}` : QRIS_IMAGE_URL
+}
 
 /** Buat tagihan langganan lalu kirim emailnya ke admin. */
 app.post('/api/billing/checkout', auth, active, async (c) => {
@@ -1364,7 +1379,10 @@ app.post('/api/billing/checkout', auth, active, async (c) => {
     amount: inv.amount,
     dueAt,
     invoiceNo: invoiceNumber(me.community_id, inv.created_at),
-    bankInfo: BANK_INFO,
+    reference: inv.reference,
+    qrisName: QRIS_NAME,
+    qrisImageUrl: qrisUrl(),
+    paymentInfo: PAYMENT_INFO,
   })
   const sent = await sendMail({
     to: me.email,
@@ -1383,15 +1401,14 @@ app.post('/api/billing/checkout', auth, active, async (c) => {
 })
 
 /** Admin menandai sudah transfer; menunggu verifikasi superadmin. */
-app.post('/api/billing/:id/claim', auth, active, async (c) => {
+app.post('/api/billing/:id/claim', auth, active, (c) => {
   if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
   const me = c.get('me')
   const inv = getInvoice(c.req.param('id') ?? '')
   if (!inv || !sameCommunity(me, inv.community_id)) return bad(c, 'forbidden', 403)
 
-  const b = (await c.req.json().catch(() => ({}))) as { reference?: string }
-  if (!b.reference?.trim()) return bad(c, 'errRequired')
-  if (!claimPayment(inv.id, me.id, b.reference)) return bad(c, 'errNotPending')
+  // Nomor referensi tidak diterima dari admin — sudah melekat pada tagihan.
+  if (!claimPayment(inv.id, me.id)) return bad(c, 'errNotPending')
 
   const supers = db
     .prepare("SELECT id FROM members WHERE role='superadmin'")
@@ -1465,6 +1482,7 @@ app.post('/api/billing/:id/verify', auth, async (c) => {
       amount: inv.amount,
       dueAt: inv.expires_at ?? now(),
       invoiceNo: invoiceNumber(inv.community_id, inv.created_at),
+      reference: inv.reference,
       activeUntil: r.paidUntil,
     })
     void sendMail({
@@ -1517,6 +1535,10 @@ app.post('/api/email/test', auth, async (c) => {
     amount: 149000,
     dueAt: now() + 7 * DAY,
     invoiceNo: 'CONTOH-001',
+    reference: 'WJWABC23',
+    qrisName: QRIS_NAME,
+    qrisImageUrl: qrisUrl(),
+    paymentInfo: PAYMENT_INFO,
   })
   const r = await sendMail({
     to: b.to || me.email,
@@ -1549,7 +1571,10 @@ app.post('/api/billing/:id/resend', auth, active, async (c) => {
     amount: inv.amount as number,
     dueAt: (inv.expires_at as number) ?? now(),
     invoiceNo: invoiceNumber(inv.community_id as string, inv.created_at as number),
-    bankInfo: BANK_INFO,
+    reference: (inv.reference as string) ?? '',
+    qrisName: QRIS_NAME,
+    qrisImageUrl: qrisUrl(),
+    paymentInfo: PAYMENT_INFO,
   })
   const r = await sendMail({
     to: me.email,

@@ -7,10 +7,10 @@ warga transfer, lalu pengelola memverifikasi.
 
 1. **Tagihan dibuat** — otomatis pada H-7 sebelum jatuh tempo, atau admin
    menekan *Buat tagihan* di halaman Langganan.
-2. **Email masuk ke admin klaster** — berisi rincian, total, nomor
-   rekening, dan nomor tagihan untuk berita transfer.
-3. **Admin transfer**, lalu menekan **"Saya sudah bayar"** di aplikasi
-   sambil mengisi nomor rujukan (atau membalas email dengan bukti).
+2. **Email masuk ke admin klaster** — berisi rincian, total, QRIS
+   ShopeePay, dan **nomor referensi** yang harus dicantumkan.
+3. **Admin memindai QRIS dan membayar**, mencantumkan nomor referensi
+   pada catatan pembayaran, lalu menekan **"Saya sudah bayar"**.
 4. **Superadmin memverifikasi** di Konsol → Pembayaran.
 5. **Langganan aktif** dan admin menerima email kuitansi.
 
@@ -21,7 +21,7 @@ memeriksa. Ini disengaja karena tidak ada konfirmasi dari bank.
 
 | Kapan | Template | Isi |
 | --- | --- | --- |
-| H-7 | **Tagihan** | Rincian, total, rekening, nomor tagihan |
+| H-7 | **Tagihan** | Rincian, total, QRIS, nomor referensi |
 | H-3 dan H-1 | **Pengingat** | Nada mendesak di H-1 (merah) |
 | Setelah jatuh tempo | **Berakhir** | Menegaskan data warga tetap tersimpan |
 | Setelah diverifikasi | **Kuitansi** | Aktif sampai kapan |
@@ -39,9 +39,13 @@ SMTP_PASS=app-password-16-digit
 MAIL_FROM=Warga Jaga Warga <noreply@domain-anda.com>
 MAIL_REPLY_TO=tarafk1972@gmail.com
 
-# Rekening tujuan — muncul di email dan di aplikasi
-WJW_BANK_INFO=BCA 1234567890
-a.n. Yayasan Warga RW 05
+# QRIS ShopeePay — satu-satunya metode pembayaran
+WJW_QRIS_NAME=FADLUL KHAIRA
+WJW_QRIS_PHONE=(+62)81****781
+WJW_QRIS_IMAGE_URL=/qris.png
+
+# Wajib agar gambar QR tampil di email (klien email tak bisa URL relatif)
+WJW_APP_URL=https://wargajagawarga.app
 
 # Harga
 WJW_PRICE_MONTHLY=149000
@@ -71,10 +75,32 @@ Aplikasi tetap berjalan. Email dicatat berstatus `skipped` dan muncul di
 riwayat, sehingga terlihat apa yang *seharusnya* terkirim. Admin tetap
 bisa melihat nomor rekening dan menandai sudah bayar lewat aplikasi.
 
+## Nomor referensi
+
+Setiap tagihan mendapat nomor referensi **yang ditentukan sistem**,
+misalnya `WJWFXNA2`. Admin tidak bisa mengubahnya — nomor itu melekat
+pada tagihan sejak dibuat.
+
+Formatnya 8 karakter tanpa huruf/angka rancu (tanpa `O`, `0`, `I`, `1`)
+supaya mudah diketik ulang di kolom catatan ShopeePay, dan dijamin unik
+lewat pengecekan basis data.
+
+Inilah yang Anda pakai untuk mencocokkan mutasi ShopeePay dengan klaster
+yang membayar.
+
+## Menyiapkan gambar QRIS
+
+Simpan gambar QR ShopeePay sebagai `public/qris.png`. Gambar itu tampil
+di halaman Langganan dan di email tagihan.
+
+Agar tampil di email, `WJW_APP_URL` harus berisi alamat publik aplikasi —
+klien email tidak bisa membuka URL relatif.
+
 ## Verifikasi pembayaran
 
 Superadmin membuka **Konsol → Pembayaran**. Setiap klaim menampilkan
-klaster, nama admin, email, nomor tagihan, dan nomor rujukan.
+klaster, nama admin, email, nomor tagihan, dan **nomor referensi** untuk
+dicocokkan dengan mutasi ShopeePay.
 
 - **Setujui** → langganan aktif, kuitansi terkirim
 - **Tolak** → tagihan kembali ke *pending* beserta catatan alasan yang

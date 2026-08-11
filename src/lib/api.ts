@@ -177,7 +177,8 @@ export interface InvoiceDto {
   amount: number
   /** pending → awaiting_verification → paid */
   status: 'pending' | 'awaiting_verification' | 'paid' | 'expired'
-  reference: string | null
+  /** Nomor referensi tetap dari sistem, dicantumkan saat membayar. */
+  reference: string
   note: string | null
   invoiceNo: string
   createdAt: number
@@ -190,7 +191,7 @@ export const billingApi = {
   fetch: () =>
     api.get<{
       prices: { monthly: number; yearly: number }
-      bankInfo: string
+      qris: { name: string; phone: string; imageUrl: string; info: string }
       invoices: InvoiceDto[]
     }>('/billing'),
   /** Buat tagihan; server mengirim emailnya ke admin. */
@@ -199,9 +200,9 @@ export const billingApi = {
       '/billing/checkout',
       { plan },
     ),
-  /** Admin menandai sudah transfer. */
-  claim: (id: string, reference: string) =>
-    api.post(`/billing/${id}/claim`, { reference }),
+  /** Admin menandai sudah membayar. Nomor referensi tidak dikirim
+   *  dari klien — sudah melekat pada tagihan. */
+  claim: (id: string) => api.post(`/billing/${id}/claim`),
   resend: (id: string) => api.post(`/billing/${id}/resend`),
   /** Superadmin: daftar yang menunggu verifikasi. */
   pending: () =>
