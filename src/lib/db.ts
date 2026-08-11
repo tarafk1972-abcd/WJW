@@ -451,10 +451,27 @@ export function register(input: RegisterInput): RegisterResult {
   let invite: Invite | null = null
 
   if (input.mode === 'create') {
+    /*
+     * Nama lingkungan wajib diisi sendiri oleh admin.
+     *
+     * Tanpa pemeriksaan ini, nama kosong lolos dan judul di bagian atas
+     * aplikasi jadi kosong — lalu satu-satunya nama yang terlihat di situ
+     * adalah nama admin, seolah lingkungan itu bernama seperti orangnya.
+     * Nama orang tidak boleh menjadi nama tempat: pengurus bisa berganti,
+     * sedangkan lingkungannya tetap.
+     */
+    const nama = (input.communityName || '').trim()
+    if (!nama) return { ok: false, error: 'errCommunityName' }
+
+    // Menolak nama lingkungan yang sama persis dengan nama pendaftarnya:
+    // itu hampir selalu salah isi kolom, bukan nama tempat sungguhan.
+    if (nama.toLowerCase() === input.name.trim().toLowerCase())
+      return { ok: false, error: 'errCommunityNameIsPerson' }
+
     const now = Date.now()
     community = {
       id: uid('c_'),
-      name: (input.communityName || '').trim(),
+      name: nama,
       address: (input.communityAddress || '').trim(),
       city: (input.city || '').trim(),
       createdAt: now,

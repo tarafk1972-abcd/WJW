@@ -410,7 +410,16 @@ app.post('/api/auth/register', async (c) => {
   let invite: Record<string, unknown> | null = null
 
   if (i.mode === 'create') {
-    if (!i.communityName?.trim()) return bad(c, 'errRequired')
+    /*
+     * Nama lingkungan wajib diisi admin sendiri, dan tidak boleh sekadar
+     * namanya. Judul di bagian atas aplikasi memakai nama ini; bila kosong
+     * atau berisi nama orang, lingkungan itu tampak bernama seperti
+     * pengurusnya — padahal pengurus berganti sedangkan tempatnya tetap.
+     */
+    const nama = i.communityName?.trim() ?? ''
+    if (!nama) return bad(c, 'errCommunityName')
+    if (nama.toLowerCase() === i.name.trim().toLowerCase())
+      return bad(c, 'errCommunityNameIsPerson')
     communityId = uid('c_')
     db.prepare(
       `INSERT INTO communities
@@ -419,7 +428,7 @@ app.post('/api/auth/register', async (c) => {
        VALUES (?,?,?,?,?,'','[]',?,?,'trial','trial',?)`,
     ).run(
       communityId,
-      i.communityName.trim(),
+      nama,
       i.communityAddress?.trim() ?? '',
       i.city?.trim() ?? '',
       now(),

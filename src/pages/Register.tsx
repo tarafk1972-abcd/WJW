@@ -514,6 +514,8 @@ export default function Register() {
                 onChange={(e) => setCName(e.target.value)}
                 placeholder="RW 05 Griya Soreang"
               />
+              {/* Nama tempat, bukan nama orang — lihat catatan di db.ts. */}
+              <span className="tiny pw-hint">{tr('communityNameHint')}</span>
             </label>
             <label className="field">
               <span>{tr('communityAddress')}</span>

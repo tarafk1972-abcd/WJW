@@ -34,6 +34,8 @@ const id = {
   password: 'Kata sandi',
   house: 'Alamat rumah / No. rumah',
   communityName: 'Nama lingkungan (RT/RW/Perumahan)',
+  communityNameHint:
+    'Nama tempatnya, bukan nama Anda. Nama ini tampil di bagian atas aplikasi semua warga.',
   communityAddress: 'Alamat lingkungan',
   city: 'Kota',
   inviteCode: 'Kode undangan (opsional)',
@@ -293,6 +295,9 @@ const id = {
   errEmail: 'Format email tidak valid.',
   errPhone: 'Nomor HP tidak valid.',
   errPasswordShort: 'Kata sandi minimal 6 karakter.',
+  errCommunityName: 'Nama lingkungan wajib diisi.',
+  errCommunityNameIsPerson:
+    'Nama lingkungan tidak boleh sama dengan nama Anda. Isi nama tempatnya, misalnya "RW 05 Griya Soreang".',
   passwordHint: 'Minimal 6 karakter.',
   signInOther: 'Masuk sebagai akun lain',
   showPassword: 'Tampilkan kata sandi',
@@ -689,6 +694,8 @@ const en: Dict = {
   password: 'Password',
   house: 'Home address / house no.',
   communityName: 'Neighbourhood name',
+  communityNameHint:
+    'The name of the place, not your own. It appears at the top of the app for every resident.',
   communityAddress: 'Neighbourhood address',
   city: 'City',
   inviteCode: 'Invite code (optional)',
@@ -935,6 +942,9 @@ const en: Dict = {
   errEmail: 'Invalid email format.',
   errPhone: 'Invalid phone number.',
   errPasswordShort: 'Password must be at least 6 characters.',
+  errCommunityName: 'Neighbourhood name is required.',
+  errCommunityNameIsPerson:
+    'The neighbourhood name cannot be your own name. Enter the place, for example "RW 05 Griya Soreang".',
   passwordHint: 'At least 6 characters.',
   signInOther: 'Sign in as someone else',
   showPassword: 'Show password',

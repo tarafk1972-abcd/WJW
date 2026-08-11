@@ -449,3 +449,58 @@ describe('pemulihan akses superadmin', () => {
     expect(login.status).toBe(200)
   })
 })
+
+/**
+ * Nama lingkungan tidak boleh berasal dari nama pendaftarnya.
+ * Aturan ini juga dijaga di server, agar tidak bisa dilewati lewat API.
+ */
+describe('nama lingkungan', () => {
+  it('menolak nama kosong', async () => {
+    const r = await call('POST', '/api/auth/register', {
+      name: 'Budi Santoso',
+      phone: '081900000101',
+      email: 'cn1@x.id',
+      password: 'rahasia123',
+      house: 'A1',
+      mode: 'create',
+      communityName: '   ',
+    })
+    expect(r.status).toBe(400)
+    expect(r.body.error).toBe('errCommunityName')
+  })
+
+  it('menolak nama yang sama dengan nama pendaftar', async () => {
+    const r = await call('POST', '/api/auth/register', {
+      name: 'Budi Santoso',
+      phone: '081900000102',
+      email: 'cn2@x.id',
+      password: 'rahasia123',
+      house: 'A1',
+      mode: 'create',
+      communityName: 'budi santoso',
+    })
+    expect(r.status).toBe(400)
+    expect(r.body.error).toBe('errCommunityNameIsPerson')
+  })
+
+  it('menerima nama tempat dan menjadikan pendaftarnya Admin', async () => {
+    const r = await call('POST', '/api/auth/register', {
+      name: 'Budi Santoso',
+      phone: '081900000103',
+      email: 'cn3@x.id',
+      password: 'rahasia123',
+      house: 'A1',
+      mode: 'create',
+      communityName: 'RW 07 Griya Soreang',
+    })
+    expect(r.status).toBe(201)
+    expect(r.body.member.role).toBe('admin')
+
+    const { db } = await import('./db.js')
+    const row = db
+      .prepare('SELECT name FROM communities WHERE id=?')
+      .get(r.body.member.communityId) as { name: string }
+    expect(row.name).toBe('RW 07 Griya Soreang')
+    expect(row.name).not.toBe(r.body.member.name)
+  })
+})
