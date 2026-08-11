@@ -171,6 +171,31 @@ export const publicApi = {
     }>(`/invites/${encodeURIComponent(code)}`),
 }
 
+export interface InvoiceDto {
+  id: string
+  plan: 'monthly' | 'yearly'
+  amount: number
+  status: 'pending' | 'paid' | 'expired' | 'cancelled' | 'failed'
+  payUrl: string | null
+  createdAt: number
+  expiresAt: number | null
+  paidAt: number | null
+}
+
+export const billingApi = {
+  fetch: () =>
+    api.get<{
+      prices: { monthly: number; yearly: number }
+      provider: 'mayar' | 'manual'
+      invoices: InvoiceDto[]
+    }>('/billing'),
+  checkout: (plan: 'monthly' | 'yearly', redirectUrl: string) =>
+    api.post<{ invoice: InvoiceDto; reused?: boolean }>('/billing/checkout', {
+      plan,
+      redirectUrl,
+    }),
+}
+
 export const profileApi = {
   save: (b: { emergency?: unknown; language?: string }) => api.put('/me/profile', b),
 }

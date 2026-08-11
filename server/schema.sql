@@ -217,3 +217,38 @@ CREATE TABLE IF NOT EXISTS audit (
   at           INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_audit_at ON audit(at DESC);
+
+-- Tagihan langganan yang dibuat lewat Mayar.
+CREATE TABLE IF NOT EXISTS invoices (
+  id              TEXT PRIMARY KEY,
+  community_id    TEXT NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+  -- admin yang ditagih (penerima email dari Mayar)
+  member_id       TEXT NOT NULL,
+  plan            TEXT NOT NULL,                 -- monthly | yearly
+  amount          INTEGER NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'pending', -- pending | paid | expired | cancelled
+  -- id & tautan dari Mayar
+  mayar_id        TEXT,
+  mayar_txn_id    TEXT,
+  pay_url         TEXT,
+  created_at      INTEGER NOT NULL,
+  expires_at      INTEGER,
+  paid_at         INTEGER,
+  created_by      TEXT NOT NULL,
+  -- diisi saat webhook masuk, untuk penelusuran
+  raw             TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_invoices_community ON invoices(community_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_invoices_txn ON invoices(mayar_txn_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+
+-- Catatan webhook agar kejadian yang sama tidak diproses dua kali.
+CREATE TABLE IF NOT EXISTS webhook_events (
+  id          TEXT PRIMARY KEY,
+  provider    TEXT NOT NULL DEFAULT 'mayar',
+  event       TEXT NOT NULL,
+  -- kunci unik dari penyedia; menolak duplikat
+  external_id TEXT NOT NULL UNIQUE,
+  payload     TEXT NOT NULL,
+  at          INTEGER NOT NULL
+);

@@ -582,6 +582,26 @@ const id = {
   pushUnsupported: 'Perangkat ini tidak mendukung notifikasi.',
   serverDown: 'Server tidak aktif — memakai data di HP ini saja.',
   serverDownHint: 'Jalankan `npm run server` lalu coba lagi.',
+
+  // --- tagihan Mayar ---
+  payNow: 'Bayar sekarang',
+  createBill: 'Buat tagihan',
+  billCreated: 'Tagihan dibuat. Tautan pembayaran juga dikirim ke email Anda.',
+  billPending: 'Menunggu pembayaran',
+  billPaid: 'Lunas',
+  billExpired: 'Kedaluwarsa',
+  billFailed: 'Gagal dibuat',
+  openPayLink: 'Buka tautan pembayaran',
+  billEmailNote:
+    'Mayar mengirim email berisi tautan pembayaran ke {email}. Anda juga bisa membayar lewat tombol di bawah.',
+  billInvoices: 'Tagihan',
+  noInvoices: 'Belum ada tagihan.',
+  billAutoActivate:
+    'Langganan aktif otomatis setelah pembayaran terkonfirmasi — tidak perlu konfirmasi manual.',
+  errPaymentProvider: 'Gagal membuat tagihan. Coba lagi atau hubungi dukungan.',
+  billValidUntil: 'Bayar sebelum {date}',
+  billManualMode:
+    'Pembayaran otomatis belum aktif. Hubungi superadmin untuk pembayaran manual.',
 }
 
 export type Dict = typeof id
@@ -1138,6 +1158,25 @@ const en: Dict = {
   pushUnsupported: 'This device does not support notifications.',
   serverDown: 'Server is down — using data on this phone only.',
   serverDownHint: 'Run `npm run server`, then try again.',
+
+  payNow: 'Pay now',
+  createBill: 'Create bill',
+  billCreated: 'Bill created. A payment link was also emailed to you.',
+  billPending: 'Awaiting payment',
+  billPaid: 'Paid',
+  billExpired: 'Expired',
+  billFailed: 'Could not be created',
+  openPayLink: 'Open payment link',
+  billEmailNote:
+    'Mayar emails the payment link to {email}. You can also pay using the button below.',
+  billInvoices: 'Bills',
+  noInvoices: 'No bills yet.',
+  billAutoActivate:
+    'The subscription activates automatically once payment clears — no manual confirmation needed.',
+  errPaymentProvider: 'Could not create the bill. Try again or contact support.',
+  billValidUntil: 'Pay before {date}',
+  billManualMode:
+    'Automatic payments are not enabled. Contact the superadmin for manual payment.',
 }
 
 const su: Dict = {
@@ -1319,6 +1358,9 @@ const su: Dict = {
   offlineBanner: 'Mode luring — parobahan ngan disimpen di HP ieu.',
   pushEnable: 'Aktipkeun notifikasi darurat',
   serverDown: 'Server teu aktip — nganggo data di HP ieu wungkul.',
+  payNow: 'Mayar ayeuna',
+  billPaid: 'Lunas',
+  billPending: 'Ngantosan pambayaran',
 }
 
 export const DICTS: Record<Lang, Dict> = { id, en, su }

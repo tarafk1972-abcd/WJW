@@ -29,6 +29,18 @@ import {
   type LatLng,
 } from './geo.js'
 import {
+  PRICE_MONTHLY,
+  PRICE_YEARLY,
+  WEBHOOK_TOKEN,
+  activateSubscription,
+  createInvoice,
+  isPaid,
+  matchInvoice,
+  mayarEnabled,
+  recordEvent,
+  type MayarWebhookPayload,
+} from './mayar.js'
+import {
   pushEnabled,
   pushToMembers,
   removeSubscription,
@@ -1278,6 +1290,136 @@ app.post('/api/push/subscribe', auth, async (c) => {
 app.post('/api/push/unsubscribe', auth, async (c) => {
   const b = (await c.req.json()) as { endpoint?: string }
   if (b.endpoint) removeSubscription(b.endpoint)
+  return c.json({ ok: true })
+})
+
+/* ================= langganan (Mayar) ================= */
+
+function mapInvoice(r: Record<string, unknown>) {
+  return {
+    id: r.id,
+    communityId: r.community_id,
+    memberId: r.member_id,
+    plan: r.plan,
+    amount: r.amount,
+    status: r.status,
+    payUrl: r.pay_url,
+    createdAt: r.created_at,
+    expiresAt: r.expires_at,
+    paidAt: r.paid_at,
+  }
+}
+
+app.get('/api/billing', auth, active, (c) => {
+  const me = c.get('me')
+  const rows = db
+    .prepare('SELECT * FROM invoices WHERE community_id=? ORDER BY created_at DESC LIMIT 50')
+    .all(me.community_id) as Record<string, unknown>[]
+  return c.json({
+    prices: { monthly: PRICE_MONTHLY, yearly: PRICE_YEARLY },
+    provider: mayarEnabled() ? 'mayar' : 'manual',
+    invoices: rows.map(mapInvoice),
+  })
+})
+
+/**
+ * Buat tagihan langganan. Mayar mengirim email berisi tautan pembayaran
+ * ke admin, dan tautannya juga dikembalikan agar bisa dibuka langsung.
+ */
+app.post('/api/billing/checkout', auth, active, async (c) => {
+  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
+  const me = c.get('me')
+  if (!me.community_id) return bad(c, 'errNoCommunity')
+
+  const b = (await c.req.json().catch(() => ({}))) as {
+    plan?: 'monthly' | 'yearly'
+    redirectUrl?: string
+  }
+  const plan = b.plan === 'yearly' ? 'yearly' : 'monthly'
+
+  // Cegah tagihan menumpuk: pakai ulang tagihan pending yang masih berlaku.
+  const existing = db
+    .prepare(
+      `SELECT * FROM invoices WHERE community_id=? AND plan=? AND status='pending'
+       AND expires_at > ? AND pay_url IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(me.community_id, plan, now()) as Record<string, unknown> | undefined
+  if (existing) return c.json({ invoice: mapInvoice(existing), reused: true })
+
+  const com = db
+    .prepare('SELECT name FROM communities WHERE id=?')
+    .get(me.community_id) as { name: string }
+
+  try {
+    const inv = await createInvoice({
+      communityId: me.community_id,
+      communityName: com.name,
+      memberId: me.id,
+      name: me.name,
+      email: me.email,
+      mobile: me.phone,
+      plan,
+      redirectUrl: b.redirectUrl || 'https://wargajagawarga.app/#/app/billing',
+    })
+    audit(me.community_id, me.id, 'billing.checkout', `${plan} ${inv.amount}`)
+    return c.json({ invoice: mapInvoice(inv as unknown as Record<string, unknown>) }, 201)
+  } catch (e) {
+    return c.json(
+      { error: 'errPaymentProvider', detail: String(e instanceof Error ? e.message : e) },
+      502,
+    )
+  }
+})
+
+/**
+ * Webhook Mayar. Diamankan dengan token pada query string karena Mayar
+ * hanya mengizinkan menyetel URL, bukan header khusus.
+ *
+ * Selalu membalas 200 setelah kejadian tersimpan, agar Mayar tidak
+ * mengirim ulang terus-menerus.
+ */
+app.post('/api/webhooks/mayar', async (c) => {
+  if (WEBHOOK_TOKEN && c.req.query('token') !== WEBHOOK_TOKEN)
+    return c.json({ error: 'unauthorized' }, 401)
+
+  const payload = (await c.req.json().catch(() => null)) as MayarWebhookPayload | null
+  if (!payload) return c.json({ error: 'bad_payload' }, 400)
+
+  const d = payload.data ?? {}
+  const event = payload.event ?? 'unknown'
+  const externalId = String(d.transactionId ?? d.id ?? `${event}:${now()}`)
+
+  // Kejadian yang sama tidak diproses dua kali.
+  if (!recordEvent(externalId, event, payload)) {
+    return c.json({ ok: true, duplicate: true })
+  }
+
+  if (event === 'payment.received' && (isPaid(d.status) || isPaid(d.transactionStatus))) {
+    const inv = matchInvoice(payload)
+    if (inv && inv.status !== 'paid') {
+      activateSubscription(inv)
+      audit(inv.community_id, 'mayar', 'billing.paid', `${inv.plan} ${inv.amount}`)
+      void pushToMembers([inv.member_id], {
+        title: 'Pembayaran diterima',
+        body: 'Langganan lingkungan Anda sudah aktif. Terima kasih!',
+        url: '#/app/billing',
+        tag: `paid-${inv.id}`,
+      })
+    }
+  }
+
+  if (event === 'payment.reminder') {
+    const inv = matchInvoice(payload)
+    if (inv && inv.status === 'pending') {
+      void pushToMembers([inv.member_id], {
+        title: 'Tagihan belum dibayar',
+        body: 'Selesaikan pembayaran langganan untuk melanjutkan layanan.',
+        url: '#/app/billing',
+        tag: `remind-${inv.id}`,
+      })
+    }
+  }
+
   return c.json({ ok: true })
 })
 
