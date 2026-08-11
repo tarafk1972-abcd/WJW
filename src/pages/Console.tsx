@@ -14,6 +14,7 @@ import {
 import { fmtDate, fmtDateTime, fmtMoney, initials, timeAgo } from '../lib/format'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'
+import { QrisUpload } from '../ui/QrisUpload'
 import { Sheet } from '../ui/Sheet'
 import { useToast } from '../ui/Toast'
 import { roleChip, roleKey } from '../lib/meta'
@@ -249,7 +250,9 @@ export default function Console() {
 
         {tab === 'payments' && apiMode() && (
           <>
-            <div className="section-title" style={{ marginTop: 0 }}>
+            <QrisUpload />
+
+            <div className="section-title">
               {t('verifyPayments')}
               {pendingBills.length > 0 && (
                 <span className="chip chip-warn">{pendingBills.length}</span>

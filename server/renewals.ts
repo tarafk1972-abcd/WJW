@@ -26,12 +26,21 @@ import {
 } from './billing.js'
 
 /** URL gambar QRIS yang bisa dibuka klien email. */
-function qrisUrl(): string {
-  if (/^https?:\/\//.test(QRIS_IMAGE_URL)) return QRIS_IMAGE_URL
-  const base = (process.env.WJW_APP_URL ?? '').replace(/\/+$|#.*$/g, '')
-  return base ? `${base}${QRIS_IMAGE_URL}` : QRIS_IMAGE_URL
-}
 import { pushToMembers } from './push.js'
+import { qrisImagePath, qrisName } from './settings.js'
+
+/**
+ * URL gambar QRIS untuk email perpanjangan.
+ *
+ * Harus absolut: klien email tidak bisa membuka URL relatif. Gambar yang
+ * diunggah superadmin menang atas nilai di .env.
+ */
+function qrisUrl(): string {
+  const path = qrisImagePath(QRIS_IMAGE_URL)
+  if (/^https?:\/\//.test(path)) return path
+  const base = (process.env.WJW_APP_URL ?? '').replace(/\/+$|#.*$/g, '')
+  return base ? `${base}${path}` : path
+}
 
 /** Ambang hari sebelum jatuh tempo yang memicu tindakan. */
 export const REMIND_DAYS = [7, 3, 1] as const
@@ -153,7 +162,7 @@ export async function runRenewalCheck(
             dueAt: expiry,
             invoiceNo: invoiceNumber(c.id, expiry),
             reference: '',
-            qrisName: QRIS_NAME,
+            qrisName: qrisName(QRIS_NAME),
             qrisImageUrl: qrisUrl(),
             paymentInfo: PAYMENT_INFO,
           })
@@ -203,7 +212,7 @@ export async function runRenewalCheck(
           daysLeft: left,
           invoiceNo: invoiceNumber(c.id, inv.created_at),
           reference: inv.reference,
-          qrisName: QRIS_NAME,
+          qrisName: qrisName(QRIS_NAME),
           qrisImageUrl: qrisUrl(),
           paymentInfo: PAYMENT_INFO,
         })
@@ -259,7 +268,7 @@ export async function runRenewalCheck(
           daysLeft: d,
           invoiceNo: invoiceNumber(c.id, openInv?.created_at ?? expiry),
           reference: openInv?.reference ?? '',
-          qrisName: QRIS_NAME,
+          qrisName: qrisName(QRIS_NAME),
           qrisImageUrl: qrisUrl(),
           paymentInfo: PAYMENT_INFO,
         })

@@ -217,6 +217,18 @@ export const billingApi = {
     api.post(`/billing/${id}/verify`, { approve, note }),
 }
 
+/** Gambar QRIS — hanya superadmin yang boleh mengubah. */
+export const qrisApi = {
+  upload: (mime: string, data: string) =>
+    api.post<{ ok: true; imageUrl: string }>('/qris', { mime, data }),
+  clear: () => api.del('/qris'),
+  owner: (name: string, phone: string) =>
+    api.post<{ ok: true; name: string; phone: string }>('/qris/owner', {
+      name,
+      phone,
+    }),
+}
+
 export const profileApi = {
   save: (b: { emergency?: unknown; language?: string }) => api.put('/me/profile', b),
 }

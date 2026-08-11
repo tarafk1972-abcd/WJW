@@ -266,3 +266,12 @@ CREATE TABLE IF NOT EXISTS emails (
   at           INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_emails_community ON emails(community_id, at DESC);
+
+-- Pengaturan yang bisa diubah dari aplikasi (mis. gambar QRIS).
+-- Disimpan di basis data, bukan sebagai berkas, agar ikut terbawa saat
+-- basis data dipindahkan dan tidak hilang saat aplikasi dibangun ulang.
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  at    INTEGER NOT NULL
+);

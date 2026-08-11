@@ -45,6 +45,17 @@ import {
   verifyPayment,
 } from './billing.js'
 import { billEmail, paidEmail } from './email-templates.js'
+import {
+  QRIS_MAX_BYTES,
+  QRIS_MIME,
+  clearQrisImage,
+  getQrisImage,
+  qrisImagePath,
+  qrisName,
+  qrisPhone,
+  setQrisImage,
+  setQrisOwner,
+} from './settings.js'
 import { mailEnabled, sendMail, verifyMail } from './mailer.js'
 import { runRenewalCheck, startRenewalScheduler } from './renewals.js'
 import {
@@ -210,6 +221,100 @@ app.get('/api/health', (c) =>
 )
 
 app.get('/api/push/key', (c) => c.json({ key: vapidPublicKey() }))
+
+/**
+ * Gambar QRIS yang diunggah superadmin.
+ *
+ * Sengaja terbuka tanpa login: klien email tidak membawa token, padahal
+ * gambar ini justru perlu tampil di email tagihan. Isinya memang untuk
+ * disebarluaskan — sama seperti QR yang ditempel di papan pengumuman.
+ */
+app.get('/api/qris.png', (c) => {
+  const img = getQrisImage()
+  if (!img) return c.json({ error: 'qrisNotSet' }, 404)
+  const body = Buffer.from(img.data, 'base64')
+  return c.body(body, 200, {
+    'Content-Type': img.mime,
+    // Ada penanda ?v= pada URL, jadi aman disimpan lama.
+    'Cache-Control': 'public, max-age=31536000, immutable',
+  })
+})
+
+/** Superadmin mengunggah atau mengganti gambar QRIS. */
+app.post('/api/qris', auth, async (c) => {
+  if (c.get('me').role !== 'superadmin') return bad(c, 'forbidden', 403)
+
+  const b = (await c.req.json().catch(() => ({}))) as {
+    mime?: string
+    data?: string
+  }
+  const mime = String(b.mime ?? '')
+  const data = String(b.data ?? '')
+
+  if (!(QRIS_MIME as readonly string[]).includes(mime))
+    return bad(c, 'errQrisType')
+  if (!data) return bad(c, 'errRequired')
+
+  // Panjang base64 kira-kira 4/3 ukuran aslinya.
+  const bytes = Math.floor((data.length * 3) / 4)
+  if (bytes > QRIS_MAX_BYTES) return bad(c, 'errQrisTooBig')
+
+  // Pastikan benar-benar base64 yang sah sebelum disimpan, supaya
+  // tidak menyimpan sampah yang nanti gagal ditampilkan.
+  let decoded: Buffer
+  try {
+    decoded = Buffer.from(data, 'base64')
+    if (decoded.length === 0) throw new Error('empty')
+  } catch {
+    return bad(c, 'errQrisType')
+  }
+  if (!looksLikeImage(decoded, mime)) return bad(c, 'errQrisType')
+
+  setQrisImage(mime, decoded.toString('base64'))
+  audit(null, c.get('me').id, 'qris.upload', mime)
+  return c.json({ ok: true, imageUrl: qrisImagePath(QRIS_IMAGE_URL) })
+})
+
+/** Superadmin mengubah nama dan nomor pemilik akun QRIS. */
+app.post('/api/qris/owner', auth, async (c) => {
+  if (c.get('me').role !== 'superadmin') return bad(c, 'forbidden', 403)
+  const b = (await c.req.json().catch(() => ({}))) as {
+    name?: string
+    phone?: string
+  }
+  const name = String(b.name ?? '').trim().slice(0, 80)
+  const phone = String(b.phone ?? '').trim().slice(0, 40)
+  if (!name) return bad(c, 'errRequired')
+
+  setQrisOwner(name, phone)
+  audit(null, c.get('me').id, 'qris.owner', name)
+  return c.json({ ok: true, name, phone })
+})
+
+/** Superadmin menghapus gambar QRIS. */
+app.delete('/api/qris', auth, (c) => {
+  if (c.get('me').role !== 'superadmin') return bad(c, 'forbidden', 403)
+  clearQrisImage()
+  audit(null, c.get('me').id, 'qris.clear', '')
+  return c.json({ ok: true })
+})
+
+/**
+ * Periksa angka ajaib berkas, bukan sekadar percaya jenis yang dikirim.
+ * Mencegah berkas apa pun disimpan lalu disajikan sebagai gambar.
+ */
+function looksLikeImage(buf: Buffer, mime: string): boolean {
+  if (mime === 'image/png')
+    return buf.length > 8 && buf.subarray(0, 8).toString('hex') === '89504e470d0a1a0a'
+  if (mime === 'image/jpeg') return buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8
+  if (mime === 'image/webp')
+    return (
+      buf.length > 12 &&
+      buf.subarray(0, 4).toString('ascii') === 'RIFF' &&
+      buf.subarray(8, 12).toString('ascii') === 'WEBP'
+    )
+  return false
+}
 
 /* ================= komunitas publik ================= */
 
@@ -1328,9 +1433,9 @@ app.get('/api/billing', auth, active, (c) => {
   return c.json({
     prices: { monthly: PRICE_MONTHLY, yearly: PRICE_YEARLY },
     qris: {
-      name: QRIS_NAME,
-      phone: QRIS_PHONE,
-      imageUrl: QRIS_IMAGE_URL,
+      name: qrisName(QRIS_NAME),
+      phone: qrisPhone(QRIS_PHONE),
+      imageUrl: qrisImagePath(QRIS_IMAGE_URL),
       info: PAYMENT_INFO,
     },
     invoices: rows.map(mapInvoice),
@@ -1339,9 +1444,10 @@ app.get('/api/billing', auth, active, (c) => {
 
 /** URL gambar QRIS yang bisa dibuka klien email (harus absolut). */
 function qrisUrl(): string {
-  if (/^https?:\/\//.test(QRIS_IMAGE_URL)) return QRIS_IMAGE_URL
+  const path = qrisImagePath(QRIS_IMAGE_URL)
+  if (/^https?:\/\//.test(path)) return path
   const base = (process.env.WJW_APP_URL ?? '').replace(/\/+$|#.*$/g, '')
-  return base ? `${base}${QRIS_IMAGE_URL}` : QRIS_IMAGE_URL
+  return base ? `${base}${path}` : path
 }
 
 /** Buat tagihan langganan lalu kirim emailnya ke admin. */
@@ -1380,7 +1486,7 @@ app.post('/api/billing/checkout', auth, active, async (c) => {
     dueAt,
     invoiceNo: invoiceNumber(me.community_id, inv.created_at),
     reference: inv.reference,
-    qrisName: QRIS_NAME,
+    qrisName: qrisName(QRIS_NAME),
     qrisImageUrl: qrisUrl(),
     paymentInfo: PAYMENT_INFO,
   })
@@ -1536,7 +1642,7 @@ app.post('/api/email/test', auth, async (c) => {
     dueAt: now() + 7 * DAY,
     invoiceNo: 'CONTOH-001',
     reference: 'WJWABC23',
-    qrisName: QRIS_NAME,
+    qrisName: qrisName(QRIS_NAME),
     qrisImageUrl: qrisUrl(),
     paymentInfo: PAYMENT_INFO,
   })
@@ -1572,7 +1678,7 @@ app.post('/api/billing/:id/resend', auth, active, async (c) => {
     dueAt: (inv.expires_at as number) ?? now(),
     invoiceNo: invoiceNumber(inv.community_id as string, inv.created_at as number),
     reference: (inv.reference as string) ?? '',
-    qrisName: QRIS_NAME,
+    qrisName: qrisName(QRIS_NAME),
     qrisImageUrl: qrisUrl(),
     paymentInfo: PAYMENT_INFO,
   })

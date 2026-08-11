@@ -99,8 +99,16 @@ di perangkat itu.
 
 ## Menyiapkan gambar QRIS
 
-Simpan gambar QR ShopeePay sebagai `public/qris.png`. Gambar itu tampil
-di halaman Langganan dan di email tagihan.
+Cara termudah: masuk sebagai superadmin → **Konsol → Pembayaran →
+Unggah gambar QRIS**. Gambarnya tersimpan di basis data, sehingga ikut
+terbawa saat aplikasi dipindah atau dibangun ulang. Nama pemilik akun
+diisi di layar yang sama, tanpa perlu menyentuh `.env`.
+
+Alternatif lama masih berjalan: simpan gambar sebagai `public/qris.png`.
+Yang diunggah lewat aplikasi selalu menang atas berkas itu.
+
+Gambar tersebut tampil di halaman Langganan semua admin dan di email
+tagihan.
 
 Agar tampil di email, `WJW_APP_URL` harus berisi alamat publik aplikasi —
 klien email tidak bisa membuka URL relatif.
