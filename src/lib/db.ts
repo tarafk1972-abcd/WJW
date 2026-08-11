@@ -557,7 +557,8 @@ export function login(
       x.password === password,
   )
   if (!m) return { ok: false, error: 'errLogin' }
-  m.deviceId = deviceId()
+  // Perangkat hanya diklaim untuk warga — lihat catatan di server/index.ts.
+  if (m.role !== 'superadmin') m.deviceId = deviceId()
   saveDB(db)
   setSession(m.id)
   storeLang(m.language)

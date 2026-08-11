@@ -549,7 +549,10 @@ app.post('/api/auth/login', async (c) => {
   )
   if (!row || !ok) return bad(c, 'errLogin', 401)
 
-  if (body.deviceId)
+  // Perangkat hanya diklaim untuk warga. Superadmin mengelola layanan dari
+  // perangkat mana saja — mengikatnya akan merebut perangkat dari warga
+  // yang memakainya, lalu membuat halaman depan menyapa "Superadmin".
+  if (body.deviceId && row.role !== 'superadmin')
     db.prepare('UPDATE members SET device_id=? WHERE id=?').run(body.deviceId, row.id)
 
   const token = createSession(row.id, body.deviceId)

@@ -202,3 +202,70 @@ describe('nama pemilik QRIS', () => {
     expect(r.status).toBe(403)
   })
 })
+
+/**
+ * Login superadmin tidak boleh mengklaim perangkat.
+ *
+ * device_id dipakai halaman depan untuk mengenali pemilik perangkat.
+ * Bila superadmin ikut mengklaimnya, warga yang memakai HP itu kehilangan
+ * sapaannya, dan superadmin sendiri terjebak di layar warga setelah keluar.
+ */
+describe('device_id saat superadmin masuk', () => {
+  it('tidak menempel pada akun superadmin', async () => {
+    await call('POST', '/api/auth/login', {
+      identifier: 'tarafk1972@gmail.com',
+      password: 'super-secret',
+      deviceId: 'hp-uji-1',
+    })
+
+    const db = (await import('./db.js')).db
+    const row = db
+      .prepare("SELECT device_id FROM members WHERE role='superadmin'")
+      .get() as { device_id: string | null }
+    expect(row.device_id).toBeNull()
+  })
+
+  it('tidak merebut perangkat milik warga', async () => {
+    const db = (await import('./db.js')).db
+    seq += 1
+    const email = `dev${seq}@x.id`
+    const reg = await call('POST', '/api/auth/register', {
+      name: 'Warga HP',
+      phone: `0818${String(seq).padStart(9, '0')}`,
+      email,
+      password: 'secret123',
+      house: 'A1',
+      mode: 'create',
+      communityName: `RW Perangkat ${seq}`,
+      deviceId: 'hp-bersama',
+    })
+    const wargaId = reg.body.member.id as unknown as string
+
+    // Superadmin memeriksa sesuatu dari HP yang sama.
+    await call('POST', '/api/auth/login', {
+      identifier: 'tarafk1972@gmail.com',
+      password: 'super-secret',
+      deviceId: 'hp-bersama',
+    })
+
+    const warga = db
+      .prepare('SELECT device_id FROM members WHERE id=?')
+      .get(wargaId) as { device_id: string | null }
+    expect(warga.device_id).toBe('hp-bersama')
+  })
+
+  it('melepaskan perangkat yang terlanjur diklaim versi lama', async () => {
+    const dbm = await import('./db.js')
+    // Tiru data lama: superadmin memiliki sebuah perangkat.
+    dbm.db
+      .prepare("UPDATE members SET device_id='hp-lama' WHERE role='superadmin'")
+      .run()
+
+    dbm.ensureSuperadmin()
+
+    const row = dbm.db
+      .prepare("SELECT device_id FROM members WHERE role='superadmin'")
+      .get() as { device_id: string | null }
+    expect(row.device_id).toBeNull()
+  })
+})

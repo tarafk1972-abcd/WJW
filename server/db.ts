@@ -196,6 +196,12 @@ export function ensureSuperadmin(): void {
         existing.id,
       )
     }
+    // Lepaskan perangkat yang terlanjur diklaim versi lama. Selama masih
+    // menempel, halaman depan menyapa "Superadmin" dan menyembunyikan
+    // tombol Masuk, sehingga tidak ada jalan kembali ke Konsol.
+    db.prepare('UPDATE members SET device_id = NULL WHERE id = ? AND device_id IS NOT NULL').run(
+      existing.id,
+    )
     return
   }
 

@@ -16,8 +16,19 @@ export default function Landing() {
   const nav = useNavigate()
   const dev = deviceId()
 
+  /**
+   * Anggota yang memiliki perangkat ini.
+   *
+   * Superadmin sengaja dikecualikan: ia bukan warga suatu lingkungan,
+   * melainkan pengelola layanan. Sebelumnya, sekali ia masuk di sebuah
+   * perangkat, `device_id`-nya menempel di situ — sehingga setelah keluar
+   * halaman ini menyapanya "Apa kabar hari ini, Superadmin?" dan
+   * menawarkan "Masuk ke aplikasi", padahal ia tidak punya lingkungan
+   * untuk dimasuki. Tombol Masuk pun hilang, jadi tidak ada jalan kembali
+   * ke Konsol.
+   */
   const deviceMember: Member | undefined = db.members.find(
-    (m) => m.deviceId === dev && m.status !== 'rejected',
+    (m) => m.deviceId === dev && m.status !== 'rejected' && m.role !== 'superadmin',
   )
   const approved = deviceMember?.status === 'active'
   const pending = deviceMember?.status === 'pending'
