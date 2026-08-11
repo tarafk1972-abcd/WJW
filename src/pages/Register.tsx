@@ -86,6 +86,9 @@ export default function Register() {
     setLang(l)
   }
 
+  /** Kode ini hanya dikenal data di perangkat ini, bukan oleh server. */
+  const [localInvite, setLocalInvite] = useState(false)
+
   const applyCode = async (raw: string) => {
     setErr('')
     try {
@@ -93,15 +96,40 @@ export default function Register() {
       setPicked(r.community as unknown as Community)
       setInvitedRole(r.invite.role as Role)
       setCode(r.invite.code)
+      setLocalInvite(false)
       toast(tr('codeValid'))
       return true
     } catch (e) {
-      if (!(e instanceof ApiError && e.status === 0)) {
+      const unreachable = e instanceof ApiError && e.status === 0
+
+      /*
+       * Server menjawab tetapi tidak mengenal kodenya.
+       *
+       * Itu belum tentu kode yang salah: undangan yang dibuat saat luring
+       * — termasuk yang berasal dari data contoh — hanya ada di peramban
+       * ini. Dulu jalur ini langsung menyalahkan kodenya, padahal
+       * pemuatan lewat tautan /join/:code justru menerimanya dari data
+       * lokal. Dua jalur, dua jawaban berbeda untuk kode yang sama.
+       *
+       * Jadi coba data lokal dulu, dan hanya menolak bila di sana pun
+       * kodenya tidak ada.
+       */
+      if (!unreachable) {
+        const local = lookupInvite(raw)
+        if (local.ok) {
+          setPicked(local.community)
+          setInvitedRole(local.invite.role)
+          setCode(local.invite.code)
+          setLocalInvite(true)
+          toast(tr('codeValid'))
+          return true
+        }
         setInvitedRole(null)
         setPicked(null)
         setErr((e instanceof ApiError ? e.code : 'errInvite') as Key)
         return false
       }
+
       // Server tidak terjangkau: beri tahu pengguna, lalu coba data lokal.
       setOffline(true)
       const res = lookupInvite(raw)
@@ -114,6 +142,7 @@ export default function Register() {
       setPicked(res.community)
       setInvitedRole(res.invite.role)
       setCode(res.invite.code)
+      setLocalInvite(true)
       toast(tr('codeValid'))
       return true
     }
@@ -384,6 +413,20 @@ export default function Register() {
                     )}
                   </span>
                 </div>
+
+                {/*
+                  Undangan yang hanya ada di peramban ini: pendaftarannya
+                  tidak akan sampai ke admin sungguhan. Katakan sekarang,
+                  bukan setelah warga menunggu persetujuan yang tak kunjung
+                  datang.
+                */}
+                {localInvite && (
+                  <div className="banner banner-warn">
+                    <Icon name="info" size={17} />
+                    <span>{tr('inviteLocalOnly')}</span>
+                  </div>
+                )}
+
                 <label className="field">
                   <span>{tr('joinNote')}</span>
                   <textarea
