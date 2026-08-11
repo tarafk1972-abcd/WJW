@@ -583,7 +583,7 @@ const id = {
   serverDown: 'Server tidak aktif — memakai data di HP ini saja.',
   serverDownHint: 'Jalankan `npm run server` lalu coba lagi.',
 
-  // --- tagihan Mayar ---
+  // --- tagihan & pembayaran ---
   payNow: 'Bayar sekarang',
   createBill: 'Buat tagihan',
   billCreated: 'Tagihan dibuat. Tautan pembayaran juga dikirim ke email Anda.',
@@ -593,15 +593,33 @@ const id = {
   billFailed: 'Gagal dibuat',
   openPayLink: 'Buka tautan pembayaran',
   billEmailNote:
-    'Mayar mengirim email berisi tautan pembayaran ke {email}. Anda juga bisa membayar lewat tombol di bawah.',
+    'Tagihan beserta nomor rekening dikirim ke {email}.',
   billInvoices: 'Tagihan',
   noInvoices: 'Belum ada tagihan.',
   billAutoActivate:
     'Langganan aktif otomatis setelah pembayaran terkonfirmasi — tidak perlu konfirmasi manual.',
   errPaymentProvider: 'Gagal membuat tagihan. Coba lagi atau hubungi dukungan.',
   billValidUntil: 'Bayar sebelum {date}',
-  billManualMode:
-    'Pembayaran otomatis belum aktif. Hubungi superadmin untuk pembayaran manual.',
+  transferTo: 'Transfer ke',
+  invoiceNo: 'No. tagihan',
+  includeRef: 'Cantumkan {no} pada berita transfer.',
+  iHavePaid: 'Saya sudah bayar',
+  refNumber: 'Nomor rujukan / 4 digit terakhir rekening',
+  claimSent: 'Terima kasih. Pembayaran sedang diperiksa pengelola.',
+  awaitingVerification: 'Menunggu verifikasi',
+  verifyWithin: 'Biasanya diperiksa dalam 1×24 jam kerja.',
+  billEmailed: 'Tagihan dikirim ke {email}.',
+  resendBill: 'Kirim ulang email tagihan',
+  billResent: 'Email tagihan dikirim ulang.',
+  noBankInfo: 'Rekening belum diatur. Hubungi pengelola.',
+  rejectedNote: 'Ditolak: {note}',
+  verifyPayments: 'Verifikasi pembayaran',
+  noPendingPayments: 'Tidak ada pembayaran menunggu verifikasi.',
+  approve: 'Setujui',
+  rejectClaim: 'Tolak',
+  paymentApproved: 'Pembayaran disetujui, langganan aktif.',
+  paymentRejected: 'Klaim pembayaran ditolak.',
+  errNotPending: 'Tagihan ini tidak dalam status yang sesuai.',
 }
 
 export type Dict = typeof id
@@ -1168,15 +1186,33 @@ const en: Dict = {
   billFailed: 'Could not be created',
   openPayLink: 'Open payment link',
   billEmailNote:
-    'Mayar emails the payment link to {email}. You can also pay using the button below.',
+    'The bill and bank details are emailed to {email}.',
   billInvoices: 'Bills',
   noInvoices: 'No bills yet.',
   billAutoActivate:
     'The subscription activates automatically once payment clears — no manual confirmation needed.',
   errPaymentProvider: 'Could not create the bill. Try again or contact support.',
   billValidUntil: 'Pay before {date}',
-  billManualMode:
-    'Automatic payments are not enabled. Contact the superadmin for manual payment.',
+  transferTo: 'Transfer to',
+  invoiceNo: 'Invoice no.',
+  includeRef: 'Put {no} in the transfer note.',
+  iHavePaid: 'I have paid',
+  refNumber: 'Reference / last 4 digits of your account',
+  claimSent: 'Thank you. Your payment is being reviewed.',
+  awaitingVerification: 'Awaiting verification',
+  verifyWithin: 'Usually reviewed within 1 business day.',
+  billEmailed: 'Bill emailed to {email}.',
+  resendBill: 'Resend bill email',
+  billResent: 'Bill email resent.',
+  noBankInfo: 'Bank details not set. Contact the operator.',
+  rejectedNote: 'Rejected: {note}',
+  verifyPayments: 'Verify payments',
+  noPendingPayments: 'No payments awaiting verification.',
+  approve: 'Approve',
+  rejectClaim: 'Reject',
+  paymentApproved: 'Payment approved, subscription active.',
+  paymentRejected: 'Payment claim rejected.',
+  errNotPending: 'This invoice is not in the right state.',
 }
 
 const su: Dict = {
@@ -1361,6 +1397,9 @@ const su: Dict = {
   payNow: 'Mayar ayeuna',
   billPaid: 'Lunas',
   billPending: 'Ngantosan pambayaran',
+  iHavePaid: 'Abdi parantos mayar',
+  transferTo: 'Transfer ka',
+  awaitingVerification: 'Ngantosan verifikasi',
 }
 
 export const DICTS: Record<Lang, Dict> = { id, en, su }

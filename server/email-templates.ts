@@ -13,15 +13,13 @@ export interface BillEmailData {
   communityName: string
   plan: 'monthly' | 'yearly'
   amount: number
-  /** Tautan pembayaran. Kosong bila pembayaran manual. */
-  payUrl?: string | null
   /** Tanggal jatuh tempo (epoch ms). */
   dueAt: number
   /** Sisa hari sebelum layanan berhenti. */
   daysLeft?: number
   /** Nomor tagihan untuk rujukan. */
   invoiceNo: string
-  /** Rekening tujuan bila pembayaran manual. */
+  /** Rekening tujuan transfer. */
   bankInfo?: string
 }
 
@@ -149,29 +147,19 @@ function detailTable(d: BillEmailData): string {
 </table>`
 }
 
-/** Tombol besar yang tetap tampil di Outlook. */
-function button(url: string, label: string): string {
-  return `
-<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 20px;">
-  <tr><td style="background:${BRAND};border-radius:10px;">
-    <a href="${esc(url)}" style="display:inline-block;padding:14px 30px;font-size:15px;font-weight:bold;color:#042417;text-decoration:none;">${esc(label)}</a>
-  </td></tr>
-</table>
-<p style="margin:0 0 20px;font-size:12px;color:${MUTED};line-height:1.6;">
-  Tombol tidak berfungsi? Salin tautan ini ke peramban:<br>
-  <a href="${esc(url)}" style="color:${BRAND};word-break:break-all;">${esc(url)}</a>
-</p>`
-}
-
-/** Petunjuk pembayaran manual bila tidak ada tautan. */
-function manualBox(bankInfo: string): string {
+/** Petunjuk transfer bank. */
+function manualBox(bankInfo: string, invoiceNo: string): string {
   return `
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;margin:0 0 20px;">
   <tr><td style="padding:14px 16px;">
-    <div style="font-size:13px;font-weight:bold;color:#92400e;margin-bottom:6px;">Cara pembayaran</div>
-    <div style="font-size:13px;color:#78350f;line-height:1.7;white-space:pre-line;">${esc(bankInfo)}</div>
-    <div style="font-size:12px;color:#92400e;margin-top:8px;">
-      Setelah membayar, kirim bukti transfer dengan membalas email ini.
+    <div style="font-size:13px;font-weight:bold;color:#92400e;margin-bottom:8px;">Cara pembayaran</div>
+    <div style="font-size:14px;color:#78350f;line-height:1.8;white-space:pre-line;font-weight:600;">${esc(bankInfo)}</div>
+    <div style="font-size:13px;color:#78350f;margin-top:10px;padding-top:10px;border-top:1px dashed #fcd34d;">
+      Cantumkan <strong>${esc(invoiceNo)}</strong> pada berita transfer.
+    </div>
+    <div style="font-size:12px;color:#92400e;margin-top:10px;line-height:1.6;">
+      Setelah transfer, tandai <strong>&ldquo;Saya sudah bayar&rdquo;</strong> di aplikasi
+      pada halaman Langganan, atau balas email ini dengan bukti transfer.
     </div>
   </td></tr>
 </table>`
@@ -190,9 +178,10 @@ export interface RenderedEmail {
 export function billEmail(d: BillEmailData): RenderedEmail {
   const subject = `Tagihan langganan ${d.communityName} — ${rupiah(d.amount)}`
 
-  const action = d.payUrl
-    ? button(d.payUrl, 'Bayar sekarang')
-    : manualBox(d.bankInfo ?? 'Hubungi pengelola untuk informasi rekening.')
+  const action = manualBox(
+    d.bankInfo || 'Hubungi pengelola untuk informasi rekening.',
+    d.invoiceNo,
+  )
 
   const html = layout({
     preheader: `Tagihan ${rupiah(d.amount)} untuk ${d.communityName}, jatuh tempo ${tanggal(d.dueAt)}.`,
@@ -210,8 +199,8 @@ export function billEmail(d: BillEmailData): RenderedEmail {
 ${detailTable(d)}
 ${action}
 <p style="margin:0;font-size:13px;color:${MUTED};line-height:1.7;">
-  Langganan akan aktif otomatis setelah pembayaran terkonfirmasi.
-  Anda tidak perlu melakukan konfirmasi manual.
+  Pembayaran diperiksa oleh pengelola, biasanya dalam 1&times;24 jam kerja.
+  Anda akan menerima email kuitansi setelah langganan diaktifkan.
 </p>`,
   })
 
@@ -228,9 +217,13 @@ Mohon diselesaikan sebelum ${tanggal(d.dueAt)} agar layanan tetap berjalan.
   No. tagihan  : ${d.invoiceNo}
   Total        : ${rupiah(d.amount)}
 
-${d.payUrl ? `Bayar di sini:\n${d.payUrl}` : `Cara pembayaran:\n${d.bankInfo ?? 'Hubungi pengelola untuk informasi rekening.'}\n\nSetelah membayar, kirim bukti transfer dengan membalas email ini.`}
+Cara pembayaran:
+${d.bankInfo || 'Hubungi pengelola untuk informasi rekening.'}
 
-Langganan aktif otomatis setelah pembayaran terkonfirmasi.
+Cantumkan ${d.invoiceNo} pada berita transfer.
+
+Setelah transfer, tandai "Saya sudah bayar" di aplikasi pada halaman
+Langganan, atau balas email ini dengan bukti transfer.
 
 --
 Warga Jaga Warga`
@@ -249,9 +242,10 @@ export function reminderEmail(d: BillEmailData): RenderedEmail {
     ? `Terakhir: langganan ${d.communityName} berakhir besok`
     : `Pengingat: langganan ${d.communityName} berakhir ${n} hari lagi`
 
-  const action = d.payUrl
-    ? button(d.payUrl, 'Bayar sekarang')
-    : manualBox(d.bankInfo ?? 'Hubungi pengelola untuk informasi rekening.')
+  const action = manualBox(
+    d.bankInfo || 'Hubungi pengelola untuk informasi rekening.',
+    d.invoiceNo,
+  )
 
   const html = layout({
     preheader: `Sisa ${n} hari sebelum layanan ${d.communityName} terhenti.`,
@@ -283,7 +277,9 @@ Setelah itu tombol darurat dan fitur lain akan dibatasi.
   No. tagihan  : ${d.invoiceNo}
   Total        : ${rupiah(d.amount)}
 
-${d.payUrl ? `Bayar di sini:\n${d.payUrl}` : `Cara pembayaran:\n${d.bankInfo ?? 'Hubungi pengelola.'}`}
+Cara pembayaran:
+${d.bankInfo || 'Hubungi pengelola untuk informasi rekening.'}
+Cantumkan ${d.invoiceNo} pada berita transfer.
 
 --
 Warga Jaga Warga`
@@ -312,7 +308,7 @@ export function expiredEmail(d: BillEmailData): RenderedEmail {
   Data warga Anda tetap tersimpan dan akan pulih setelah perpanjangan.
 </p>
 ${detailTable(d)}
-${d.payUrl ? button(d.payUrl, 'Perpanjang sekarang') : manualBox(d.bankInfo ?? 'Hubungi pengelola untuk informasi rekening.')}`,
+${manualBox(d.bankInfo || 'Hubungi pengelola untuk informasi rekening.', d.invoiceNo)}`,
   })
 
   const text = `Warga Jaga Warga — Langganan berakhir
@@ -326,7 +322,8 @@ setelah perpanjangan.
   Paket : ${planLabel(d.plan)}
   Total : ${rupiah(d.amount)}
 
-${d.payUrl ? `Perpanjang di sini:\n${d.payUrl}` : d.bankInfo ?? ''}
+Cara perpanjangan:
+${d.bankInfo || 'Hubungi pengelola untuk informasi rekening.'}
 
 --
 Warga Jaga Warga`

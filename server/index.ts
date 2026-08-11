@@ -29,17 +29,18 @@ import {
   type LatLng,
 } from './geo.js'
 import {
+  BANK_INFO,
   PRICE_MONTHLY,
   PRICE_YEARLY,
-  WEBHOOK_TOKEN,
-  activateSubscription,
+  claimPayment,
   createInvoice,
-  isPaid,
-  matchInvoice,
-  mayarEnabled,
-  recordEvent,
-  type MayarWebhookPayload,
-} from './mayar.js'
+  getInvoice,
+  invoiceNumber,
+  openInvoiceOf,
+  pendingVerifications,
+  rejectPayment,
+  verifyPayment,
+} from './billing.js'
 import { billEmail, paidEmail } from './email-templates.js'
 import { mailEnabled, sendMail, verifyMail } from './mailer.js'
 import { runRenewalCheck, startRenewalScheduler } from './renewals.js'
@@ -1296,7 +1297,7 @@ app.post('/api/push/unsubscribe', auth, async (c) => {
   return c.json({ ok: true })
 })
 
-/* ================= langganan (Mayar) ================= */
+/* ================= langganan ================= */
 
 function mapInvoice(r: Record<string, unknown>) {
   return {
@@ -1306,9 +1307,12 @@ function mapInvoice(r: Record<string, unknown>) {
     plan: r.plan,
     amount: r.amount,
     status: r.status,
-    payUrl: r.pay_url,
+    reference: r.reference,
+    note: r.note,
+    invoiceNo: invoiceNumber(r.community_id as string, r.created_at as number),
     createdAt: r.created_at,
     expiresAt: r.expires_at,
+    claimedAt: r.claimed_at,
     paidAt: r.paid_at,
   }
 }
@@ -1320,141 +1324,161 @@ app.get('/api/billing', auth, active, (c) => {
     .all(me.community_id) as Record<string, unknown>[]
   return c.json({
     prices: { monthly: PRICE_MONTHLY, yearly: PRICE_YEARLY },
-    provider: mayarEnabled() ? 'mayar' : 'manual',
+    bankInfo: BANK_INFO,
     invoices: rows.map(mapInvoice),
   })
 })
 
-/**
- * Buat tagihan langganan. Mayar mengirim email berisi tautan pembayaran
- * ke admin, dan tautannya juga dikembalikan agar bisa dibuka langsung.
- */
+/** Buat tagihan langganan lalu kirim emailnya ke admin. */
 app.post('/api/billing/checkout', auth, active, async (c) => {
   if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
   const me = c.get('me')
   if (!me.community_id) return bad(c, 'errNoCommunity')
 
-  const b = (await c.req.json().catch(() => ({}))) as {
-    plan?: 'monthly' | 'yearly'
-    redirectUrl?: string
-  }
+  const b = (await c.req.json().catch(() => ({}))) as { plan?: 'monthly' | 'yearly' }
   const plan = b.plan === 'yearly' ? 'yearly' : 'monthly'
 
-  // Cegah tagihan menumpuk: pakai ulang tagihan pending yang masih berlaku.
-  const existing = db
-    .prepare(
-      `SELECT * FROM invoices WHERE community_id=? AND plan=? AND status='pending'
-       AND expires_at > ? AND pay_url IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
-    )
-    .get(me.community_id, plan, now()) as Record<string, unknown> | undefined
-  if (existing) return c.json({ invoice: mapInvoice(existing), reused: true })
+  // Cegah tagihan menumpuk.
+  const existing = openInvoiceOf(me.community_id)
+  if (existing)
+    return c.json({
+      invoice: mapInvoice(existing as unknown as Record<string, unknown>),
+      reused: true,
+    })
 
   const com = db
-    .prepare('SELECT name FROM communities WHERE id=?')
-    .get(me.community_id) as { name: string }
-
-  try {
-    const inv = await createInvoice({
-      communityId: me.community_id,
-      communityName: com.name,
-      memberId: me.id,
-      name: me.name,
-      email: me.email,
-      mobile: me.phone,
-      plan,
-      redirectUrl: b.redirectUrl || 'https://wargajagawarga.app/#/app/billing',
-    })
-    audit(me.community_id, me.id, 'billing.checkout', `${plan} ${inv.amount}`)
-    return c.json({ invoice: mapInvoice(inv as unknown as Record<string, unknown>) }, 201)
-  } catch (e) {
-    return c.json(
-      { error: 'errPaymentProvider', detail: String(e instanceof Error ? e.message : e) },
-      502,
-    )
+    .prepare('SELECT name, paid_until, trial_ends_at FROM communities WHERE id=?')
+    .get(me.community_id) as {
+    name: string
+    paid_until: number | null
+    trial_ends_at: number
   }
+
+  const inv = createInvoice({ communityId: me.community_id, memberId: me.id, plan })
+  const dueAt = com.paid_until && com.paid_until > 0 ? com.paid_until : com.trial_ends_at
+
+  const mail = billEmail({
+    adminName: me.name,
+    communityName: com.name,
+    plan,
+    amount: inv.amount,
+    dueAt,
+    invoiceNo: invoiceNumber(me.community_id, inv.created_at),
+    bankInfo: BANK_INFO,
+  })
+  const sent = await sendMail({
+    to: me.email,
+    subject: mail.subject,
+    html: mail.html,
+    text: mail.text,
+    kind: 'bill',
+    communityId: me.community_id,
+    memberId: me.id,
+  })
+
+  return c.json(
+    { invoice: mapInvoice(inv as unknown as Record<string, unknown>), emailSent: sent.ok },
+    201,
+  )
 })
 
-/**
- * Webhook Mayar. Diamankan dengan token pada query string karena Mayar
- * hanya mengizinkan menyetel URL, bukan header khusus.
- *
- * Selalu membalas 200 setelah kejadian tersimpan, agar Mayar tidak
- * mengirim ulang terus-menerus.
- */
-app.post('/api/webhooks/mayar', async (c) => {
-  if (WEBHOOK_TOKEN && c.req.query('token') !== WEBHOOK_TOKEN)
-    return c.json({ error: 'unauthorized' }, 401)
+/** Admin menandai sudah transfer; menunggu verifikasi superadmin. */
+app.post('/api/billing/:id/claim', auth, active, async (c) => {
+  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
+  const me = c.get('me')
+  const inv = getInvoice(c.req.param('id') ?? '')
+  if (!inv || !sameCommunity(me, inv.community_id)) return bad(c, 'forbidden', 403)
 
-  const payload = (await c.req.json().catch(() => null)) as MayarWebhookPayload | null
-  if (!payload) return c.json({ error: 'bad_payload' }, 400)
+  const b = (await c.req.json().catch(() => ({}))) as { reference?: string }
+  if (!b.reference?.trim()) return bad(c, 'errRequired')
+  if (!claimPayment(inv.id, me.id, b.reference)) return bad(c, 'errNotPending')
 
-  const d = payload.data ?? {}
-  const event = payload.event ?? 'unknown'
-  const externalId = String(d.transactionId ?? d.id ?? `${event}:${now()}`)
-
-  // Kejadian yang sama tidak diproses dua kali.
-  if (!recordEvent(externalId, event, payload)) {
-    return c.json({ ok: true, duplicate: true })
-  }
-
-  if (event === 'payment.received' && (isPaid(d.status) || isPaid(d.transactionStatus))) {
-    const inv = matchInvoice(payload)
-    if (inv && inv.status !== 'paid') {
-      activateSubscription(inv)
-      audit(inv.community_id, 'mayar', 'billing.paid', `${inv.plan} ${inv.amount}`)
-      void pushToMembers([inv.member_id], {
-        title: 'Pembayaran diterima',
-        body: 'Langganan lingkungan Anda sudah aktif. Terima kasih!',
-        url: '#/app/billing',
-        tag: `paid-${inv.id}`,
-      })
-
-      // Kuitansi lewat email
-      const info = db
-        .prepare(
-          `SELECT m.name, m.email, c.name AS cname, c.paid_until
-           FROM members m JOIN communities c ON c.id = m.community_id
-           WHERE m.id = ?`,
-        )
-        .get(inv.member_id) as
-        | { name: string; email: string; cname: string; paid_until: number }
-        | undefined
-      if (info) {
-        const mail = paidEmail({
-          adminName: info.name,
-          communityName: info.cname,
-          plan: inv.plan as 'monthly' | 'yearly',
-          amount: inv.amount,
-          dueAt: inv.expires_at ?? now(),
-          invoiceNo: inv.id,
-          activeUntil: info.paid_until,
-        })
-        void sendMail({
-          to: info.email,
-          subject: mail.subject,
-          html: mail.html,
-          text: mail.text,
-          kind: 'paid',
-          communityId: inv.community_id,
-          memberId: inv.member_id,
-        })
-      }
-    }
-  }
-
-  if (event === 'payment.reminder') {
-    const inv = matchInvoice(payload)
-    if (inv && inv.status === 'pending') {
-      void pushToMembers([inv.member_id], {
-        title: 'Tagihan belum dibayar',
-        body: 'Selesaikan pembayaran langganan untuk melanjutkan layanan.',
-        url: '#/app/billing',
-        tag: `remind-${inv.id}`,
-      })
-    }
-  }
-
+  const supers = db
+    .prepare("SELECT id FROM members WHERE role='superadmin'")
+    .all() as { id: string }[]
+  void pushToMembers(
+    supers.map((x) => x.id),
+    {
+      title: 'Konfirmasi pembayaran',
+      body: `${me.name} menandai tagihan sudah dibayar.`,
+      url: '#/console',
+      tag: `claim-${inv.id}`,
+    },
+  )
   return c.json({ ok: true })
+})
+
+/* ---- verifikasi oleh superadmin ---- */
+
+app.get('/api/billing/pending', auth, (c) => {
+  if (c.get('me').role !== 'superadmin') return bad(c, 'forbidden', 403)
+  return c.json({
+    invoices: pendingVerifications().map((r) => ({
+      ...mapInvoice(r as unknown as Record<string, unknown>),
+      communityName: r.community_name,
+      memberName: r.member_name,
+      memberEmail: r.member_email,
+    })),
+  })
+})
+
+app.post('/api/billing/:id/verify', auth, async (c) => {
+  const me = c.get('me')
+  if (me.role !== 'superadmin') return bad(c, 'forbidden', 403)
+  const inv = getInvoice(c.req.param('id') ?? '')
+  if (!inv) return bad(c, 'not_found', 404)
+
+  const b = (await c.req.json().catch(() => ({}))) as { approve?: boolean; note?: string }
+
+  if (b.approve === false) {
+    if (!rejectPayment(inv.id, me.id, b.note ?? '')) return bad(c, 'errNotPending')
+    void pushToMembers([inv.member_id], {
+      title: 'Pembayaran belum dapat diverifikasi',
+      body: b.note?.trim() || 'Mohon periksa kembali bukti transfer Anda.',
+      url: '#/app/billing',
+      tag: `reject-${inv.id}`,
+    })
+    return c.json({ ok: true, approved: false })
+  }
+
+  const r = verifyPayment(inv.id, me.id)
+  if (!r.ok) return bad(c, 'errNotPending')
+
+  void pushToMembers([inv.member_id], {
+    title: 'Pembayaran diterima',
+    body: 'Langganan lingkungan Anda sudah aktif. Terima kasih!',
+    url: '#/app/billing',
+    tag: `paid-${inv.id}`,
+  })
+
+  const info = db
+    .prepare(
+      `SELECT m.name, m.email, c.name AS cname FROM members m
+       JOIN communities c ON c.id = m.community_id WHERE m.id = ?`,
+    )
+    .get(inv.member_id) as { name: string; email: string; cname: string } | undefined
+  if (info && r.paidUntil) {
+    const mail = paidEmail({
+      adminName: info.name,
+      communityName: info.cname,
+      plan: inv.plan as 'monthly' | 'yearly',
+      amount: inv.amount,
+      dueAt: inv.expires_at ?? now(),
+      invoiceNo: invoiceNumber(inv.community_id, inv.created_at),
+      activeUntil: r.paidUntil,
+    })
+    void sendMail({
+      to: info.email,
+      subject: mail.subject,
+      html: mail.html,
+      text: mail.text,
+      kind: 'paid',
+      communityId: inv.community_id,
+      memberId: inv.member_id,
+    })
+  }
+
+  return c.json({ ok: true, approved: true, paidUntil: r.paidUntil })
 })
 
 /** Picu pemeriksaan perpanjangan secara manual (superadmin). */
@@ -1491,7 +1515,6 @@ app.post('/api/email/test', auth, async (c) => {
     communityName: 'RW 05 Contoh',
     plan: 'monthly',
     amount: 149000,
-    payUrl: 'https://contoh.mayar.shop/invoices/contoh',
     dueAt: now() + 7 * DAY,
     invoiceNo: 'CONTOH-001',
   })
@@ -1524,10 +1547,9 @@ app.post('/api/billing/:id/resend', auth, active, async (c) => {
     communityName: com.name,
     plan: inv.plan as 'monthly' | 'yearly',
     amount: inv.amount as number,
-    payUrl: (inv.pay_url as string) ?? null,
     dueAt: (inv.expires_at as number) ?? now(),
-    invoiceNo: inv.id as string,
-    bankInfo: process.env.WJW_BANK_INFO ?? '',
+    invoiceNo: invoiceNumber(inv.community_id as string, inv.created_at as number),
+    bankInfo: BANK_INFO,
   })
   const r = await sendMail({
     to: me.email,

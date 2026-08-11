@@ -175,10 +175,14 @@ export interface InvoiceDto {
   id: string
   plan: 'monthly' | 'yearly'
   amount: number
-  status: 'pending' | 'paid' | 'expired' | 'cancelled' | 'failed'
-  payUrl: string | null
+  /** pending → awaiting_verification → paid */
+  status: 'pending' | 'awaiting_verification' | 'paid' | 'expired'
+  reference: string | null
+  note: string | null
+  invoiceNo: string
   createdAt: number
   expiresAt: number | null
+  claimedAt: number | null
   paidAt: number | null
 }
 
@@ -186,14 +190,30 @@ export const billingApi = {
   fetch: () =>
     api.get<{
       prices: { monthly: number; yearly: number }
-      provider: 'mayar' | 'manual'
+      bankInfo: string
       invoices: InvoiceDto[]
     }>('/billing'),
-  checkout: (plan: 'monthly' | 'yearly', redirectUrl: string) =>
-    api.post<{ invoice: InvoiceDto; reused?: boolean }>('/billing/checkout', {
-      plan,
-      redirectUrl,
-    }),
+  /** Buat tagihan; server mengirim emailnya ke admin. */
+  checkout: (plan: 'monthly' | 'yearly') =>
+    api.post<{ invoice: InvoiceDto; reused?: boolean; emailSent?: boolean }>(
+      '/billing/checkout',
+      { plan },
+    ),
+  /** Admin menandai sudah transfer. */
+  claim: (id: string, reference: string) =>
+    api.post(`/billing/${id}/claim`, { reference }),
+  resend: (id: string) => api.post(`/billing/${id}/resend`),
+  /** Superadmin: daftar yang menunggu verifikasi. */
+  pending: () =>
+    api.get<{
+      invoices: (InvoiceDto & {
+        communityName: string
+        memberName: string
+        memberEmail: string
+      })[]
+    }>('/billing/pending'),
+  verify: (id: string, approve: boolean, note?: string) =>
+    api.post(`/billing/${id}/verify`, { approve, note }),
 }
 
 export const profileApi = {

@@ -4,7 +4,7 @@
  * Berjalan berkala di server. Untuk setiap lingkungan yang masa aktifnya
  * (atau masa percobaannya) segera habis:
  *
- *   - H-7  : buat tagihan perpanjangan → Mayar mengirim email tautan bayar
+ *   - H-7  : buat tagihan perpanjangan → email tagihan dikirim ke admin
  *   - H-3  : ingatkan lagi lewat notifikasi
  *   - H-1  : ingatkan terakhir
  *   - H+0  : beri tahu bahwa langganan berakhir
@@ -15,18 +15,8 @@
 import { DAY, audit, db, now as realNow } from './db.js'
 import { billEmail, expiredEmail, reminderEmail } from './email-templates.js'
 import { sendMail } from './mailer.js'
-import { createInvoice, mayarEnabled } from './mayar.js'
+import { BANK_INFO, createInvoice, invoiceNumber, openInvoiceOf, priceOf } from './billing.js'
 import { pushToMembers } from './push.js'
-
-/** Info rekening untuk pembayaran manual, bila tautan bayar tidak tersedia. */
-const BANK_INFO = process.env.WJW_BANK_INFO ?? ''
-
-/** Harga yang dipakai saat menagih tanpa Mayar. */
-function priceOf(plan: 'monthly' | 'yearly'): number {
-  return plan === 'monthly'
-    ? Number(process.env.WJW_PRICE_MONTHLY ?? 149000)
-    : Number(process.env.WJW_PRICE_YEARLY ?? 1490000)
-}
 
 /** Ambang hari sebelum jatuh tempo yang memicu tindakan. */
 export const REMIND_DAYS = [7, 3, 1] as const
@@ -63,17 +53,16 @@ function reminderKey(communityId: string, expiry: number, kind: string): string 
 
 /**
  * Catat bahwa satu pengingat sudah dikerjakan.
- * Memakai tabel webhook_events karena kolom external_id-nya sudah UNIQUE —
- * ini yang membuat pengingat aman dijalankan berulang kali.
+ * Kolom external_id bersifat UNIQUE — inilah yang membuat penjadwal aman
+ * dijalankan berulang kali tanpa menagih dua kali.
  */
 function claim(key: string, detail: unknown): boolean {
   try {
     db.prepare(
-      'INSERT INTO webhook_events (id, provider, event, external_id, payload, at) VALUES (?,?,?,?,?,?)',
+      'INSERT INTO scheduler_claims (id, kind, external_id, payload, at) VALUES (?,?,?,?,?)',
     ).run(
       `rem_${Math.random().toString(36).slice(2, 11)}`,
-      'scheduler',
-      'renewal.reminder',
+      'renewal',
       key,
       JSON.stringify(detail),
       realNow(),
@@ -146,9 +135,8 @@ export async function runRenewalCheck(
             communityName: c.name,
             plan,
             amount: priceOf(plan),
-            payUrl: null,
             dueAt: expiry,
-            invoiceNo: c.id.slice(-6).toUpperCase(),
+            invoiceNo: invoiceNumber(c.id, expiry),
             bankInfo: BANK_INFO,
           })
           void sendMail({
@@ -177,28 +165,25 @@ export async function runRenewalCheck(
       left <= AUTO_BILL_DAY && claim(reminderKey(c.id, expiry, 'bill'), { left })
 
     if (shouldBill) {
-      // Jangan buat tagihan baru bila sudah ada yang menunggu pembayaran.
-      const pending = db
-        .prepare(
-          `SELECT 1 FROM invoices WHERE community_id=? AND status='pending'
-           AND expires_at > ? LIMIT 1`,
-        )
-        .get(c.id, now)
-
-      if (!pending && !mayarEnabled()) {
-        // Tanpa penyedia pembayaran, tetap tagih lewat email dengan
-        // instruksi transfer manual.
+      // Jangan menagih ulang bila sudah ada tagihan berjalan.
+      const open = openInvoiceOf(c.id)
+      if (!open) {
         const admin = admins[0]
         const plan = c.plan_name === 'yearly' ? 'yearly' : 'monthly'
+        const inv = createInvoice({
+          communityId: c.id,
+          memberId: admin.id,
+          plan,
+        })
+
         const mail = billEmail({
           adminName: admin.name,
           communityName: c.name,
           plan,
-          amount: priceOf(plan),
-          payUrl: null,
+          amount: inv.amount,
           dueAt: expiry,
           daysLeft: left,
-          invoiceNo: `${c.id.slice(-6).toUpperCase()}-${new Date(expiry).getFullYear()}`,
+          invoiceNo: invoiceNumber(c.id, inv.created_at),
           bankInfo: BANK_INFO,
         })
         void sendMail({
@@ -210,92 +195,19 @@ export async function runRenewalCheck(
           communityId: c.id,
           memberId: admin.id,
         })
-        audit(c.id, 'scheduler', 'renewal.billedManual', plan)
+
+        audit(c.id, 'scheduler', 'renewal.billed', `${plan} ${inv.amount}`)
         out.billed.push(c.id)
-      } else if (!pending && mayarEnabled()) {
-        const admin = admins[0]
-        // Perpanjang paket yang sama; masa percobaan default ke bulanan.
-        const plan = c.plan_name === 'yearly' ? 'yearly' : 'monthly'
-        try {
-          const inv = await createInvoice({
-            communityId: c.id,
-            communityName: c.name,
-            memberId: admin.id,
-            name: admin.name,
-            email: admin.email,
-            mobile: admin.phone,
-            plan,
-            redirectUrl:
-              process.env.WJW_APP_URL ?? 'https://wargajagawarga.app/#/app/billing',
-          })
-          audit(c.id, 'scheduler', 'renewal.billed', `${plan} ${inv.amount}`)
-          out.billed.push(c.id)
 
-          // Email tagihan ke admin — inilah pemberitahuan utamanya.
-          const mail = billEmail({
-            adminName: admin.name,
-            communityName: c.name,
-            plan,
-            amount: inv.amount,
-            payUrl: inv.pay_url,
-            dueAt: expiry,
-            daysLeft: left,
-            invoiceNo: inv.id,
-            bankInfo: BANK_INFO,
-          })
-          void sendMail({
-            to: admin.email,
-            subject: mail.subject,
-            html: mail.html,
-            text: mail.text,
-            kind: 'bill',
-            communityId: c.id,
-            memberId: admin.id,
-          })
-
-          void pushToMembers(
-            admins.map((a) => a.id),
-            {
-              title: 'Tagihan perpanjangan',
-              body: `Langganan ${c.name} berakhir dalam ${left} hari. Tautan pembayaran sudah dikirim ke email Anda.`,
-              url: '#/app/billing',
-              tag: `bill-${c.id}`,
-            },
-          )
-        } catch (e) {
-          // Kegagalan Mayar tidak boleh menghentikan pemeriksaan lingkungan lain.
-          audit(
-            c.id,
-            'scheduler',
-            'renewal.billFailed',
-            String(e instanceof Error ? e.message : e),
-          )
-
-          // Admin tetap harus tahu bahwa ada tagihan. Kirim email dengan
-          // instruksi transfer manual sebagai cadangan — jangan sampai
-          // langganan berakhir diam-diam hanya karena gangguan penyedia.
-          const fb = billEmail({
-            adminName: admin.name,
-            communityName: c.name,
-            plan,
-            amount: priceOf(plan),
-            payUrl: null,
-            dueAt: expiry,
-            daysLeft: left,
-            invoiceNo: `${c.id.slice(-6).toUpperCase()}-${new Date(expiry).getFullYear()}`,
-            bankInfo: BANK_INFO,
-          })
-          void sendMail({
-            to: admin.email,
-            subject: fb.subject,
-            html: fb.html,
-            text: fb.text,
-            kind: 'bill',
-            communityId: c.id,
-            memberId: admin.id,
-          })
-          out.billed.push(c.id)
-        }
+        void pushToMembers(
+          admins.map((a) => a.id),
+          {
+            title: 'Tagihan langganan',
+            body: `Langganan ${c.name} berakhir dalam ${left} hari. Tagihan sudah dikirim ke email Anda.`,
+            url: '#/app/billing',
+            tag: `bill-${c.id}`,
+          },
+        )
       }
     }
 
@@ -315,25 +227,16 @@ export async function runRenewalCheck(
         audit(c.id, 'scheduler', 'renewal.remind', `H-${d}`)
         out.reminded.push(c.id)
 
-        const openInv = db
-          .prepare(
-            `SELECT id, amount, plan, pay_url FROM invoices
-             WHERE community_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1`,
-          )
-          .get(c.id) as
-          | { id: string; amount: number; plan: string; pay_url: string | null }
-          | undefined
-
+        const openInv = openInvoiceOf(c.id)
         const plan = (openInv?.plan ?? c.plan_name) === 'yearly' ? 'yearly' : 'monthly'
         const rm = reminderEmail({
           adminName: admins[0].name,
           communityName: c.name,
           plan,
           amount: openInv?.amount ?? priceOf(plan),
-          payUrl: openInv?.pay_url ?? null,
           dueAt: expiry,
           daysLeft: d,
-          invoiceNo: openInv?.id ?? c.id.slice(-6).toUpperCase(),
+          invoiceNo: invoiceNumber(c.id, openInv?.created_at ?? expiry),
           bankInfo: BANK_INFO,
         })
         void sendMail({

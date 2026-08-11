@@ -5,7 +5,7 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join as pathJoin } from 'node:path'
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 
 let app: { fetch: (r: Request) => Response | Promise<Response> }
 let db: import('better-sqlite3').Database
@@ -16,17 +16,14 @@ let runRenewalCheck: (now?: number) => Promise<{
   expired: string[]
 }>
 let daysUntil: (expiry: number, now: number) => number
-let expiryOf: (c: {
-  trial_ends_at: number
-  paid_until: number | null
-}) => number
+let expiryOf: (c: { trial_ends_at: number; paid_until: number | null }) => number
 
 const DAY = 86_400_000
 
 beforeAll(async () => {
   process.env.WJW_DB = pathJoin(mkdtempSync(pathJoin(tmpdir(), 'wjw-ren-')), 't.sqlite')
   process.env.WJW_NO_LISTEN = '1'
-  process.env.MAYAR_API_KEY = 'kunci-uji'
+  process.env.WJW_BANK_INFO = 'BCA 123456 a.n. Uji'
   app = (await import('./index.js')).app
   db = (await import('./db.js')).db
   const m = await import('./renewals.js')
@@ -76,26 +73,6 @@ function setExpiry(communityId: string, at: number, planName = 'monthly') {
   ).run(at, planName, communityId)
 }
 
-function mockMayar() {
-  return vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-    new Response(
-      JSON.stringify({
-        statusCode: 200,
-        messages: 'success',
-        data: {
-          id: `mid-${Math.random()}`,
-          transactionId: `txn-${Math.random()}`,
-          link: 'https://toko.mayar.shop/invoices/x',
-          expiredAt: Date.now() + 7 * DAY,
-        },
-      }),
-      { status: 200 },
-    ),
-  )
-}
-
-beforeEach(() => vi.restoreAllMocks())
-
 describe('perhitungan jatuh tempo', () => {
   it('menghitung sisa hari, dibulatkan ke atas', () => {
     const now = Date.now()
@@ -113,22 +90,26 @@ describe('perhitungan jatuh tempo', () => {
 })
 
 describe('tagihan perpanjangan otomatis', () => {
-  it('membuat tagihan pada H-7 dan mengirimnya lewat Mayar', async () => {
+  it('membuat tagihan pada H-7 dan mengirim emailnya', async () => {
     const a = await makeCommunity()
     const now = Date.now()
     setExpiry(a.communityId, now + 7 * DAY)
 
-    const spy = mockMayar()
     const res = await runRenewalCheck(now)
-    spy.mockRestore()
 
     expect(res.billed).toContain(a.communityId)
     const inv = db
-      .prepare('SELECT plan, status, pay_url FROM invoices WHERE community_id=?')
-      .get(a.communityId) as { plan: string; status: string; pay_url: string }
+      .prepare('SELECT plan, status, amount FROM invoices WHERE community_id=?')
+      .get(a.communityId) as { plan: string; status: string; amount: number }
     expect(inv.status).toBe('pending')
     expect(inv.plan).toBe('monthly')
-    expect(inv.pay_url).toContain('mayar.shop')
+    expect(inv.amount).toBe(149000)
+
+    // email tagihan tercatat
+    const mail = db
+      .prepare("SELECT kind FROM emails WHERE community_id=? AND kind='bill'")
+      .get(a.communityId)
+    expect(mail).toBeTruthy()
   })
 
   it('memperpanjang paket tahunan sebagai tahunan', async () => {
@@ -136,14 +117,13 @@ describe('tagihan perpanjangan otomatis', () => {
     const now = Date.now()
     setExpiry(a.communityId, now + 6 * DAY, 'yearly')
 
-    const spy = mockMayar()
     await runRenewalCheck(now)
-    spy.mockRestore()
 
     const inv = db
-      .prepare('SELECT plan FROM invoices WHERE community_id=?')
-      .get(a.communityId) as { plan: string }
+      .prepare('SELECT plan, amount FROM invoices WHERE community_id=?')
+      .get(a.communityId) as { plan: string; amount: number }
     expect(inv.plan).toBe('yearly')
+    expect(inv.amount).toBe(1490000)
   })
 
   it('tidak menagih dua kali walau diperiksa berulang', async () => {
@@ -151,14 +131,8 @@ describe('tagihan perpanjangan otomatis', () => {
     const now = Date.now()
     setExpiry(a.communityId, now + 7 * DAY)
 
-    const s1 = mockMayar()
     await runRenewalCheck(now)
-    s1.mockRestore()
-
-    const s2 = mockMayar()
     await runRenewalCheck(now + 3600_000) // beberapa jam kemudian
-    expect(s2).not.toHaveBeenCalled()
-    s2.mockRestore()
 
     const n = db
       .prepare('SELECT count(*) n FROM invoices WHERE community_id=?')
@@ -172,14 +146,8 @@ describe('tagihan perpanjangan otomatis', () => {
     setExpiry(a.communityId, now + 7 * DAY)
 
     // admin sudah membuat tagihan sendiri
-    const s0 = mockMayar()
     await call('POST', '/api/billing/checkout', { plan: 'monthly' }, a.token)
-    s0.mockRestore()
-
-    const s1 = mockMayar()
     await runRenewalCheck(now)
-    expect(s1).not.toHaveBeenCalled()
-    s1.mockRestore()
 
     const n = db
       .prepare('SELECT count(*) n FROM invoices WHERE community_id=?')
@@ -192,9 +160,7 @@ describe('tagihan perpanjangan otomatis', () => {
     const now = Date.now()
     setExpiry(a.communityId, now + 40 * DAY)
 
-    const spy = mockMayar()
     const res = await runRenewalCheck(now)
-    spy.mockRestore()
 
     expect(res.billed).not.toContain(a.communityId)
     expect(res.reminded).not.toContain(a.communityId)
@@ -206,61 +172,9 @@ describe('tagihan perpanjangan otomatis', () => {
     setExpiry(a.communityId, now + 5 * DAY)
     db.prepare("UPDATE communities SET plan='suspended' WHERE id=?").run(a.communityId)
 
-    const spy = mockMayar()
     const res = await runRenewalCheck(now)
-    spy.mockRestore()
 
     expect(res.billed).not.toContain(a.communityId)
-  })
-
-  it('tetap mengirim email tagihan manual bila Mayar gagal', async () => {
-    const a = await makeCommunity()
-    const now = Date.now()
-    setExpiry(a.communityId, now + 7 * DAY)
-
-    const spy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response('{"messages":"gagal"}', { status: 500 }))
-    const res = await runRenewalCheck(now)
-    spy.mockRestore()
-
-    // admin tetap ditagih, tidak dibiarkan tanpa kabar
-    expect(res.billed).toContain(a.communityId)
-    const mail = db
-      .prepare("SELECT kind, subject FROM emails WHERE community_id=? AND kind='bill'")
-      .get(a.communityId) as { kind: string; subject: string } | undefined
-    expect(mail).toBeTruthy()
-  })
-
-  it('kegagalan Mayar tidak menghentikan lingkungan lain', async () => {
-    const a = await makeCommunity()
-    const b = await makeCommunity()
-    const now = Date.now()
-    setExpiry(a.communityId, now + 7 * DAY)
-    setExpiry(b.communityId, now + 7 * DAY)
-
-    let first = true
-    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
-      if (first) {
-        first = false
-        return new Response('{"messages":"gagal"}', { status: 500 })
-      }
-      return new Response(
-        JSON.stringify({
-          statusCode: 200,
-          data: { id: 'm', transactionId: 't', link: 'https://x/y', expiredAt: now },
-        }),
-        { status: 200 },
-      )
-    })
-    const res = await runRenewalCheck(now)
-    spy.mockRestore()
-
-    // Keduanya tetap ditagih: satu lewat Mayar, satu lewat email cadangan.
-    // Yang penting, kegagalan satu lingkungan tidak menghentikan yang lain.
-    expect(res.billed).toContain(a.communityId)
-    expect(res.billed).toContain(b.communityId)
-    expect(res.checked).toBeGreaterThanOrEqual(2)
   })
 })
 
@@ -270,9 +184,7 @@ describe('pengingat', () => {
     const now = Date.now()
     setExpiry(a.communityId, now + 3 * DAY)
 
-    const spy = mockMayar()
     const res = await runRenewalCheck(now)
-    spy.mockRestore()
 
     expect(res.reminded).toContain(a.communityId)
     // Lingkungan ini baru terlihat pada H-3 (mis. server sempat mati),
@@ -283,19 +195,14 @@ describe('pengingat', () => {
   it('mengingatkan H-3 tanpa menagih ulang bila sudah ditagih di H-7', async () => {
     const a = await makeCommunity()
     const now = Date.now()
-    const expiry = now + 7 * DAY
-    setExpiry(a.communityId, expiry)
+    setExpiry(a.communityId, now + 7 * DAY)
 
-    const s1 = mockMayar()
     await runRenewalCheck(now) // H-7: tagihan dibuat
-    s1.mockRestore()
 
     // tagihan itu dibayar, lalu tiba H-3
     db.prepare("UPDATE invoices SET status='paid' WHERE community_id=?").run(a.communityId)
 
-    const s2 = mockMayar()
     const res = await runRenewalCheck(now + 4 * DAY)
-    s2.mockRestore()
 
     expect(res.reminded).toContain(a.communityId)
     expect(res.billed).not.toContain(a.communityId)

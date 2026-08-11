@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { billingApi, type InvoiceDto } from '../lib/api'
+import { apiMode } from '../lib/sync'
 import {
   closeTicket,
   extendTrial,
@@ -27,6 +29,23 @@ export default function Console() {
   const [detail, setDetail] = useState<Community | null>(null)
   const [ticket, setTicket] = useState<Ticket | null>(null)
   const [reply, setReply] = useState('')
+  const [pendingBills, setPendingBills] = useState<
+    (InvoiceDto & { communityName: string; memberName: string; memberEmail: string })[]
+  >([])
+
+  const loadBills = useCallback(async () => {
+    if (!apiMode()) return
+    try {
+      const r = await billingApi.pending()
+      setPendingBills(r.invoices)
+    } catch {
+      setPendingBills([])
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadBills()
+  }, [loadBills])
 
   useEffect(() => {
     if (!me || me.role !== 'superadmin') nav('/', { replace: true })
@@ -228,7 +247,69 @@ export default function Console() {
             })
           ))}
 
-        {tab === 'payments' &&
+        {tab === 'payments' && apiMode() && (
+          <>
+            <div className="section-title" style={{ marginTop: 0 }}>
+              {t('verifyPayments')}
+              {pendingBills.length > 0 && (
+                <span className="chip chip-warn">{pendingBills.length}</span>
+              )}
+            </div>
+            {pendingBills.length === 0 ? (
+              <div className="empty">
+                <span className="em">✅</span>
+                {t('noPendingPayments')}
+              </div>
+            ) : (
+              pendingBills.map((b) => (
+                <div key={b.id} className="item">
+                  <div
+                    className="item-icon"
+                    style={{ background: 'var(--info-soft)', color: 'var(--info)' }}
+                  >
+                    <Icon name="credit" size={18} />
+                  </div>
+                  <div className="grow">
+                    <div className="strong truncate">
+                      {fmtMoney(b.amount, lang)} · {b.communityName}
+                    </div>
+                    <div className="tiny truncate">
+                      {b.memberName} · {b.memberEmail}
+                    </div>
+                    <div className="tiny">
+                      {b.invoiceNo} · {t('refNumber')}: {b.reference}
+                    </div>
+                  </div>
+                  <div className="col" style={{ gap: 5 }}>
+                    <button
+                      className="btn btn-sm btn-primary"
+                      onClick={async () => {
+                        await billingApi.verify(b.id, true)
+                        await loadBills()
+                        toast(t('paymentApproved'))
+                      }}
+                    >
+                      {t('approve')}
+                    </button>
+                    <button
+                      className="btn btn-sm btn-ghost"
+                      onClick={async () => {
+                        const note = prompt(t('rejectReason')) ?? ''
+                        await billingApi.verify(b.id, false, note)
+                        await loadBills()
+                        toast(t('paymentRejected'), 'err')
+                      }}
+                    >
+                      {t('rejectClaim')}
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </>
+        )}
+
+        {tab === 'payments' && !apiMode() &&
           (db.payments.length === 0 ? (
             <div className="empty">
               <span className="em">🧾</span>
