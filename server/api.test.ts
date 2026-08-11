@@ -393,8 +393,22 @@ describe('pemulihan akses superadmin', () => {
       .get('superadmin') as { h: string }
     expect(verifyPassword('super-secret', before.h)).toBe(false)
 
-    // Menjalankan ulang server dengan WJW_SUPERADMIN_PASSWORD memulihkan akses.
+    /*
+     * Memulihkan akses: operator menuliskan sandi di .env lalu menjalankan
+     * ulang server.
+     *
+     * Nilai .env hanya diterapkan bila BERUBAH — sandi yang sama tidak
+     * ditulis ulang, supaya hasil `npm run reset-password` tidak terhapus
+     * diam-diam pada setiap boot. Di sini .env memang sudah berisi
+     * 'super-secret', jadi tiru pergantiannya: ke nilai lain dulu, lalu
+     * kembali, persis seperti operator yang mengganti isi .env.
+     */
+    const semula = process.env.WJW_SUPERADMIN_PASSWORD
+    process.env.WJW_SUPERADMIN_PASSWORD = 'sandi-antara-sementara'
     ensureSuperadmin()
+    process.env.WJW_SUPERADMIN_PASSWORD = 'super-secret'
+    ensureSuperadmin()
+    process.env.WJW_SUPERADMIN_PASSWORD = semula
     const after = db
       .prepare('SELECT password_hash h FROM members WHERE id=?')
       .get('superadmin') as { h: string }

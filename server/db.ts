@@ -182,19 +182,60 @@ export function audit(
  * Bila tidak diset, sandi dibuat acak dan dicetak sekali, agar tidak ada
  * sandi bawaan yang bisa ditebak di produksi.
  */
+/**
+ * Penanda sandi .env yang terakhir diterapkan.
+ *
+ * Yang disimpan adalah hash dari penanda, bukan sandinya — cukup untuk
+ * mengetahui apakah nilai .env berubah, tanpa menyimpan sandi yang bisa
+ * dibaca kembali.
+ */
+function envMarker(password: string): string {
+  return password + '|env'
+}
+
+function rememberEnvPassword(password: string): void {
+  db.prepare(
+    `INSERT INTO settings (key, value, at) VALUES ('superadmin.envPassword',?,?)
+     ON CONFLICT(key) DO UPDATE SET value=excluded.value, at=excluded.at`,
+  ).run(hashPassword(envMarker(password)), now())
+}
+
 export function ensureSuperadmin(): void {
   const existing = db
     .prepare('SELECT id FROM members WHERE lower(email) = lower(?)')
     .get(SUPERADMIN_EMAIL) as { id: string } | undefined
 
   if (existing) {
-    // Pulihkan akses bila operator menetapkan sandi lewat environment.
+    /*
+     * Terapkan sandi dari environment HANYA bila isinya berubah.
+     *
+     * Sebelumnya sandi ditulis ulang pada setiap boot. Akibatnya
+     * `npm run reset-password` seolah berhasil — pesannya muncul, sandi
+     * benar-benar tersimpan — lalu dibatalkan diam-diam begitu server
+     * dinyalakan ulang, dan login gagal tanpa sebab yang terlihat.
+     *
+     * Nilai .env tetap bisa memulihkan akses: cukup ubah isinya lalu
+     * jalankan ulang server.
+     */
     const fromEnv = process.env.WJW_SUPERADMIN_PASSWORD
     if (fromEnv) {
-      db.prepare('UPDATE members SET password_hash = ? WHERE id = ?').run(
-        hashPassword(fromEnv),
-        existing.id,
-      )
+      // Tabel settings dibaca langsung: server/settings.ts mengimpor modul
+      // ini, jadi mengimpornya balik akan melingkar.
+      const row = db
+        .prepare("SELECT value FROM settings WHERE key='superadmin.envPassword'")
+        .get() as { value: string } | undefined
+
+      // Bandingkan lewat penanda ber-hash, bukan sandi mentah: sandi tidak
+      // boleh tersimpan dalam bentuk yang bisa dibaca kembali.
+      const same = row ? verifyPassword(envMarker(fromEnv), row.value) : false
+
+      if (!same) {
+        db.prepare('UPDATE members SET password_hash = ? WHERE id = ?').run(
+          hashPassword(fromEnv),
+          existing.id,
+        )
+        rememberEnvPassword(fromEnv)
+      }
     }
     // Lepaskan perangkat yang terlanjur diklaim versi lama. Selama masih
     // menempel, halaman depan menyapa "Superadmin" dan menyembunyikan
@@ -221,6 +262,11 @@ export function ensureSuperadmin(): void {
     now(),
     now(),
   )
+
+  // Catat sandi .env yang dipakai, agar boot berikutnya tidak menimpa
+  // sandi yang mungkin sudah diganti lewat `npm run reset-password`.
+  if (process.env.WJW_SUPERADMIN_PASSWORD)
+    rememberEnvPassword(process.env.WJW_SUPERADMIN_PASSWORD)
   if (!process.env.WJW_SUPERADMIN_PASSWORD) {
     console.log(
       `\n[WJW] Akun superadmin dibuat\n      email: ${SUPERADMIN_EMAIL}\n      sandi: ${plain}\n      (set WJW_SUPERADMIN_PASSWORD untuk menentukan sendiri)\n`,
