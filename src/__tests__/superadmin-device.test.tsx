@@ -90,3 +90,58 @@ describe('perangkat milik superadmin', () => {
     await waitFor(() => expect(window.location.hash).toBe('#/login'))
   })
 })
+
+/**
+ * Perangkat yang sudah dikenali tidak boleh mengunci penggunanya.
+ *
+ * Sapaan "Apa kabar hari ini, <nama>?" mengandaikan satu HP dipakai satu
+ * orang. Pada kenyataannya pengelola, satpam, dan anggota keluarga kerap
+ * berbagi perangkat — dan sebelumnya halaman depan hanya menyisakan satu
+ * tombol, sehingga tidak ada cara masuk sebagai akun lain.
+ */
+describe('perangkat milik seorang warga', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    invalidateCache()
+    window.location.hash = '#/'
+  })
+
+  function claimDevice() {
+    const f = register({
+      name: 'Budi Santoso',
+      phone: '0811000002',
+      email: 'budi2@x.id',
+      password: 'secret1',
+      house: 'C12',
+      language: 'id',
+      mode: 'create',
+      communityName: 'RW 06',
+    })
+    if (!f.ok) throw new Error('setup gagal')
+    const db = loadDB()
+    db.members.find((m) => m.id === f.member.id)!.deviceId = deviceId()
+    saveDB(db)
+    // Pengguna sudah menekan keluar.
+    localStorage.removeItem('wjw.session.v1')
+    invalidateCache()
+    return f
+  }
+
+  it('tetap menyapa pemilik perangkat', async () => {
+    claimDevice()
+    render(<App />)
+    await waitFor(() =>
+      expect(document.body.textContent).toContain('Apa kabar hari ini, Budi'),
+    )
+  })
+
+  it('menyediakan jalan untuk masuk sebagai akun lain', async () => {
+    const user = userEvent.setup()
+    claimDevice()
+    render(<App />)
+
+    const lain = await screen.findByRole('button', { name: /Masuk sebagai akun lain/i })
+    await user.click(lain)
+    await waitFor(() => expect(window.location.hash).toBe('#/login'))
+  })
+})

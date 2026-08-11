@@ -128,10 +128,21 @@ export default function Landing() {
 
       <div className="col" style={{ gap: 9 }}>
         {deviceMember ? (
-          <button className="btn btn-primary" onClick={enter}>
-            <Icon name="chevronRight" size={17} />
-            {approved ? t('enter') : t('waitingApproval')}
-          </button>
+          <>
+            <button className="btn btn-primary" onClick={enter}>
+              <Icon name="chevronRight" size={17} />
+              {approved ? t('enter') : t('waitingApproval')}
+            </button>
+            {/*
+              Sapaan mengandaikan satu perangkat dipakai satu orang, tetapi
+              pengelola, satpam, dan anggota keluarga kerap berbagi HP.
+              Tanpa jalan keluar ini, perangkat terkunci pada satu akun:
+              tidak ada cara masuk sebagai orang lain, termasuk superadmin.
+            */}
+            <button className="btn btn-ghost" onClick={() => nav('/login')}>
+              <Icon name="user" size={16} /> {t('signInOther')}
+            </button>
+          </>
         ) : (
           <>
             <button
