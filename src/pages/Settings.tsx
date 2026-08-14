@@ -1,16 +1,24 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { profileApi } from '../lib/api'
-import { resetDB, setMemberLanguage } from '../lib/db'
+import { ApiError, communityApi, profileApi } from '../lib/api'
+import { renameCommunity, resetDB, setMemberLanguage } from '../lib/db'
 import { apiMode, mutate } from '../lib/sync'
 import { fmtDate, initials } from '../lib/format'
 import { LANGS } from '../lib/i18n'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'
+import { Sheet } from '../ui/Sheet'
+import { useToast } from '../ui/Toast'
 import { roleChip, roleKey } from '../lib/meta'
 
 export default function Settings() {
-  const { me, community, t, lang, plan, signOut, isAdmin, refresh } = useApp()
+  const { me, community, t, lang, plan, signOut, isAdmin, refresh, reload } = useApp()
   const nav = useNavigate()
+  const toast = useToast()
+  // ganti nama lingkungan (hanya admin)
+  const [renaming, setRenaming] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newCity, setNewCity] = useState('')
 
   if (!me || !community) return null
 
@@ -94,7 +102,25 @@ export default function Settings() {
       <div className="card">
         <div className="row-between">
           <span className="muted">{t('communityName')}</span>
-          <span className="strong">{community.name}</span>
+          {/*
+            Inilah tempat orang mencari nama lingkungannya, jadi cara
+            mengubahnya harus ada di sini juga — bukan hanya di halaman
+            Admin.
+          */}
+          {isAdmin ? (
+            <button
+              className="link-btn strong"
+              onClick={() => {
+                setNewName(community.name)
+                setNewCity(community.city)
+                setRenaming(true)
+              }}
+            >
+              {community.name} <Icon name="edit" size={12} />
+            </button>
+          ) : (
+            <span className="strong">{community.name}</span>
+          )}
         </div>
         <div className="divider" />
         <div className="row-between">
@@ -164,6 +190,60 @@ export default function Settings() {
       <p className="tiny center" style={{ marginTop: 20 }}>
         {t('appName')} · v1.0 · {t('appTagline')}
       </p>
+
+      {/* ganti nama lingkungan */}
+      <Sheet
+        open={renaming}
+        onClose={() => setRenaming(false)}
+        title={t('renameCommunity')}
+      >
+        <label className="field">
+          <span>{t('communityName')}</span>
+          <input
+            className="input"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="RW 05 Griya Soreang"
+          />
+          <span className="tiny pw-hint">{t('communityNameHint')}</span>
+        </label>
+        <label className="field">
+          <span>{t('city')}</span>
+          <input
+            className="input"
+            value={newCity}
+            onChange={(e) => setNewCity(e.target.value)}
+            placeholder="Kab. Bandung"
+          />
+        </label>
+        <button
+          className="btn btn-primary"
+          onClick={async () => {
+            const nama = newName.trim()
+            if (!nama) return toast(t('errCommunityName'), 'err')
+
+            if (apiMode()) {
+              try {
+                await communityApi.rename(nama, newCity.trim())
+              } catch (e) {
+                return toast(
+                  t((e instanceof ApiError ? e.code : 'errUnknown') as never),
+                  'err',
+                )
+              }
+              await reload()
+            } else {
+              const r = renameCommunity(me.id, community.id, nama, newCity.trim())
+              if (!r.ok) return toast(t(r.error as never), 'err')
+              refresh()
+            }
+            setRenaming(false)
+            toast(t('communityRenamed'))
+          }}
+        >
+          <Icon name="check" size={16} /> {t('save')}
+        </button>
+      </Sheet>
     </div>
   )
 }

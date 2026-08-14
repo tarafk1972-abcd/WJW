@@ -853,7 +853,10 @@ app.delete('/api/invites/:id', auth, active, (c) => {
 app.put('/api/community/name', auth, active, async (c) => {
   if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
   const me = c.get('me')
-  const b = (await c.req.json().catch(() => ({}))) as { name?: string }
+  const b = (await c.req.json().catch(() => ({}))) as {
+    name?: string
+    city?: string
+  }
 
   const nama = (b.name ?? '').trim().slice(0, 80)
   if (!nama) return bad(c, 'errCommunityName')
@@ -861,13 +864,20 @@ app.put('/api/community/name', auth, active, async (c) => {
     return bad(c, 'errCommunityNameIsPerson')
 
   const before = db
-    .prepare('SELECT name FROM communities WHERE id=?')
-    .get(me.community_id) as { name: string } | undefined
+    .prepare('SELECT name, city FROM communities WHERE id=?')
+    .get(me.community_id) as { name: string; city: string } | undefined
   if (!before) return bad(c, 'errNoCommunity', 404)
 
-  db.prepare('UPDATE communities SET name=? WHERE id=?').run(nama, me.community_id)
+  // Kota ikut bisa diperbaiki; bila tidak dikirim, biarkan apa adanya.
+  const kota = b.city === undefined ? before.city : b.city.trim().slice(0, 80)
+
+  db.prepare('UPDATE communities SET name=?, city=? WHERE id=?').run(
+    nama,
+    kota,
+    me.community_id,
+  )
   audit(me.community_id, me.id, 'community.rename', `${before.name} -> ${nama}`)
-  return c.json({ ok: true, name: nama })
+  return c.json({ ok: true, name: nama, city: kota })
 })
 
 app.put('/api/community/area', auth, active, async (c) => {

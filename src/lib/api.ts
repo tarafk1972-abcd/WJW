@@ -231,8 +231,11 @@ export const qrisApi = {
 
 /** Ganti nama lingkungan — hanya admin. */
 export const communityApi = {
-  rename: (name: string) =>
-    api.put<{ ok: true; name: string }>('/community/name', { name }),
+  rename: (name: string, city?: string) =>
+    api.put<{ ok: true; name: string; city: string }>('/community/name', {
+      name,
+      city,
+    }),
 }
 
 export const profileApi = {

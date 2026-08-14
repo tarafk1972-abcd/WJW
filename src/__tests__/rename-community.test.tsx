@@ -96,3 +96,64 @@ describe('halaman Admin', () => {
     await waitFor(() => expect(loadDB().communities[0].name).toBe('RW 07 Melati'))
   })
 })
+
+/**
+ * Halaman Pengaturan menampilkan "Nama lingkungan", jadi di situlah orang
+ * mencari cara mengubahnya. Sebelumnya nilainya hanya teks mati dan satu-
+ * satunya tombol ganti nama ada di halaman lain.
+ */
+describe('halaman Pengaturan', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    invalidateCache()
+    window.location.hash = '#/'
+  })
+
+  it('admin bisa mengganti nama dan kota dari sini', async () => {
+    const user = userEvent.setup()
+    makeAdmin()
+
+    window.location.hash = '#/app/settings'
+    render(<App />)
+    await waitFor(() =>
+      expect(document.body.textContent).toContain('Nama lingkungan'),
+    )
+
+    await user.click(screen.getByRole('button', { name: /RW 05 Griya Soreang/i }))
+    const dialog = await screen.findByRole('dialog')
+    const { within } = await import('@testing-library/react')
+
+    const nama = within(dialog).getByDisplayValue('RW 05 Griya Soreang')
+    await user.clear(nama)
+    await user.type(nama, 'The Regent')
+
+    const kota = within(dialog).getByPlaceholderText('Kab. Bandung')
+    await user.clear(kota)
+    await user.type(kota, 'Tangerang Selatan')
+
+    await user.click(within(dialog).getByRole('button', { name: /Simpan/i }))
+
+    await waitFor(() => {
+      const c = loadDB().communities[0]
+      expect(c.name).toBe('The Regent')
+      expect(c.city).toBe('Tangerang Selatan')
+    })
+  })
+
+  it('warga biasa hanya melihat namanya, tanpa bisa mengubah', async () => {
+    const f = makeAdmin()
+    // Turunkan perannya menjadi warga biasa.
+    const db = loadDB()
+    db.members.find((m) => m.id === f.member.id)!.role = 'warga'
+    const { saveDB } = await import('../lib/db')
+    saveDB(db)
+
+    window.location.hash = '#/app/settings'
+    render(<App />)
+    await waitFor(() =>
+      expect(document.body.textContent).toContain('Nama lingkungan'),
+    )
+    expect(screen.queryByRole('button', { name: /RW 05 Griya Soreang/i })).toBeNull()
+    expect(document.body.textContent).toContain('RW 05 Griya Soreang')
+  })
+})

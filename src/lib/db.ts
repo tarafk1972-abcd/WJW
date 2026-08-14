@@ -661,6 +661,7 @@ export function renameCommunity(
   actorId: string,
   communityId: string,
   rawName: string,
+  rawCity?: string,
 ): { ok: true } | { ok: false; error: string } {
   const db = loadDB()
   const c = communityById(db, communityId)
@@ -675,6 +676,7 @@ export function renameCommunity(
 
   const sebelum = c.name
   c.name = nama
+  if (rawCity !== undefined) c.city = rawCity.trim()
   audit(db, c.id, actorId, 'community.rename', `${sebelum} -> ${nama}`)
   saveDB(db)
   return { ok: true }
