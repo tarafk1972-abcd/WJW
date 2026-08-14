@@ -5,12 +5,26 @@ Bahasa default **Indonesia**, dengan opsi Bahasa Inggris dan Basa Sunda.
 
 ## Menjalankan
 
-Perlu dua terminal: satu untuk API, satu untuk tampilan web.
+Aplikasi ini punya dua bagian: API (port 8787) dan tampilan web
+(port 5173). Keduanya harus berjalan.
 
 ```bash
 npm install
+npm run dev:all  # menjalankan API + web sekaligus (paling praktis)
+```
+
+Atau dua terminal terpisah:
+
+```bash
 npm run server   # terminal 1 — API di http://localhost:8787
 npm run dev      # terminal 2 — web di http://localhost:5173
+```
+
+Keduanya harus hidup. Bila hanya `npm run dev` yang jalan, halaman tetap
+terbuka tetapi tidak ada data — terminal akan menampilkan
+`ECONNREFUSED 127.0.0.1:8787`, artinya API belum berjalan.
+
+```bash
 npm run build    # build produksi ke dist/
 npm test         # tes otomatis
 ```

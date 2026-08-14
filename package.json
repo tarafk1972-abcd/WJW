@@ -13,7 +13,7 @@
     "server": "tsx watch server/index.ts",
     "server:start": "tsx server/index.ts",
     "vapid": "node -e \"const w=require('web-push');const k=w.generateVAPIDKeys();console.log('VAPID_PUBLIC_KEY='+k.publicKey);console.log('VAPID_PRIVATE_KEY='+k.privateKey)\"",
-    "dev:all": "concurrently -n api,web -c cyan,green \"npm:server\" \"npm:dev\"",
+    "dev:all": "node scripts/dev-all.mjs",
     "reset-password": "tsx server/reset-password.ts"
   },
   "dependencies": {

@@ -92,7 +92,14 @@ rahasia). Salin `.env` dari folder lama Anda ke folder yang baru.
 
 ## Menjalankan aplikasi
 
-Perlu **dua jendela Command Prompt**, masing-masing satu perintah:
+Cara termudah — satu perintah, keduanya jalan:
+
+```
+cd /d D:\Program\WJW4\WJW
+npm run dev:all
+```
+
+Atau **dua jendela Command Prompt** terpisah:
 
 Jendela 1 — API:
 
