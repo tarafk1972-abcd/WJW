@@ -11,6 +11,7 @@ import {
   db,
   destroySession,
   ensureSuperadmin,
+  fixUnnamedCommunities,
   hashPassword,
   memberFromToken,
   now,
@@ -67,6 +68,7 @@ import {
 } from './push.js'
 
 ensureSuperadmin()
+fixUnnamedCommunities()
 setInterval(purgeSessions, 6 * 60 * 60 * 1000).unref?.()
 
 type Env = { Variables: { me: MemberRow } }
@@ -840,6 +842,33 @@ app.delete('/api/invites/:id', auth, active, (c) => {
 })
 
 /* ================= area lingkungan ================= */
+
+/**
+ * Ganti nama lingkungan.
+ *
+ * Nama ini tampil di bagian atas aplikasi setiap warga, jadi lingkungan
+ * yang terlanjur bernama salah perlu bisa diperbaiki. Aturannya sama
+ * dengan saat mendaftar: wajib diisi, dan bukan nama orang yang mengubah.
+ */
+app.put('/api/community/name', auth, active, async (c) => {
+  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
+  const me = c.get('me')
+  const b = (await c.req.json().catch(() => ({}))) as { name?: string }
+
+  const nama = (b.name ?? '').trim().slice(0, 80)
+  if (!nama) return bad(c, 'errCommunityName')
+  if (nama.toLowerCase() === me.name.trim().toLowerCase())
+    return bad(c, 'errCommunityNameIsPerson')
+
+  const before = db
+    .prepare('SELECT name FROM communities WHERE id=?')
+    .get(me.community_id) as { name: string } | undefined
+  if (!before) return bad(c, 'errNoCommunity', 404)
+
+  db.prepare('UPDATE communities SET name=? WHERE id=?').run(nama, me.community_id)
+  audit(me.community_id, me.id, 'community.rename', `${before.name} -> ${nama}`)
+  return c.json({ ok: true, name: nama })
+})
 
 app.put('/api/community/area', auth, active, async (c) => {
   if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)

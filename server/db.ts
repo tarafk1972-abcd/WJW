@@ -200,6 +200,33 @@ function rememberEnvPassword(password: string): void {
   ).run(hashPassword(envMarker(password)), now())
 }
 
+/**
+ * Beri nama sementara pada lingkungan yang tersimpan tanpa nama.
+ *
+ * Versi lama menerima nama kosong saat mendaftar. Nama itu tampil di
+ * bagian atas aplikasi; ketika kosong, satu-satunya nama yang terlihat di
+ * situ tinggal nama adminnya — seolah lingkungan bernama seperti
+ * pengurusnya. Beri penanda yang jelas agar admin tahu harus
+ * menggantinya lewat Admin -> ketuk nama lingkungan.
+ */
+export function fixUnnamedCommunities(): number {
+  const rows = db
+    .prepare("SELECT id FROM communities WHERE trim(coalesce(name,'')) = ''")
+    .all() as { id: string }[]
+
+  for (const r of rows) {
+    db.prepare('UPDATE communities SET name=? WHERE id=?').run(
+      'Lingkungan tanpa nama',
+      r.id,
+    )
+  }
+  if (rows.length > 0)
+    console.log(
+      `[WJW] ${rows.length} lingkungan tanpa nama diberi nama sementara — ganti lewat menu Admin.`,
+    )
+  return rows.length
+}
+
 export function ensureSuperadmin(): void {
   const existing = db
     .prepare('SELECT id FROM members WHERE lower(email) = lower(?)')

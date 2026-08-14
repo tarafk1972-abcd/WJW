@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { adminApi } from '../lib/api'
+import { ApiError, adminApi, communityApi } from '../lib/api'
 import { apiMode, mutate } from '../lib/sync'
 import {
   createInvite,
   decideMember,
+  renameCommunity,
   inviteLink,
   revokeInvite,
   setMemberStatus,
@@ -20,7 +21,7 @@ import { ASSIGNABLE_ROLES, roleChip, roleKey } from '../lib/meta'
 import type { Invite, Member, Role } from '../lib/types'
 
 export default function Admin() {
-  const { db, me, community, t, lang, isAdmin, plan } = useApp()
+  const { db, me, community, t, lang, isAdmin, plan, reload } = useApp()
   const nav = useNavigate()
   const toast = useToast()
   const [tab, setTab] = useState<'pending' | 'members' | 'invites'>('pending')
@@ -28,6 +29,9 @@ export default function Admin() {
   const [pickRole, setPickRole] = useState<Exclude<Role, 'superadmin'>>('warga')
   const [rejecting, setRejecting] = useState(false)
   const [reason, setReason] = useState('')
+  // ganti nama lingkungan
+  const [renaming, setRenaming] = useState(false)
+  const [newName, setNewName] = useState('')
   const [inviteOpen, setInviteOpen] = useState(false)
   const [inviteRole, setInviteRole] = useState<Exclude<Role, 'superadmin'>>('admin')
   const [lastCode, setLastCode] = useState('')
@@ -118,7 +122,16 @@ export default function Admin() {
       <div className="row-between" style={{ marginBottom: 14 }}>
         <div className="grow">
           <h2 style={{ fontSize: 20, fontWeight: 800 }}>{t('navAdmin')}</h2>
-          <div className="tiny">{community.name}</div>
+          <button
+            className="link-btn tiny"
+            title={t('renameCommunity')}
+            onClick={() => {
+              setNewName(community.name)
+              setRenaming(true)
+            }}
+          >
+            {community.name} <Icon name="edit" size={11} />
+          </button>
         </div>
         <span className={`chip ${plan?.status === 'active' ? 'chip-brand' : 'chip-warn'}`}>
           <Icon name="gift" size={12} />{' '}
@@ -462,6 +475,50 @@ export default function Admin() {
             )}
           </>
         )}
+      </Sheet>
+
+      {/* ganti nama lingkungan */}
+      <Sheet
+        open={renaming}
+        onClose={() => setRenaming(false)}
+        title={t('renameCommunity')}
+      >
+        <label className="field">
+          <span>{t('communityName')}</span>
+          <input
+            className="input"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="RW 05 Griya Soreang"
+          />
+          <span className="tiny pw-hint">{t('communityNameHint')}</span>
+        </label>
+        <button
+          className="btn btn-primary"
+          onClick={async () => {
+            const nama = newName.trim()
+            if (!nama) return toast(t('errCommunityName'), 'err')
+
+            if (apiMode()) {
+              try {
+                await communityApi.rename(nama)
+              } catch (e) {
+                return toast(
+                  t((e instanceof ApiError ? e.code : 'errUnknown') as never),
+                  'err',
+                )
+              }
+              await reload()
+            } else {
+              const r = renameCommunity(me.id, community.id, nama)
+              if (!r.ok) return toast(t(r.error as never), 'err')
+            }
+            setRenaming(false)
+            toast(t('communityRenamed'))
+          }}
+        >
+          <Icon name="check" size={16} /> {t('save')}
+        </button>
       </Sheet>
 
       {/* invite sheet */}

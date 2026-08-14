@@ -295,6 +295,8 @@ const id = {
   errEmail: 'Format email tidak valid.',
   errPhone: 'Nomor HP tidak valid.',
   errPasswordShort: 'Kata sandi minimal 6 karakter.',
+  renameCommunity: 'Ganti nama lingkungan',
+  communityRenamed: 'Nama lingkungan diperbarui.',
   errCommunityName: 'Nama lingkungan wajib diisi.',
   errCommunityNameIsPerson:
     'Nama lingkungan tidak boleh sama dengan nama Anda. Isi nama tempatnya, misalnya "RW 05 Griya Soreang".',
@@ -944,6 +946,8 @@ const en: Dict = {
   errEmail: 'Invalid email format.',
   errPhone: 'Invalid phone number.',
   errPasswordShort: 'Password must be at least 6 characters.',
+  renameCommunity: 'Rename neighbourhood',
+  communityRenamed: 'Neighbourhood name updated.',
   errCommunityName: 'Neighbourhood name is required.',
   errCommunityNameIsPerson:
     'The neighbourhood name cannot be your own name. Enter the place, for example "RW 05 Griya Soreang".',

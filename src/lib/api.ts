@@ -229,6 +229,12 @@ export const qrisApi = {
     }),
 }
 
+/** Ganti nama lingkungan — hanya admin. */
+export const communityApi = {
+  rename: (name: string) =>
+    api.put<{ ok: true; name: string }>('/community/name', { name }),
+}
+
 export const profileApi = {
   save: (b: { emergency?: unknown; language?: string }) => api.put('/me/profile', b),
 }

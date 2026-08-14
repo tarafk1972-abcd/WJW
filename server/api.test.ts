@@ -504,3 +504,77 @@ describe('nama lingkungan', () => {
     expect(row.name).not.toBe(r.body.member.name)
   })
 })
+
+/** Mengganti nama lingkungan lewat API, dan memperbaiki data lama. */
+describe('ganti nama lingkungan', () => {
+  it('admin bisa menggantinya, dan tampil bagi warganya', async () => {
+    const a = await makeAdmin()
+    const r = await call('PUT', '/api/community/name', { name: 'RW 12 Melati' }, a.token)
+    expect(r.status).toBe(200)
+
+    const st = await call('GET', '/api/state', undefined, a.token)
+    expect(st.body.community.name).toBe('RW 12 Melati')
+  })
+
+  it('menolak nama kosong tanpa merusak nama lama', async () => {
+    const a = await makeAdmin()
+    const sebelum = (await call('GET', '/api/state', undefined, a.token)).body.community
+      .name
+
+    const r = await call('PUT', '/api/community/name', { name: '  ' }, a.token)
+    expect(r.status).toBe(400)
+    expect(r.body.error).toBe('errCommunityName')
+
+    const sesudah = (await call('GET', '/api/state', undefined, a.token)).body.community
+      .name
+    expect(sesudah).toBe(sebelum)
+  })
+
+  it('menolak nama yang sama dengan nama adminnya', async () => {
+    const a = await makeAdmin()
+    const me = await call('GET', '/api/me', undefined, a.token)
+    const r = await call(
+      'PUT',
+      '/api/community/name',
+      { name: me.body.member.name },
+      a.token,
+    )
+    expect(r.status).toBe(400)
+    expect(r.body.error).toBe('errCommunityNameIsPerson')
+  })
+
+  it('warga biasa tidak boleh menggantinya', async () => {
+    const a = await makeAdmin()
+    const w = await call('POST', '/api/auth/register', {
+      name: 'Warga Biasa',
+      phone: '081911110001',
+      email: 'wb1@x.id',
+      password: 'rahasia123',
+      house: 'B2',
+      mode: 'join',
+      communityId: a.communityId,
+    })
+    const r = await call(
+      'PUT',
+      '/api/community/name',
+      { name: 'Diubah Warga' },
+      w.body.token,
+    )
+    expect(r.status).toBe(403)
+  })
+
+  it('memberi nama sementara pada lingkungan lama yang tanpa nama', async () => {
+    const a = await makeAdmin()
+    const { db, fixUnnamedCommunities } = await import('./db.js')
+
+    // Tiru data dari versi lama yang menerima nama kosong.
+    db.prepare("UPDATE communities SET name='' WHERE id=?").run(a.communityId)
+
+    expect(fixUnnamedCommunities()).toBeGreaterThan(0)
+
+    const row = db
+      .prepare('SELECT name FROM communities WHERE id=?')
+      .get(a.communityId) as { name: string }
+    expect(row.name.trim()).not.toBe('')
+  })
+})

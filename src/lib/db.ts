@@ -647,6 +647,39 @@ export function setMemberLanguage(memberId: string, lang: Lang) {
   storeLang(lang)
 }
 
+/**
+ * Ganti nama lingkungan.
+ *
+ * Nama ini tampil di bagian atas aplikasi setiap warga. Tanpa cara
+ * mengubahnya, lingkungan yang terlanjur bernama salah — mis. terisi nama
+ * pengurusnya — akan menyandang nama itu selamanya.
+ *
+ * Aturannya sama dengan saat mendaftar: wajib diisi, dan tidak boleh
+ * sekadar nama orang yang menggantinya.
+ */
+export function renameCommunity(
+  actorId: string,
+  communityId: string,
+  rawName: string,
+): { ok: true } | { ok: false; error: string } {
+  const db = loadDB()
+  const c = communityById(db, communityId)
+  if (!c) return { ok: false, error: 'errNoCommunity' }
+
+  const nama = rawName.trim()
+  if (!nama) return { ok: false, error: 'errCommunityName' }
+
+  const actor = memberById(db, actorId)
+  if (actor && nama.toLowerCase() === actor.name.trim().toLowerCase())
+    return { ok: false, error: 'errCommunityNameIsPerson' }
+
+  const sebelum = c.name
+  c.name = nama
+  audit(db, c.id, actorId, 'community.rename', `${sebelum} -> ${nama}`)
+  saveDB(db)
+  return { ok: true }
+}
+
 export function saveArea(actorId: string, communityId: string, area: LatLng[]) {
   const db = loadDB()
   const c = communityById(db, communityId)
