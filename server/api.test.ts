@@ -578,3 +578,58 @@ describe('ganti nama lingkungan', () => {
     expect(row.name.trim()).not.toBe('')
   })
 })
+
+/**
+ * Ronda: GPS ponsel yang meleset tidak boleh menolak satpam yang memang
+ * sudah berada di titiknya.
+ */
+describe('toleransi GPS saat menandai ronda', () => {
+  const POS = { lat: -6.9829, lng: 107.5197 }
+  const utara = (m: number) => ({ lat: POS.lat + m / 111_320, lng: POS.lng })
+
+  async function siapkan() {
+    const a = await makeAdmin()
+    const cp = await call(
+      'POST',
+      '/api/checkpoints',
+      { name: 'Pos Utama', lat: POS.lat, lng: POS.lng, radiusM: 30 },
+      a.token,
+    )
+    expect(cp.status).toBe(201)
+    return a
+  }
+
+  it('menerima catatan walau GPS melaporkan 45 m dari titik', async () => {
+    const a = await siapkan()
+    const r = await call(
+      'POST',
+      '/api/patrol/log',
+      { ...utara(45), accuracy: 30 },
+      a.token,
+    )
+    expect(r.status).toBe(201)
+  })
+
+  it('menolak bila GPS akurat dan satpam memang di luar radius', async () => {
+    const a = await siapkan()
+    const r = await call(
+      'POST',
+      '/api/patrol/log',
+      { ...utara(45), accuracy: 2 },
+      a.token,
+    )
+    expect(r.status).toBe(422)
+    expect(r.body.error).toBe('errTooFar')
+  })
+
+  it('tetap menolak jarak yang jauh sekalipun GPS mengaku sangat buruk', async () => {
+    const a = await siapkan()
+    const r = await call(
+      'POST',
+      '/api/patrol/log',
+      { ...utara(500), accuracy: 100000 },
+      a.token,
+    )
+    expect(r.status).toBe(422)
+  })
+})

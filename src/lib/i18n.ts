@@ -559,7 +559,8 @@ const id = {
   patrolOntime: 'Tepat waktu',
   patrolLate: 'Terlambat',
   patrolOffschedule: 'Di luar jadwal',
-  errTooFar: 'Anda {n} m dari titik ronda. Mendekat dulu ke titik.',
+  errTooFar:
+    'GPS membaca Anda {n} m dari titik ronda. Bila Anda memang sudah di lokasi, sinyalnya sedang meleset — tunggu sebentar di tempat terbuka, atau pakai "Tetap rekam".',
   errNoCheckpoint: 'Belum ada titik ronda di lingkungan ini.',
   errAlreadyLogged: 'Titik ini baru saja direkam.',
   recordAnyway: 'Tetap rekam (di luar radius)',
@@ -1230,7 +1231,8 @@ const en: Dict = {
   patrolOntime: 'On time',
   patrolLate: 'Late',
   patrolOffschedule: 'Off schedule',
-  errTooFar: 'You are {n} m from the checkpoint. Please move closer.',
+  errTooFar:
+    'GPS puts you {n} m from the checkpoint. If you are already there, the signal is off \u2014 wait a moment in the open, or use "Log anyway".',
   errNoCheckpoint: 'No checkpoints defined for this neighbourhood.',
   errAlreadyLogged: 'This checkpoint was just logged.',
   recordAnyway: 'Log anyway (outside radius)',

@@ -8,6 +8,7 @@ import {
   checkpointsOf,
   distanceMeters,
   logsForDay,
+  patrolAllowedRadius,
   recordPatrol,
 } from '../lib/db'
 import { fmtTime } from '../lib/format'
@@ -38,6 +39,8 @@ export default function PatrolCheck() {
   const toast = useToast()
 
   const [pos, setPos] = useState<LatLng | null>(null)
+  /** Ketidakpastian GPS terakhir, meter. Dikirim agar radius diberi kelonggaran. */
+  const [acc, setAcc] = useState<number | null>(null)
   const [locating, setLocating] = useState(true)
   const [saving, setSaving] = useState(false)
   const [tooFar, setTooFar] = useState<{ dist: number; cp: Checkpoint } | null>(null)
@@ -71,7 +74,10 @@ export default function PatrolCheck() {
   const locate = useCallback(async () => {
     setLocating(true)
     const fix = await getFix()
-    if (fix) setPos({ lat: fix.lat, lng: fix.lng })
+    if (fix) {
+      setPos({ lat: fix.lat, lng: fix.lng })
+      setAcc(fix.accuracy)
+    }
     setLocating(false)
   }, [])
 
@@ -105,7 +111,7 @@ export default function PatrolCheck() {
 
     if (apiMode()) {
       try {
-        const r = await patrolApi.log(pos.lat, pos.lng, { force })
+        const r = await patrolApi.log(pos.lat, pos.lng, { force, accuracy: acc })
         await syncState()
         setSaving(false)
         setTooFar(null)
@@ -140,6 +146,7 @@ export default function PatrolCheck() {
       satpamId: me.id,
       at: pos,
       force,
+      accuracy: acc,
     })
     setSaving(false)
 
@@ -157,7 +164,14 @@ export default function PatrolCheck() {
     toast(t(res.error ?? 'errNoCheckpoint'), 'err')
   }
 
-  const inRange = !!nearest && nearest.dist <= nearest.cp.radiusM
+  /*
+   * Pakai radius yang sudah dilonggarkan, sama seperti yang dipakai
+   * server saat menyimpan. Sebelumnya layar membandingkan jarak mentah,
+   * sehingga satpam yang berdiri di titik ronda melihat "di luar
+   * jangkauan" padahal servernya akan menerima catatannya.
+   */
+  const inRange =
+    !!nearest && nearest.dist <= patrolAllowedRadius(nearest.cp.radiusM, acc)
 
   return (
     <div className="page">

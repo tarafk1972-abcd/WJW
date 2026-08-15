@@ -76,6 +76,14 @@ ensureSuperadmin()
 fixUnnamedCommunities()
 setInterval(purgeSessions, 6 * 60 * 60 * 1000).unref?.()
 
+/**
+ * Kelonggaran maksimum untuk ketidakpastian GPS saat menandai ronda.
+ *
+ * Cukup untuk menutupi fix buruk di antara bangunan, tetapi tidak
+ * selebar itu sehingga titik ronda bisa ditandai dari luar pagar.
+ */
+const GPS_SLACK_MAX_M = 35
+
 type Env = { Variables: { me: MemberRow } }
 const app = new Hono<Env>()
 
@@ -1396,6 +1404,7 @@ app.post('/api/patrol/log', auth, active, async (c) => {
     checkpointId?: string
     note?: string
     force?: boolean
+    accuracy?: number | null
   }
   if (typeof b.lat !== 'number' || typeof b.lng !== 'number')
     return bad(c, 'gpsNeeded')
@@ -1422,9 +1431,28 @@ app.post('/api/patrol/log', auth, active, async (c) => {
   }
   if (!cp) return bad(c, 'errNoCheckpoint', 404)
 
-  const inside = dist <= (cp.radius_m as number)
+  /*
+   * Perhitungkan ketidakpastian GPS, jangan bandingkan jarak mentah.
+   *
+   * Titik GPS ponsel biasa meleset 10-30 meter di antara bangunan atau
+   * di bawah atap pos ronda. Membandingkan jarak mentah dengan radius
+   * membuat satpam yang BERDIRI TEPAT di titik ronda ditolak, karena
+   * ponselnya melaporkan dirinya 40 m dari sana. Yang benar-benar perlu
+   * dijawab adalah: mungkinkah ia berada di dalam radius?
+   *
+   * Kelonggarannya dibatasi agar tidak menjadi celah: fix yang sangat
+   * buruk tidak boleh membuat titik mana pun bisa ditandai dari jauh.
+   */
+  const acc = Number.isFinite(b.accuracy as number) ? Math.max(0, b.accuracy!) : 0
+  const slack = Math.min(GPS_SLACK_MAX_M, acc)
+  const radius = (cp.radius_m as number) + slack
+
+  const inside = dist <= radius
   if (!inside && !b.force)
-    return c.json({ error: 'errTooFar', distanceM: Math.round(dist) }, 422)
+    return c.json(
+      { error: 'errTooFar', distanceM: Math.round(dist), allowedM: Math.round(radius) },
+      422,
+    )
 
   const recent = db
     .prepare(

@@ -139,8 +139,21 @@ export const alertApi = {
 }
 
 export const patrolApi = {
-  log: (lat: number, lng: number, opts: { checkpointId?: string; note?: string; force?: boolean } = {}) =>
-    api.post<{ log: Record<string, unknown> }>('/patrol/log', { lat, lng, ...opts }),
+  /**
+   * `accuracy` wajib diteruskan: server memakainya untuk memberi
+   * kelonggaran radius. Tanpa itu, satpam yang berdiri tepat di titik
+   * ronda bisa ditolak hanya karena GPS-nya sedang meleset.
+   */
+  log: (
+    lat: number,
+    lng: number,
+    opts: {
+      checkpointId?: string
+      note?: string
+      force?: boolean
+      accuracy?: number | null
+    } = {},
+  ) => api.post<{ log: Record<string, unknown> }>('/patrol/log', { lat, lng, ...opts }),
 }
 
 export const adminApi = {

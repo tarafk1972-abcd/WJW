@@ -1223,6 +1223,26 @@ export interface RecordPatrolResult {
  * Satu tombol ronda: cari titik terdekat, pastikan satpam benar-benar di
  * sana, lalu catat sesuai jadwal yang sedang berlaku.
  */
+/** Kelonggaran maksimum untuk ketidakpastian GPS (meter). */
+export const GPS_SLACK_MAX_M = 35
+
+/**
+ * Radius efektif sebuah titik ronda.
+ *
+ * Titik GPS ponsel biasa meleset 10-30 m di antara bangunan atau di bawah
+ * atap pos ronda. Tanpa kelonggaran ini, satpam yang berdiri tepat di
+ * titiknya ditolak karena ponselnya melaporkan dirinya puluhan meter dari
+ * sana. Kelonggarannya dibatasi agar tidak bisa dipakai menandai titik
+ * dari luar pagar.
+ */
+export function patrolAllowedRadius(
+  radiusM: number,
+  accuracy: number | null | undefined,
+): number {
+  const acc = Number.isFinite(accuracy as number) ? Math.max(0, accuracy as number) : 0
+  return radiusM + Math.min(GPS_SLACK_MAX_M, acc)
+}
+
 export function recordPatrol(opts: {
   communityId: string
   satpamId: string
@@ -1232,6 +1252,8 @@ export function recordPatrol(opts: {
   note?: string
   /** Lewati pemeriksaan jarak (dipakai saat GPS tidak tersedia). */
   force?: boolean
+  /** Ketidakpastian GPS (meter); melonggarkan radius sewajarnya. */
+  accuracy?: number | null
   now?: number
 }): RecordPatrolResult {
   const db = loadDB()
@@ -1255,7 +1277,9 @@ export function recordPatrol(opts: {
   }
   if (!cp) return { ok: false, error: 'errNoCheckpoint' }
 
-  const inside = dist <= cp.radiusM
+  // Lihat catatan di server/index.ts: bandingkan dengan radius yang sudah
+  // dilonggarkan sebesar ketidakpastian GPS, bukan jarak mentah.
+  const inside = dist <= patrolAllowedRadius(cp.radiusM, opts.accuracy)
   if (!inside && !opts.force)
     return { ok: false, error: 'errTooFar', distanceM: dist, checkpoint: cp }
 
