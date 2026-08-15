@@ -613,6 +613,11 @@ const id = {
   dutyPushSilenced: 'Notifikasi diredam {n} menit',
   dutyPushSilencedHint: 'Anda sedang menangani sebuah peringatan.',
   dutyPushResume: 'Aktifkan lagi',
+  dutyPushOff: 'Notifikasi darurat nonaktif — Anda di luar area',
+  dutyPushOffHint: 'Akan menyala sendiri begitu Anda masuk area tugas.',
+  dutyNoArea: 'Area tugas belum ditentukan',
+  dutyNoAreaHint:
+    'Notifikasi darurat otomatis belum bisa berjalan. Minta admin menggambar area lingkungan lewat menu Peta.',
   privacy: 'Privasi',
   on: 'Aktif',
   off: 'Nonaktif',
@@ -1278,6 +1283,11 @@ const en: Dict = {
   dutyPushSilenced: 'Alerts muted for {n} min',
   dutyPushSilencedHint: 'You are handling an alert.',
   dutyPushResume: 'Turn back on',
+  dutyPushOff: 'Emergency alerts off — you are outside the area',
+  dutyPushOffHint: 'They switch on by themselves once you enter your patrol area.',
+  dutyNoArea: 'No patrol area defined yet',
+  dutyNoAreaHint:
+    'Automatic emergency alerts cannot run. Ask an admin to draw the neighbourhood area on the Map screen.',
   privacy: 'Privacy',
   on: 'On',
   off: 'Off',

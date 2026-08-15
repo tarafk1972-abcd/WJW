@@ -133,6 +133,63 @@ describe('tampilan pada perangkat', () => {
      */
     const kode = readFileSync('src/ui/PushPrompt.tsx', 'utf8')
     expect(kode).toContain("me?.role === 'satpam'")
-    expect(kode).toContain('if (isSatpam) return null')
+    expect(kode).toContain('if (!roleKnown || isSatpam) return null')
+  })
+})
+
+/**
+ * Bagian yang sempat terlewat: keluar area harus benar-benar MEMATIKAN
+ * notifikasi, bukan sekadar berhenti menyalakannya. Tanpa itu, satpam
+ * yang pulang tetap dibunyikan peringatan sepanjang malam.
+ */
+describe('notifikasi mengikuti keberadaan di area', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.restoreAllMocks()
+  })
+
+  it('mencabut langganan ketika satpam berada di luar area', async () => {
+    const { ensureDutyPush } = await import('../lib/dutyPush')
+    const pc = await import('../lib/pushClient')
+    vi.spyOn(pc, 'pushSupported').mockReturnValue(true)
+    const off = vi.spyOn(pc, 'disablePush').mockResolvedValue()
+
+    expect(await ensureDutyPush(false)).toBe('off')
+    expect(off).toHaveBeenCalled()
+  })
+
+  it('mencabut langganan selama diredam karena merespons', async () => {
+    const { ensureDutyPush, silenceWhileResponding } = await import('../lib/dutyPush')
+    const pc = await import('../lib/pushClient')
+    vi.spyOn(pc, 'pushSupported').mockReturnValue(true)
+    const off = vi.spyOn(pc, 'disablePush').mockResolvedValue()
+
+    silenceWhileResponding()
+    expect(await ensureDutyPush(true)).toBe('off')
+    expect(off).toHaveBeenCalled()
+  })
+
+  it('menyalakan tanpa bertanya ketika izin sudah ada dan berada di area', async () => {
+    const { ensureDutyPush } = await import('../lib/dutyPush')
+    const pc = await import('../lib/pushClient')
+    vi.spyOn(pc, 'pushSupported').mockReturnValue(true)
+    vi.spyOn(pc, 'permission').mockReturnValue('granted')
+    const on = vi.spyOn(pc, 'enablePush').mockResolvedValue(true)
+
+    expect(await ensureDutyPush(true)).toBe('on')
+    expect(on).toHaveBeenCalled()
+  })
+})
+
+/**
+ * Ajakan opsional tidak boleh berkedip sebelum peran diketahui: sekali
+ * satpam menekan "tutup", pilihan itu menetap di perangkatnya.
+ */
+describe('PushPrompt menunggu peran diketahui', () => {
+  it('tidak menampilkan apa pun selama me masih null', async () => {
+    const { readFileSync } = await import('node:fs')
+    const kode = readFileSync('src/ui/PushPrompt.tsx', 'utf8')
+    expect(kode).toContain('const roleKnown = !!me')
+    expect(kode).toContain('if (!roleKnown || isSatpam) return null')
   })
 })

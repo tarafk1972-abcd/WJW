@@ -20,7 +20,7 @@
  */
 import type { Community, Member } from './types'
 import { pointInPolygon } from './db'
-import { enablePush, permission, pushSupported } from './pushClient'
+import { disablePush, enablePush, permission, pushSupported } from './pushClient'
 
 /** Berapa lama peredaman berlaku setelah satpam merespons. */
 export const SILENCE_MS = 15 * 60 * 1000
@@ -72,8 +72,20 @@ export function silencedFor(now = Date.now()): number {
 export async function ensureDutyPush(
   onDuty: boolean,
 ): Promise<'on' | 'needsPermission' | 'blocked' | 'off'> {
-  if (!onDuty || !pushSupported()) return 'off'
-  if (silencedFor() > 0) return 'off'
+  if (!pushSupported()) return 'off'
+
+  /*
+   * Di luar area, atau sedang meredam karena merespons: langganan
+   * dicabut, bukan sekadar tidak dipasang.
+   *
+   * Tanpa pencabutan ini, satpam yang pulang tetap dibunyikan peringatan
+   * sepanjang malam — persis kebalikan dari "otomatis tidak aktif ketika
+   * tidak sedang bertugas".
+   */
+  if (!onDuty || silencedFor() > 0) {
+    await disablePush()
+    return 'off'
+  }
 
   const perm = permission()
   if (perm === 'denied') return 'blocked'

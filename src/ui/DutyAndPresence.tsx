@@ -87,7 +87,45 @@ export function DutyAndPresence() {
     return () => clearInterval(id)
   }, [isSatpam])
 
-  if (!isSatpam || !pushSupported() || !onDuty) return null
+  if (!isSatpam || !pushSupported()) return null
+
+  /*
+   * Area belum digambar admin.
+   *
+   * Tanpa area, tidak ada cara memastikan satpam sedang bertugas, jadi
+   * notifikasi otomatis tidak bisa berjalan. Diam saja akan menyesatkan:
+   * satpam mengira notifikasinya aktif padahal tidak ada apa pun yang
+   * menyalakannya.
+   */
+  if (!community || community.area.length < 3) {
+    return (
+      <div className="push-prompt">
+        <Icon name="alert" size={17} color="var(--warn)" />
+        <div className="grow">
+          <div className="strong" style={{ fontSize: 13.5 }}>
+            {t('dutyNoArea')}
+          </div>
+          <div className="tiny">{t('dutyNoAreaHint')}</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (!onDuty) {
+    // Di luar area: notifikasi memang tidak aktif. Katakan apa adanya,
+    // supaya satpam tahu bedanya "mati" dengan "rusak".
+    return (
+      <div className="push-prompt">
+        <Icon name="bell" size={17} color="var(--text-3)" />
+        <div className="grow">
+          <div className="strong" style={{ fontSize: 13.5 }}>
+            {t('dutyPushOff')}
+          </div>
+          <div className="tiny">{t('dutyPushOffHint')}</div>
+        </div>
+      </div>
+    )
+  }
 
   // Sedang diredam karena satpam merespons sebuah peringatan.
   if (silenced > 0) {

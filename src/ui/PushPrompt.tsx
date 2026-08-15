@@ -7,32 +7,45 @@ import { Icon } from './Icon'
 const DISMISS_KEY = 'wjw.pushPrompt.dismissed'
 
 /**
- * Ajakan mengaktifkan notifikasi darurat.
+ * Ajakan mengaktifkan notifikasi darurat, untuk warga dan pengurus.
+ *
  * Hanya muncul bila memakai server, didukung perangkat, belum diizinkan,
  * dan belum pernah ditutup pengguna.
  *
- * TIDAK ditampilkan kepada satpam: bagi mereka notifikasi darurat bukan
- * pilihan melainkan bagian dari tugas, dan diurus otomatis oleh
- * `DutyPush`. Menawarkan tombol "tutup" kepada orang yang justru
- * ditugaskan menerima peringatan adalah cara paling mudah kehilangan
- * peringatan itu.
+ * TIDAK pernah ditampilkan kepada satpam: bagi mereka notifikasi darurat
+ * bukan pilihan melainkan bagian dari tugas, dan diurus otomatis oleh
+ * `DutyAndPresence` berdasarkan keberadaan mereka di area. Menawarkan
+ * tombol "tutup" kepada orang yang justru ditugaskan menerima peringatan
+ * adalah cara paling mudah kehilangan peringatan itu.
  */
 export function PushPrompt() {
   const { t, me } = useApp()
   const [show, setShow] = useState(false)
   const [busy, setBusy] = useState(false)
+
+  /*
+   * Jangan tampilkan sebelum peran diketahui.
+   *
+   * Saat halaman baru dibuka, `me` sesaat masih null — sinkronisasi
+   * pertama belum selesai. Menganggapnya "bukan satpam" membuat ajakan
+   * ini sempat berkedip di layar satpam, dan sekali ditekan "tutup",
+   * pilihannya menetap. Menunggu sampai perannya jelas menghilangkan
+   * celah itu sepenuhnya.
+   */
+  const roleKnown = !!me
   const isSatpam = me?.role === 'satpam'
 
   useEffect(() => {
-    if (isSatpam) return
+    if (!roleKnown || isSatpam) return
     if (!apiMode() || !pushSupported()) return
     void registerServiceWorker()
     if (permission() === 'default' && !localStorage.getItem(DISMISS_KEY)) {
       setShow(true)
     }
-  }, [isSatpam])
+  }, [roleKnown, isSatpam])
 
-  if (isSatpam) return null
+  // Satpam tidak pernah ditawari: notifikasi mereka diurus DutyAndPresence.
+  if (!roleKnown || isSatpam) return null
 
   if (!show) return null
 
