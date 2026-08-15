@@ -20,7 +20,7 @@ import {
   resumeDutyPush,
   silencedFor,
 } from '../lib/dutyPush'
-import { reportLocation } from '../lib/presence'
+import { shareLocationForEmergency } from '../lib/presence'
 import { useApp } from '../lib/store'
 import { apiMode } from '../lib/sync'
 import { enablePush, pushSupported, registerServiceWorker } from '../lib/pushClient'
@@ -29,7 +29,7 @@ import { Icon } from './Icon'
 type State = 'off' | 'on' | 'needsPermission' | 'blocked'
 
 export function DutyAndPresence() {
-  const { t, me, community } = useApp()
+  const { t, me, community, locationWanted } = useApp()
   const [state, setState] = useState<State>('off')
   const [onDuty, setOnDuty] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -38,22 +38,32 @@ export function DutyAndPresence() {
   const isSatpam = me?.role === 'satpam'
 
   /*
-   * Pantau posisi untuk dua hal:
-   *   1. mengetahui satpam sedang di dalam area atau tidak;
-   *   2. melaporkan posisi terakhir, agar warga yang menekan tombol
-   *      darurat bisa memanggil orang-orang terdekatnya.
-   * Berlaku untuk semua peran — tetangga terdekat belum tentu satpam.
+   * Pantau posisi HANYA untuk satpam, dan hanya demi mengetahui ia
+   * sedang di dalam area atau tidak — itu yang menentukan notifikasi
+   * tugasnya menyala. Warga biasa tidak disentuh GPS-nya di sini.
    */
   useEffect(() => {
-    if (!apiMode() || !me) return
-    if (isSatpam) void registerServiceWorker()
+    if (!apiMode() || !me || !isSatpam) return
+    void registerServiceWorker()
 
     const stop = watchLocation((pos) => {
-      if (isSatpam) setOnDuty(onDutyInArea(me, community, pos))
-      void reportLocation(pos)
+      setOnDuty(onDutyInArea(me, community, pos))
     })
     return stop
   }, [isSatpam, me, community])
+
+  /*
+   * Kirim posisi hanya ketika sedang ada darurat.
+   *
+   * `locationWanted` datang dari server dan bernilai true hanya selama
+   * ada peringatan yang masih berlangsung. Di luar itu GPS tidak
+   * disentuh sama sekali, sehingga posisi warga tidak pernah terkumpul
+   * pada hari-hari biasa.
+   */
+  useEffect(() => {
+    if (!apiMode() || !me || !locationWanted) return
+    void shareLocationForEmergency()
+  }, [me, locationWanted])
 
   // Nyalakan sendiri begitu masuk area.
   useEffect(() => {

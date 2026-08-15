@@ -1,6 +1,10 @@
 /**
  * Menentukan siapa yang berada di dekat sebuah peringatan darurat.
  *
+ * Posisi TIDAK dikirim berkala. Aplikasi hanya menanyakan lokasi ketika
+ * ada peringatan darurat yang sedang berlangsung di lingkungan itu —
+ * di luar keadaan darurat, server tidak pernah tahu warga ada di mana.
+ *
  * Aturannya: satpam dan warga yang berada dalam radius tertentu dari HP
  * yang menekan tombol darurat ikut menerima notifikasi — di samping
  * keluarga, teman, dan pengurus yang memang selalu dikabari.
@@ -27,10 +31,11 @@ export const NEAR_MAX_M = 70
 /**
  * Berapa lama posisi terakhir masih dianggap mewakili keberadaan orang.
  *
- * Lebih lama dari ini, orangnya besar kemungkinan sudah pindah tempat;
- * memanggilnya sebagai "tetangga terdekat" hanya akan menyesatkan.
+ * Pendek, karena posisi hanya dikumpulkan saat ada darurat: titik yang
+ * lebih tua dari ini berasal dari kejadian sebelumnya dan tidak lagi
+ * mewakili keberadaan orangnya.
  */
-export const FRESH_MS = 15 * 60 * 1000
+export const FRESH_MS = 10 * 60 * 1000
 
 /**
  * Radius yang dipakai untuk satu peringatan.

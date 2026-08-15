@@ -168,3 +168,61 @@ describe('peringatan darurat memanggil orang terdekat', () => {
     expect(row.last_lat).toBeCloseTo(utara(100).lat, 6)
   })
 })
+
+/**
+ * Server hanya meminta lokasi selama ada darurat berlangsung.
+ * Inilah yang membuat GPS warga tidak tersentuh di hari-hari biasa.
+ */
+describe('kapan lokasi diminta', () => {
+  it('tidak diminta ketika tidak ada darurat', async () => {
+    const m = await anggota(null, 'Warga Tenang')
+    const st = await call('GET', '/api/state', undefined, m.token)
+    expect(st.body.locationWanted).toBe(false)
+  })
+
+  it('diminta selama ada peringatan yang masih terbuka', async () => {
+    const pelapor = await anggota(null, 'Pelapor Wanted')
+    const { db } = await import('./db.js')
+    const lain = await anggota(pelapor.communityId, 'Tetangga Wanted')
+    db.prepare("UPDATE members SET status='active' WHERE id=?").run(lain.id)
+
+    await call(
+      'POST',
+      '/api/alerts',
+      { category: 'other', at: PUSAT, accuracy: 5 },
+      pelapor.token,
+    )
+
+    const st = await call('GET', '/api/state', undefined, lain.token)
+    expect(st.body.locationWanted).toBe(true)
+  })
+
+  it('berhenti diminta setelah peringatan ditutup', async () => {
+    const pelapor = await anggota(null, 'Pelapor Tutup')
+    const r = await call(
+      'POST',
+      '/api/alerts',
+      { category: 'other', at: PUSAT, accuracy: 5 },
+      pelapor.token,
+    )
+    const id = r.body.report.id as string
+
+    await call('POST', `/api/alerts/${id}/close`, {}, pelapor.token)
+
+    const st = await call('GET', '/api/state', undefined, pelapor.token)
+    expect(st.body.locationWanted).toBe(false)
+  })
+
+  it('tidak meminta lokasi karena darurat di lingkungan lain', async () => {
+    const a = await anggota(null, 'RW Satu')
+    const b = await anggota(null, 'RW Dua')
+    await call(
+      'POST',
+      '/api/alerts',
+      { category: 'other', at: PUSAT, accuracy: 5 },
+      a.token,
+    )
+    const st = await call('GET', '/api/state', undefined, b.token)
+    expect(st.body.locationWanted).toBe(false)
+  })
+})

@@ -618,7 +618,7 @@ const id = {
   off: 'Nonaktif',
   shareNearby: 'Bantu tetangga terdekat',
   shareNearbyHint:
-    'Posisi terakhir Anda dipakai hanya untuk memanggil orang terdekat saat ada warga menekan tombol darurat. Yang disimpan satu titik terakhir, bukan riwayat perjalanan, dan hangus setelah 15 menit.',
+    'Lokasi Anda hanya diambil saat ada warga menekan tombol darurat, untuk memanggil orang terdekat. Di luar keadaan darurat aplikasi tidak menyentuh GPS sama sekali, dan titiknya hangus setelah 10 menit.',
   pushUnsupported: 'Perangkat ini tidak mendukung notifikasi.',
   serverDown: 'Server tidak aktif — memakai data di HP ini saja.',
   consoleLocalOnly:
@@ -1277,7 +1277,7 @@ const en: Dict = {
   off: 'Off',
   shareNearby: 'Help nearby neighbours',
   shareNearbyHint:
-    'Your last position is used only to call the closest people when someone raises an alert. One point is kept, never a movement history, and it expires after 15 minutes.',
+    'Your location is read only when someone raises an alert, to call the closest people. Outside an emergency the app never touches GPS, and the point expires after 10 minutes.',
   pushUnsupported: 'This device does not support notifications.',
   serverDown: 'Server is down — using data on this phone only.',
   consoleLocalOnly:

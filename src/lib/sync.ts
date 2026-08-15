@@ -20,12 +20,25 @@ export function apiMode(): boolean {
 let syncing: Promise<void> | null = null
 let lastError: string | null = null
 
+/**
+ * True hanya selama ada peringatan darurat yang berlangsung.
+ * Dipakai untuk memutuskan kapan boleh menyentuh GPS — di luar itu,
+ * lokasi warga tidak pernah diminta.
+ */
+let locationWanted = false
+
+export function isLocationWanted(): boolean {
+  return locationWanted
+}
+
 export function lastSyncError(): string | null {
   return lastError
 }
 
 /** Bentuk balasan /api/state, semuanya opsional agar tahan perubahan. */
 interface StatePayload {
+  /** Server sedang membutuhkan lokasi: ada darurat berlangsung. */
+  locationWanted?: boolean
   me?: Record<string, unknown>
   community?: Record<string, unknown>
   communities?: Record<string, unknown>[]
@@ -77,6 +90,8 @@ export function syncState(): Promise<void> {
       if (s.me && !next.members.some((m) => m.id === (s.me as { id: string }).id)) {
         next.members = [...next.members, s.me as unknown as DBShape['members'][number]]
       }
+
+      locationWanted = s.locationWanted === true
 
       // Simpan tanpa menghapus media lama: data server adalah kebenaran.
       saveDB(next)

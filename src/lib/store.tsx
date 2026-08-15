@@ -18,7 +18,13 @@ import {
   setSession,
   storeLang,
 } from './db'
-import { apiMode, lastSyncError, startPolling, syncState } from './sync'
+import {
+  apiMode,
+  isLocationWanted,
+  lastSyncError,
+  startPolling,
+  syncState,
+} from './sync'
 import { DEFAULT_LANG, translate, type Key } from './i18n'
 import type { Community, DBShape, Lang, Member } from './types'
 
@@ -39,6 +45,8 @@ interface Ctx {
   online: boolean
   /** Kode error sinkronisasi terakhir, mis. 'errOffline'. */
   syncError: string | null
+  /** Ada darurat berlangsung: aplikasi boleh mengirim posisi sekali. */
+  locationWanted: boolean
   /** Tarik ulang data dari server. */
   reload: () => Promise<void>
 }
@@ -141,6 +149,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     plan: community ? planState(community) : null,
     online: apiMode(),
     syncError: lastSyncError(),
+    locationWanted: isLocationWanted(),
     reload,
     isAdmin: me?.role === 'admin' || me?.role === 'superadmin',
     isSuperadmin: me?.role === 'superadmin',

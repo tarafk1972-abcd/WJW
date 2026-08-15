@@ -129,28 +129,42 @@ sebagai andalan utama.
 
 ## Berbagi posisi untuk memanggil warga terdekat
 
-Sejak peringatan darurat memanggil orang di sekitar lokasi, aplikasi
-menyimpan **satu titik posisi terakhir** per anggota di server.
+Lokasi **hanya diambil saat ada peringatan darurat berlangsung**. Di luar
+itu aplikasi tidak menyentuh GPS sama sekali, sehingga posisi warga tidak
+pernah terkumpul pada hari-hari biasa.
 
-Yang sudah dilakukan untuk membatasi dampaknya:
+Alurnya:
 
-- hanya satu titik, menimpa yang sebelumnya — bukan riwayat perjalanan;
-- tidak dipakai lagi setelah 15 menit;
-- dikirim paling cepat 3 menit sekali, dan hanya bila orangnya berpindah
-  lebih dari 20 meter;
+1. Seorang warga menekan tombol darurat.
+2. Server menandai lingkungan itu sedang darurat.
+3. Aplikasi warga lain melihat tanda itu pada sinkronisasi berikutnya,
+   mengambil **satu** titik lokasi, lalu mengirimkannya.
+4. Server memanggil yang terdekat, dan melupakan titiknya setelah
+   10 menit.
+
+Pembatas lain:
+
+- satu titik per anggota, menimpa yang sebelumnya — bukan riwayat;
+- paling cepat satu kiriman per menit;
 - warga bisa mematikannya lewat **Pengaturan → Privasi**, dan titiknya
   langsung dihapus dari server;
 - posisi tidak pernah dikirim ke sesama warga — hanya dipakai server
   untuk memutuskan siapa yang dikabari.
 
-Yang **belum** dikerjakan dan perlu diputuskan sebelum dipakai luas:
+### Batas yang perlu diketahui
+
+**Aplikasi harus terbuka.** Bila aplikasi warga tertutup, langkah 3 tidak
+berjalan dan ia tidak terhitung sebagai tetangga terdekat. Notifikasi
+push tidak bisa menutupi ini: peramban tidak mengizinkan service worker
+menyentuh GPS. Karena itu satpam dan pengurus tetap dikabari tanpa
+bergantung pada jarak — jalur itu tidak boleh ikut bergantung pada
+keberadaan lokasi.
+
+### Belum dikerjakan
 
 - **Persetujuan tertulis (UU PDP No. 27/2022).** Lokasi termasuk data
-  pribadi. Perlu pemberitahuan dan persetujuan yang tercatat, bukan hanya
-  tombol di Pengaturan.
-- **Bawaannya aktif.** Saat ini berbagi posisi menyala kecuali dimatikan.
-  Pertimbangkan sebaliknya bila penasihat hukum menyarankan.
-- **Menguras baterai.** `watchPosition` berjalan selama aplikasi terbuka.
-  Perlu diuji lapangan pada HP kelas bawah.
-- **Belum ada penghapusan berkala** atas titik yang sudah kedaluwarsa;
-  saat ini hanya diabaikan, bukan dihapus dari basis data.
+  pribadi. Tombol di Pengaturan belum memadai sebagai persetujuan yang
+  tercatat.
+- **Bawaannya aktif.** Perlu diputuskan apakah sebaiknya sebaliknya.
+- **Belum ada penghapusan berkala** atas titik kedaluwarsa; saat ini
+  hanya diabaikan, bukan dihapus dari basis data.

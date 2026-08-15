@@ -633,11 +633,26 @@ app.get('/api/state', auth, (c) => {
     )
   ).map(mapReport)
 
+  /*
+   * Apakah aplikasi perlu menanyakan lokasi sekarang?
+   *
+   * Hanya ketika ada peringatan darurat yang masih berlangsung di
+   * lingkungan ini. Di luar itu klien tidak menyentuh GPS sama sekali,
+   * sehingga posisi warga tidak pernah terkumpul di hari-hari biasa.
+   */
+  const daruratAktif = db
+    .prepare(
+      `SELECT 1 FROM reports
+       WHERE community_id=? AND kind='sos' AND status='open' AND created_at > ?`,
+    )
+    .get(cid, now() - FRESH_MS)
+
   return c.json({
     me: publicMember(me),
     community: mapCommunity(community),
     members,
     reports,
+    locationWanted: !!daruratAktif,
     checkpoints: one<Record<string, unknown>>(
       'SELECT * FROM checkpoints WHERE community_id=? AND active=1 ORDER BY ord',
     ).map(mapCheckpoint),
