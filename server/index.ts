@@ -84,6 +84,17 @@ setInterval(purgeSessions, 6 * 60 * 60 * 1000).unref?.()
  */
 const GPS_SLACK_MAX_M = 35
 
+/**
+ * Batas satu lampiran (byte) dan jumlah lampiran per peringatan.
+ *
+ * Klien sudah mengecilkan gambar ke sisi terpanjang 720 px, yang biasanya
+ * jauh di bawah batas ini. Batas tetap ditegakkan di server karena klien
+ * bisa diubah siapa saja, dan satu berkas besar cukup untuk membuat
+ * seluruh peringatan gagal dimuat di ponsel lain.
+ */
+const ATTACH_MAX_BYTES = 600_000
+const ATTACH_MAX_COUNT = 12
+
 type Env = { Variables: { me: MemberRow } }
 const app = new Hono<Env>()
 
@@ -1350,6 +1361,64 @@ app.post('/api/alerts/:id/messages', auth, active, async (c) => {
     })
 
   return c.json({ message: msg }, 201)
+})
+
+/**
+ * Lampirkan foto bukti pada sebuah peringatan.
+ *
+ * Sebelumnya foto hanya tersimpan di perangkat pengirim, jadi tidak
+ * pernah sampai ke penolong maupun pengurus — bukti yang tidak terlihat
+ * siapa pun sama saja tidak ada.
+ *
+ * Berbeda dengan pesan teks, gambar bisa sangat besar dan mudah membuat
+ * basis data membengkak, jadi batasnya ditegakkan di sini: klien memang
+ * sudah mengecilkan gambar, tetapi server tidak boleh mempercayainya.
+ */
+app.post('/api/alerts/:id/attachments', auth, active, async (c) => {
+  const me = c.get('me')
+  const r = db.prepare('SELECT * FROM reports WHERE id=?').get(c.req.param('id')) as
+    | Record<string, unknown>
+    | undefined
+  if (!r) return bad(c, 'not_found', 404)
+  if (!sameCommunity(me, r.community_id as string)) return bad(c, 'forbidden', 403)
+
+  const isOwner = r.author_id === me.id
+  const recipients = (J(r.recipients as string) ?? []) as { memberId: string | null }[]
+  const isRecipient = recipients.some((x) => x.memberId === me.id)
+  if (!isOwner && !isRecipient && !requireAdmin(c) && me.role !== 'satpam')
+    return bad(c, 'forbidden', 403)
+
+  const b = (await c.req.json().catch(() => ({}))) as {
+    dataUrl?: string
+    kind?: string
+  }
+  const dataUrl = b.dataUrl ?? ''
+
+  // Hanya gambar, dan hanya jenis yang memang bisa ditampilkan.
+  const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
+  if (!m) return bad(c, 'errAttachType')
+
+  const bytes = Math.floor((m[2].length * 3) / 4)
+  if (bytes > ATTACH_MAX_BYTES) return bad(c, 'errAttachTooBig')
+
+  const list = (J(r.attachments as string) ?? []) as unknown[]
+  if (list.length >= ATTACH_MAX_COUNT) return bad(c, 'errAttachTooMany')
+
+  const att = {
+    id: uid('at_'),
+    kind: b.kind === 'video' ? 'video' : 'photo',
+    dataUrl,
+    at: now(),
+    bytes,
+    by: me.id,
+  }
+  list.push(att)
+  db.prepare('UPDATE reports SET attachments=? WHERE id=?').run(
+    JSON.stringify(list),
+    r.id,
+  )
+  audit(r.community_id as string, me.id, 'alert.attach', String(bytes))
+  return c.json({ attachment: att }, 201)
 })
 
 app.post('/api/alerts/:id/close', auth, active, async (c) => {

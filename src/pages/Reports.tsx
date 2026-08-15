@@ -442,6 +442,26 @@ function ReportDetail({
   const [sending, setSending] = useState(false)
 
   /**
+   * Lampirkan foto bukti.
+   *
+   * Menulis ke server lebih dulu, seperti pesan teks: bukti yang hanya
+   * tersimpan di perangkat pengirim tidak pernah sampai ke penolong.
+   */
+  const lampirkanFoto = async (file: File) => {
+    if (!me) return
+    const kecil = await toThumbnail(file)
+
+    if (apiMode()) {
+      const ok = await mutate(() => alertApi.attach(report.id, kecil))
+      if (!ok) return toast(t('errOffline'), 'err')
+      toast(t('photoAdded'))
+      return
+    }
+    addAttachment(report.id, kecil)
+    toast(t('photoAdded'))
+  }
+
+  /**
    * Kirim pesan utas insiden.
    *
    * Menulis ke server lebih dulu: pesan koordinasi yang hanya tersimpan
@@ -628,9 +648,11 @@ function ReportDetail({
             hidden
             onChange={async (e) => {
               const f = e.target.files?.[0]
+              // Kosongkan dulu, agar memilih berkas yang sama dua kali
+              // tetap memicu onChange.
+              e.target.value = ''
               if (!f) return
-              addAttachment(report.id, await toThumbnail(f))
-              toast(t('photoAdded'))
+              await lampirkanFoto(f)
             }}
           />
           <button className="icon-btn" onClick={() => fileRef.current?.click()}>

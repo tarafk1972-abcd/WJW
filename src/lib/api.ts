@@ -139,6 +139,12 @@ export const alertApi = {
   /** Kirim pesan pada utas insiden, agar terlihat peserta lain. */
   message: (id: string, body: string) =>
     api.post<{ message: Record<string, unknown> }>(`/alerts/${id}/messages`, { body }),
+  /** Lampirkan foto bukti agar terlihat penolong dan pengurus. */
+  attach: (id: string, dataUrl: string, kind: 'photo' | 'video' = 'photo') =>
+    api.post<{ attachment: Record<string, unknown> }>(`/alerts/${id}/attachments`, {
+      dataUrl,
+      kind,
+    }),
 }
 
 export const patrolApi = {

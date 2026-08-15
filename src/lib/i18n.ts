@@ -356,6 +356,9 @@ const id = {
   systemResponding: '{name} menuju lokasi',
   photos: 'Foto',
   addPhoto: 'Tambah foto',
+  errAttachType: 'Hanya foto (JPG, PNG, atau WebP) yang bisa dilampirkan.',
+  errAttachTooBig: 'Foto terlalu besar. Coba ambil ulang dengan resolusi lebih kecil.',
+  errAttachTooMany: 'Lampiran pada laporan ini sudah penuh.',
   photoAdded: 'Foto ditambahkan',
   evidence: 'Bukti',
 
@@ -1039,6 +1042,9 @@ const en: Dict = {
   systemResponding: '{name} is responding',
   photos: 'Photos',
   addPhoto: 'Add photo',
+  errAttachType: 'Only photos (JPG, PNG or WebP) can be attached.',
+  errAttachTooBig: 'Photo is too large. Try again at a smaller resolution.',
+  errAttachTooMany: 'This report already has the maximum number of attachments.',
   photoAdded: 'Photo added',
   evidence: 'Evidence',
 

@@ -214,8 +214,21 @@ Status peringatan juga tersimpan di server: "Saya menuju lokasi" dan
 "Tandai selesai" menulis lewat `/api/alerts/:id/ack` dan
 `/api/alerts/:id/close`.
 
+**Foto bukti** juga sudah tersimpan di server lewat
+`POST /api/alerts/:id/attachments`, dengan izin yang sama. Gambar
+dikecilkan di klien (sisi terpanjang 720 px), tetapi batasnya ditegakkan
+di server karena klien bisa diubah siapa saja:
+
+- hanya JPEG, PNG, atau WebP — berkas lain ditolak;
+- maksimal 600 KB per lampiran;
+- maksimal 12 lampiran per laporan.
+
 Yang masih perlu diperhatikan:
 
-- **Foto bukti** (`addAttachment`) masih tersimpan di perangkat saja.
-- **Belum ada penyuntingan atau penghapusan** pesan yang sudah terkirim.
+- **Gambar disimpan sebagai data URL di dalam basis data**, bukan sebagai
+  berkas terpisah. Sederhana dan cukup untuk skala satu RW, tetapi bila
+  jumlah laporan tumbuh besar sebaiknya dipindah ke penyimpanan berkas
+  atau object storage.
+- **Belum ada penyuntingan atau penghapusan** pesan maupun lampiran yang
+  sudah terkirim.
 - Utas dibatasi 500 pesan; yang terlama dibuang saat penuh.
