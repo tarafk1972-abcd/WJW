@@ -613,6 +613,12 @@ const id = {
   dutyPushSilenced: 'Notifikasi diredam {n} menit',
   dutyPushSilencedHint: 'Anda sedang menangani sebuah peringatan.',
   dutyPushResume: 'Aktifkan lagi',
+  privacy: 'Privasi',
+  on: 'Aktif',
+  off: 'Nonaktif',
+  shareNearby: 'Bantu tetangga terdekat',
+  shareNearbyHint:
+    'Posisi terakhir Anda dipakai hanya untuk memanggil orang terdekat saat ada warga menekan tombol darurat. Yang disimpan satu titik terakhir, bukan riwayat perjalanan, dan hangus setelah 15 menit.',
   pushUnsupported: 'Perangkat ini tidak mendukung notifikasi.',
   serverDown: 'Server tidak aktif — memakai data di HP ini saja.',
   consoleLocalOnly:
@@ -1266,6 +1272,12 @@ const en: Dict = {
   dutyPushSilenced: 'Alerts muted for {n} min',
   dutyPushSilencedHint: 'You are handling an alert.',
   dutyPushResume: 'Turn back on',
+  privacy: 'Privacy',
+  on: 'On',
+  off: 'Off',
+  shareNearby: 'Help nearby neighbours',
+  shareNearbyHint:
+    'Your last position is used only to call the closest people when someone raises an alert. One point is kept, never a movement history, and it expires after 15 minutes.',
   pushUnsupported: 'This device does not support notifications.',
   serverDown: 'Server is down — using data on this phone only.',
   consoleLocalOnly:

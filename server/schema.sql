@@ -275,3 +275,4 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL,
   at    INTEGER NOT NULL
 );
+

@@ -2,6 +2,11 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ApiError, communityApi, profileApi } from '../lib/api'
 import { renameCommunity, resetDB, setMemberLanguage } from '../lib/db'
+import {
+  disablePresence,
+  enablePresence,
+  presenceDisabled,
+} from '../lib/presence'
 import { apiMode, mutate } from '../lib/sync'
 import { fmtDate, initials } from '../lib/format'
 import { LANGS } from '../lib/i18n'
@@ -19,6 +24,7 @@ export default function Settings() {
   const [renaming, setRenaming] = useState(false)
   const [newName, setNewName] = useState('')
   const [newCity, setNewCity] = useState('')
+  const [shareOff, setShareOff] = useState(() => presenceDisabled())
 
   if (!me || !community) return null
 
@@ -146,6 +152,38 @@ export default function Settings() {
                 ? `${t('paidUntil')} ${community.paidUntil ? fmtDate(community.paidUntil, lang) : '-'}`
                 : t('expired')}
           </span>
+        </div>
+      </div>
+
+      {/*
+        Berbagi posisi menyangkut privasi warga, jadi harus terlihat dan
+        bisa ditolak — bukan berjalan diam-diam.
+      */}
+      <div className="section-title">{t('privacy')}</div>
+      <div className="card">
+        <div className="row-between">
+          <div className="grow" style={{ paddingRight: 12 }}>
+            <div className="strong" style={{ fontSize: 13.5 }}>
+              {t('shareNearby')}
+            </div>
+            <div className="tiny" style={{ marginTop: 3, lineHeight: 1.5 }}>
+              {t('shareNearbyHint')}
+            </div>
+          </div>
+          <button
+            className={`btn btn-sm ${shareOff ? 'btn-ghost' : 'btn-primary'}`}
+            onClick={async () => {
+              if (shareOff) {
+                enablePresence()
+                setShareOff(false)
+              } else {
+                await disablePresence()
+                setShareOff(true)
+              }
+            }}
+          >
+            {shareOff ? t('off') : t('on')}
+          </button>
         </div>
       </div>
 

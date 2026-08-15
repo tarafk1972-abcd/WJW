@@ -126,3 +126,31 @@ memang tidak pernah keluar dari HP-nya.
 Bila ingin diuji coba lebih awal, sampaikan jelas ke warga bahwa ini
 masih tahap percobaan dan tetap gunakan cara lama (telepon, grup WA)
 sebagai andalan utama.
+
+## Berbagi posisi untuk memanggil warga terdekat
+
+Sejak peringatan darurat memanggil orang di sekitar lokasi, aplikasi
+menyimpan **satu titik posisi terakhir** per anggota di server.
+
+Yang sudah dilakukan untuk membatasi dampaknya:
+
+- hanya satu titik, menimpa yang sebelumnya — bukan riwayat perjalanan;
+- tidak dipakai lagi setelah 15 menit;
+- dikirim paling cepat 3 menit sekali, dan hanya bila orangnya berpindah
+  lebih dari 20 meter;
+- warga bisa mematikannya lewat **Pengaturan → Privasi**, dan titiknya
+  langsung dihapus dari server;
+- posisi tidak pernah dikirim ke sesama warga — hanya dipakai server
+  untuk memutuskan siapa yang dikabari.
+
+Yang **belum** dikerjakan dan perlu diputuskan sebelum dipakai luas:
+
+- **Persetujuan tertulis (UU PDP No. 27/2022).** Lokasi termasuk data
+  pribadi. Perlu pemberitahuan dan persetujuan yang tercatat, bukan hanya
+  tombol di Pengaturan.
+- **Bawaannya aktif.** Saat ini berbagi posisi menyala kecuali dimatikan.
+  Pertimbangkan sebaliknya bila penasihat hukum menyarankan.
+- **Menguras baterai.** `watchPosition` berjalan selama aplikasi terbuka.
+  Perlu diuji lapangan pada HP kelas bawah.
+- **Belum ada penghapusan berkala** atas titik yang sudah kedaluwarsa;
+  saat ini hanya diabaikan, bukan dihapus dari basis data.

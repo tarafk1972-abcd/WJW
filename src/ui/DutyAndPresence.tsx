@@ -1,5 +1,9 @@
 /**
- * Notifikasi darurat bagi satpam yang sedang bertugas.
+ * Dua hal yang berjalan diam-diam di latar:
+ *
+ *   1. Notifikasi darurat otomatis bagi satpam yang sedang bertugas.
+ *   2. Pelaporan posisi terakhir bagi SEMUA peran, agar peringatan
+ *      darurat bisa memanggil warga terdekat — yang belum tentu satpam.
  *
  * Menggantikan `PushPrompt` untuk peran satpam. Tidak ada ajakan dan
  * tidak ada tombol tutup: selama satpam berada di dalam area lingkungan,
@@ -16,6 +20,7 @@ import {
   resumeDutyPush,
   silencedFor,
 } from '../lib/dutyPush'
+import { reportLocation } from '../lib/presence'
 import { useApp } from '../lib/store'
 import { apiMode } from '../lib/sync'
 import { enablePush, pushSupported, registerServiceWorker } from '../lib/pushClient'
@@ -23,7 +28,7 @@ import { Icon } from './Icon'
 
 type State = 'off' | 'on' | 'needsPermission' | 'blocked'
 
-export function DutyPush() {
+export function DutyAndPresence() {
   const { t, me, community } = useApp()
   const [state, setState] = useState<State>('off')
   const [onDuty, setOnDuty] = useState(false)
@@ -32,13 +37,20 @@ export function DutyPush() {
 
   const isSatpam = me?.role === 'satpam'
 
-  // Pantau posisi untuk mengetahui satpam sedang di dalam area atau tidak.
+  /*
+   * Pantau posisi untuk dua hal:
+   *   1. mengetahui satpam sedang di dalam area atau tidak;
+   *   2. melaporkan posisi terakhir, agar warga yang menekan tombol
+   *      darurat bisa memanggil orang-orang terdekatnya.
+   * Berlaku untuk semua peran — tetangga terdekat belum tentu satpam.
+   */
   useEffect(() => {
-    if (!isSatpam || !apiMode()) return
-    void registerServiceWorker()
+    if (!apiMode() || !me) return
+    if (isSatpam) void registerServiceWorker()
 
     const stop = watchLocation((pos) => {
-      setOnDuty(onDutyInArea(me, community, pos))
+      if (isSatpam) setOnDuty(onDutyInArea(me, community, pos))
+      void reportLocation(pos)
     })
     return stop
   }, [isSatpam, me, community])

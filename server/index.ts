@@ -23,6 +23,11 @@ import {
   type MemberRow,
 } from './db.js'
 import {
+  FRESH_MS,
+  nearbyMembers,
+  type NearbyRow,
+} from './nearby.js'
+import {
   activeSchedule,
   distanceMeters,
   normalizeCode,
@@ -911,13 +916,26 @@ app.put('/api/community/area', auth, active, async (c) => {
 /* ================= peringatan darurat ================= */
 
 /** Siapa yang menerima peringatan anggota ini. Tanpa polisi. */
-function alertAudience(me: MemberRow) {
+/**
+ * Siapa saja yang dikabari saat tombol darurat ditekan.
+ *
+ * Selalu: keluarga, teman tepercaya, satpam, dan pengurus.
+ * Ditambah: warga di sekitar lokasi kejadian (lihat server/nearby.ts) —
+ * merekalah yang bisa tiba lebih dulu daripada siapa pun.
+ */
+function alertAudience(
+  me: MemberRow,
+  at: LatLng | null = null,
+  accuracy: number | null = null,
+) {
   const out: {
     id: string
     name: string
     phone: string
     kind: string
     memberId: string | null
+    /** Jarak dari lokasi kejadian, bila orang ini dipanggil karena dekat. */
+    meters?: number
   }[] = []
   const seen = new Set<string>()
   const push = (r: (typeof out)[number]) => {
@@ -957,12 +975,81 @@ function alertAudience(me: MemberRow) {
       memberId: s.id,
     })
 
+  /*
+   * Warga di sekitar lokasi. Satpam sudah masuk lewat daftar di atas,
+   * tetapi jarak mereka tetap dihitung agar yang terdekat terlihat lebih
+   * dulu oleh pengirim.
+   */
+  if (at) {
+    const rows = db
+      .prepare(
+        `SELECT id, name, phone, role, last_lat, last_lng, last_seen_at, last_accuracy
+         FROM members
+         WHERE community_id=? AND status='active' AND id<>?
+           AND last_lat IS NOT NULL AND last_seen_at > ?`,
+      )
+      .all(me.community_id, me.id, now() - FRESH_MS) as NearbyRow[]
+
+    for (const hit of nearbyMembers(at, accuracy, rows)) {
+      push({
+        id: hit.member.id,
+        name: hit.member.name,
+        phone: hit.member.phone,
+        kind: hit.member.role === 'satpam' ? 'guard' : 'neighbour',
+        memberId: hit.member.id,
+        meters: hit.meters,
+      })
+    }
+  }
+
   return out
 }
 
-app.get('/api/alerts/audience', auth, active, (c) =>
-  c.json({ audience: alertAudience(c.get('me')) }),
-)
+/**
+ * Anggota melaporkan posisi terakhirnya.
+ *
+ * Dipakai hanya untuk menentukan siapa yang berada di dekat sebuah
+ * peringatan darurat. Yang disimpan cuma SATU titik terakhir, menimpa
+ * yang sebelumnya — bukan riwayat perjalanan, agar tidak menjadi alat
+ * pelacak pergerakan warga.
+ */
+app.post('/api/me/location', auth, active, async (c) => {
+  const me = c.get('me')
+  const b = (await c.req.json().catch(() => ({}))) as {
+    lat?: number
+    lng?: number
+    accuracy?: number | null
+  }
+  if (typeof b.lat !== 'number' || typeof b.lng !== 'number')
+    return bad(c, 'errRequired')
+  if (Math.abs(b.lat) > 90 || Math.abs(b.lng) > 180) return bad(c, 'errRequired')
+
+  db.prepare(
+    'UPDATE members SET last_lat=?, last_lng=?, last_accuracy=?, last_seen_at=? WHERE id=?',
+  ).run(b.lat, b.lng, b.accuracy ?? null, now(), me.id)
+  return c.json({ ok: true })
+})
+
+/** Anggota menghapus posisi tersimpannya. */
+app.delete('/api/me/location', auth, active, (c) => {
+  db.prepare(
+    'UPDATE members SET last_lat=NULL, last_lng=NULL, last_accuracy=NULL, last_seen_at=NULL WHERE id=?',
+  ).run(c.get('me').id)
+  return c.json({ ok: true })
+})
+
+app.get('/api/alerts/audience', auth, active, (c) => {
+  // Boleh disertai lokasi, agar pengirim melihat siapa yang akan dipanggil
+  // karena berada di dekatnya.
+  const lat = Number(c.req.query('lat'))
+  const lng = Number(c.req.query('lng'))
+  const acc = Number(c.req.query('accuracy'))
+  const at =
+    Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null
+  return c.json({
+    audience: alertAudience(c.get('me'), at, Number.isFinite(acc) ? acc : null),
+  })
+})
 
 app.post('/api/alerts', auth, active, async (c) => {
   const me = c.get('me')
@@ -980,7 +1067,7 @@ app.post('/api/alerts', auth, active, async (c) => {
   const at = b.at ?? null
   const inside = area.length >= 3 && at ? pointInPolygon(at, area) : null
 
-  const audience = alertAudience(me)
+  const audience = alertAudience(me, at, b.accuracy ?? null)
   const id = uid('r_')
   const t = now()
   const snapshot = {
@@ -1017,15 +1104,32 @@ app.post('/api/alerts', auth, active, async (c) => {
 
   audit(me.community_id, me.id, 'alert.raise', `${b.category} → ${audience.length}`)
 
-  // Notifikasi push mendesak ke semua penerima yang punya akun
-  const ids = audience.map((a) => a.memberId).filter((x): x is string => !!x)
-  void pushToMembers(ids, {
-    title: `🆘 DARURAT — ${me.name}`,
-    body: `${me.house}. Buka aplikasi untuk melihat lokasi.`,
-    url: `#/app/reports?id=${id}`,
-    tag: `sos-${id}`,
-    urgent: true,
-  })
+  // Notifikasi push mendesak ke semua penerima yang punya akun.
+  // Tetangga terdekat diberi tahu jaraknya: itu yang menentukan apakah
+  // mereka bisa tiba lebih dulu daripada siapa pun.
+  const dekat = audience.filter((a) => a.memberId && a.meters !== undefined)
+  const jauh = audience.filter((a) => a.memberId && a.meters === undefined)
+
+  void pushToMembers(
+    jauh.map((a) => a.memberId!),
+    {
+      title: `🆘 DARURAT — ${me.name}`,
+      body: `${me.house}. Buka aplikasi untuk melihat lokasi.`,
+      url: `#/app/reports?id=${id}`,
+      tag: `sos-${id}`,
+      urgent: true,
+    },
+  )
+
+  for (const a of dekat) {
+    void pushToMembers([a.memberId!], {
+      title: `🆘 DARURAT ${a.meters} m dari Anda`,
+      body: `${me.name} · ${me.house}. Anda sedang berada paling dekat.`,
+      url: `#/app/reports?id=${id}`,
+      tag: `sos-${id}`,
+      urgent: true,
+    })
+  }
 
   const row = db.prepare('SELECT * FROM reports WHERE id=?').get(id) as Record<
     string,

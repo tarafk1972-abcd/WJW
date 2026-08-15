@@ -37,6 +37,28 @@ mkdirSync(dirname(DB_PATH), { recursive: true })
 export const db = new Database(DB_PATH)
 db.exec(readFileSync(join(HERE, 'schema.sql'), 'utf8'))
 
+/**
+ * Tambahkan kolom yang belum ada pada basis data lama.
+ *
+ * `ALTER TABLE` tidak bisa ditaruh di schema.sql karena akan gagal pada
+ * pemasangan yang kolomnya sudah ada, dan itu menghentikan seluruh boot.
+ */
+function addColumn(table: string, column: string, type: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+  if (cols.some((c) => c.name === column)) return
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
+}
+
+/*
+ * Posisi terakhir yang diketahui, untuk menentukan siapa yang berada di
+ * dekat sebuah peringatan. Hanya satu titik per anggota — bukan riwayat
+ * perjalanan; yang dibutuhkan hanyalah "siapa di dekat sini sekarang".
+ */
+addColumn('members', 'last_lat', 'REAL')
+addColumn('members', 'last_lng', 'REAL')
+addColumn('members', 'last_seen_at', 'INTEGER')
+addColumn('members', 'last_accuracy', 'REAL')
+
 export function uid(prefix = ''): string {
   return prefix + randomBytes(9).toString('base64url')
 }
