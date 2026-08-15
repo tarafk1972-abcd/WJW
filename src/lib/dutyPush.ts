@@ -106,3 +106,41 @@ export async function ensureDutyPush(
   // Izin sudah ada: pasang langganan tanpa bertanya apa pun.
   return (await enablePush()) ? 'on' : 'needsPermission'
 }
+
+/* ---------------- izin tanpa tombol pilihan ---------------- */
+
+/**
+ * Minta izin notifikasi pada sentuhan pertama satpam di layar.
+ *
+ * Peramban hanya mengizinkan permintaan izin selama sebuah gestur
+ * pengguna. Itu aturan browser dan tidak bisa dilewati. Tetapi gestur itu
+ * TIDAK harus berupa tombol "Izinkan" — sentuhan apa pun di dalam
+ * aplikasi sudah memenuhinya.
+ *
+ * Jadi tidak perlu menawarkan pilihan kepada satpam: begitu ia menyentuh
+ * layar untuk keperluan apa pun, izin diminta sekali. Yang tersisa
+ * hanyalah dialog bawaan peramban, yang memang tidak bisa dihilangkan
+ * oleh aplikasi mana pun.
+ *
+ * @returns fungsi pembatal.
+ */
+export function requestPushOnNextTouch(onSettled?: () => void): () => void {
+  if (!pushSupported() || permission() !== 'default') return () => {}
+
+  let done = false
+  const events = ['pointerdown', 'touchstart', 'keydown'] as const
+
+  const handler = () => {
+    if (done) return
+    done = true
+    stop()
+    void enablePush().finally(() => onSettled?.())
+  }
+
+  const stop = () => {
+    for (const e of events) window.removeEventListener(e, handler, true)
+  }
+
+  for (const e of events) window.addEventListener(e, handler, true)
+  return stop
+}

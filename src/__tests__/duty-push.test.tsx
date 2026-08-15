@@ -288,3 +288,81 @@ describe('ronda menandakan sedang bertugas', () => {
     expect(onDutyInArea(satpamAktif, wilayah, { lat: 1, lng: 1 }, false)).toBe(true)
   })
 })
+
+/**
+ * Tidak ada tombol pilihan di HP satpam.
+ *
+ * Peramban mewajibkan gestur pengguna sebelum meminta izin notifikasi —
+ * itu aturan browser. Tetapi gestur itu tidak harus tombol khusus:
+ * sentuhan apa pun sudah memenuhinya, jadi satpam tidak perlu ditawari
+ * apa-apa.
+ */
+describe('izin tanpa tombol pilihan', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.restoreAllMocks()
+  })
+
+  it('meminta izin pada sentuhan pertama, bukan lewat tombol', async () => {
+    const { requestPushOnNextTouch } = await import('../lib/dutyPush')
+    const pc = await import('../lib/pushClient')
+    vi.spyOn(pc, 'pushSupported').mockReturnValue(true)
+    vi.spyOn(pc, 'permission').mockReturnValue('default')
+    const minta = vi.spyOn(pc, 'enablePush').mockResolvedValue(true)
+
+    requestPushOnNextTouch()
+    expect(minta).not.toHaveBeenCalled()
+
+    // Sentuhan biasa di mana pun sudah cukup.
+    window.dispatchEvent(new Event('pointerdown'))
+    expect(minta).toHaveBeenCalledTimes(1)
+  })
+
+  it('hanya meminta sekali, tidak pada setiap sentuhan', async () => {
+    const { requestPushOnNextTouch } = await import('../lib/dutyPush')
+    const pc = await import('../lib/pushClient')
+    vi.spyOn(pc, 'pushSupported').mockReturnValue(true)
+    vi.spyOn(pc, 'permission').mockReturnValue('default')
+    const minta = vi.spyOn(pc, 'enablePush').mockResolvedValue(true)
+
+    requestPushOnNextTouch()
+    window.dispatchEvent(new Event('pointerdown'))
+    window.dispatchEvent(new Event('pointerdown'))
+    window.dispatchEvent(new Event('touchstart'))
+    expect(minta).toHaveBeenCalledTimes(1)
+  })
+
+  it('tidak meminta apa-apa bila izin sudah pernah ditolak', async () => {
+    const { requestPushOnNextTouch } = await import('../lib/dutyPush')
+    const pc = await import('../lib/pushClient')
+    vi.spyOn(pc, 'pushSupported').mockReturnValue(true)
+    vi.spyOn(pc, 'permission').mockReturnValue('denied')
+    const minta = vi.spyOn(pc, 'enablePush').mockResolvedValue(false)
+
+    requestPushOnNextTouch()
+    window.dispatchEvent(new Event('pointerdown'))
+    expect(minta).not.toHaveBeenCalled()
+  })
+
+  it('berhenti mendengarkan setelah dibatalkan', async () => {
+    const { requestPushOnNextTouch } = await import('../lib/dutyPush')
+    const pc = await import('../lib/pushClient')
+    vi.spyOn(pc, 'pushSupported').mockReturnValue(true)
+    vi.spyOn(pc, 'permission').mockReturnValue('default')
+    const minta = vi.spyOn(pc, 'enablePush').mockResolvedValue(true)
+
+    const batal = requestPushOnNextTouch()
+    batal()
+    window.dispatchEvent(new Event('pointerdown'))
+    expect(minta).not.toHaveBeenCalled()
+  })
+
+  it('komponen satpam tidak lagi memuat tombol apa pun untuk izin', async () => {
+    const { readFileSync } = await import('node:fs')
+    const kode = readFileSync('src/ui/DutyAndPresence.tsx', 'utf8')
+    // Tombol "Izinkan" dan pemanggilan langsung enablePush sudah tidak ada.
+    expect(kode).not.toContain('dutyPushActivate')
+    expect(kode).not.toContain('enablePush')
+    expect(kode).toContain('requestPushOnNextTouch')
+  })
+})

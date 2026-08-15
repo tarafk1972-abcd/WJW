@@ -17,13 +17,14 @@ import { watchLocation } from '../lib/capture'
 import {
   ensureDutyPush,
   onDutyInArea,
+  requestPushOnNextTouch,
   resumeDutyPush,
   silencedFor,
 } from '../lib/dutyPush'
 import { rememberRole, shareLocationForEmergency } from '../lib/presence'
 import { useApp } from '../lib/store'
 import { apiMode } from '../lib/sync'
-import { enablePush, pushSupported, registerServiceWorker } from '../lib/pushClient'
+import { pushSupported, registerServiceWorker } from '../lib/pushClient'
 import { Icon } from './Icon'
 
 type State = 'off' | 'on' | 'needsPermission' | 'blocked'
@@ -32,7 +33,6 @@ export function DutyAndPresence() {
   const { t, me, community, locationWanted, db } = useApp()
   const [state, setState] = useState<State>('off')
   const [onDuty, setOnDuty] = useState(false)
-  const [busy, setBusy] = useState(false)
   const [silenced, setSilenced] = useState(0)
 
   const isSatpam = me?.role === 'satpam'
@@ -99,6 +99,17 @@ export function DutyAndPresence() {
       alive = false
     }
   }, [isSatpam, onDuty, silenced])
+
+  /*
+   * Bertugas tetapi izin peramban belum ada: minta izin pada sentuhan
+   * pertama, tanpa menawarkan pilihan apa pun kepada satpam.
+   */
+  useEffect(() => {
+    if (!isSatpam || !onDuty || state !== 'needsPermission') return
+    return requestPushOnNextTouch(() => {
+      void ensureDutyPush(true).then(setState)
+    })
+  }, [isSatpam, onDuty, state])
 
   // Peredaman berakhir sendiri; periksa berkala agar kembali menyala.
   useEffect(() => {
@@ -173,30 +184,23 @@ export function DutyAndPresence() {
     )
   }
 
-  // Browser menahan izin: satu sentuhan tetap diperlukan, tetapi
-  // disampaikan sebagai kewajiban tugas, bukan tawaran.
+  /*
+   * Peramban belum memberi izin.
+   *
+   * Tidak ada tombol pilihan di sini: izin diminta sendiri pada sentuhan
+   * pertama satpam di layar (lihat effect di atas). Yang ditampilkan
+   * hanya keterangan, supaya satpam tahu mengapa dialog peramban muncul.
+   */
   if (state === 'needsPermission') {
     return (
       <div className="push-prompt">
-        <Icon name="bell" size={17} color="var(--danger)" />
+        <Icon name="bell" size={17} color="var(--warn)" />
         <div className="grow">
           <div className="strong" style={{ fontSize: 13.5 }}>
-            {t('dutyPushRequired')}
+            {t('dutyPushArming')}
           </div>
-          <div className="tiny">{t('dutyPushRequiredHint')}</div>
+          <div className="tiny">{t('dutyPushArmingHint')}</div>
         </div>
-        <button
-          className="btn btn-sm btn-primary"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true)
-            const ok = await enablePush()
-            setBusy(false)
-            setState(ok ? 'on' : 'blocked')
-          }}
-        >
-          {busy ? '…' : t('dutyPushActivate')}
-        </button>
       </div>
     )
   }

@@ -604,6 +604,9 @@ const id = {
   dutyPushOn: 'Notifikasi darurat aktif — Anda sedang bertugas',
   dutyPushOnHint:
     'Aktif otomatis selama Anda berada di dalam area. Dapat diredam saat Anda merespons peringatan.',
+  dutyPushArming: 'Menyiapkan notifikasi darurat…',
+  dutyPushArmingHint:
+    'Anda sedang bertugas. Peramban akan menanyakan izin sebentar lagi — pilih Izinkan agar peringatan warga terdengar.',
   dutyPushRequired: 'Izinkan notifikasi darurat',
   dutyPushRequiredHint:
     'Anda sedang bertugas di dalam area. Peringatan warga tidak akan terdengar sebelum izin diberikan.',
@@ -1275,6 +1278,9 @@ const en: Dict = {
   dutyPushOn: 'Emergency alerts on — you are on duty',
   dutyPushOnHint:
     'Enabled automatically while you are inside the area. Can be muted while you respond to an alert.',
+  dutyPushArming: 'Preparing emergency alerts…',
+  dutyPushArmingHint:
+    'You are on duty. The browser will ask for permission shortly — choose Allow so residents\u2019 alerts can sound.',
   dutyPushRequired: 'Allow emergency notifications',
   dutyPushRequiredHint:
     'You are on duty inside the area. Residents\u2019 alerts will not sound until permission is granted.',
