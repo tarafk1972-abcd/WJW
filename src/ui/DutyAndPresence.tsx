@@ -20,7 +20,7 @@ import {
   resumeDutyPush,
   silencedFor,
 } from '../lib/dutyPush'
-import { shareLocationForEmergency } from '../lib/presence'
+import { rememberRole, shareLocationForEmergency } from '../lib/presence'
 import { useApp } from '../lib/store'
 import { apiMode } from '../lib/sync'
 import { enablePush, pushSupported, registerServiceWorker } from '../lib/pushClient'
@@ -29,13 +29,35 @@ import { Icon } from './Icon'
 type State = 'off' | 'on' | 'needsPermission' | 'blocked'
 
 export function DutyAndPresence() {
-  const { t, me, community, locationWanted } = useApp()
+  const { t, me, community, locationWanted, db } = useApp()
   const [state, setState] = useState<State>('off')
   const [onDuty, setOnDuty] = useState(false)
   const [busy, setBusy] = useState(false)
   const [silenced, setSilenced] = useState(0)
 
   const isSatpam = me?.role === 'satpam'
+
+  /*
+   * Ronda yang belum ditutup = satpam menyatakan dirinya sedang bertugas.
+   * Dipakai bersama posisi GPS, agar notifikasi tidak padam ketika sinyal
+   * hilang atau ia sejenak melewati batas area.
+   */
+  const patrolling = !!me && db.patrols.some((p) => !p.endedAt && p.satpamId === me.id)
+
+  // Catat peran, supaya jalur tugas tidak pernah terblokir oleh pilihan
+  // privasi yang hanya berlaku bagi warga.
+  useEffect(() => {
+    rememberRole(me?.role)
+  }, [me?.role])
+
+  /*
+   * Ronda berjalan langsung menandai bertugas, tanpa menunggu GPS.
+   * Ditulis lewat effect, bukan saat render, agar tidak memicu
+   * pembaruan berulang.
+   */
+  useEffect(() => {
+    if (patrolling) setOnDuty(true)
+  }, [patrolling])
 
   /*
    * Pantau posisi HANYA untuk satpam, dan hanya demi mengetahui ia
@@ -47,10 +69,10 @@ export function DutyAndPresence() {
     void registerServiceWorker()
 
     const stop = watchLocation((pos) => {
-      setOnDuty(onDutyInArea(me, community, pos))
+      setOnDuty(onDutyInArea(me, community, pos, patrolling))
     })
     return stop
-  }, [isSatpam, me, community])
+  }, [isSatpam, me, community, patrolling])
 
   /*
    * Kirim posisi hanya ketika sedang ada darurat.
@@ -97,7 +119,7 @@ export function DutyAndPresence() {
    * satpam mengira notifikasinya aktif padahal tidak ada apa pun yang
    * menyalakannya.
    */
-  if (!community || community.area.length < 3) {
+  if (!patrolling && (!community || community.area.length < 3)) {
     return (
       <div className="push-prompt">
         <Icon name="alert" size={17} color="var(--warn)" />

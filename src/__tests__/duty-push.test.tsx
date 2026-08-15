@@ -193,3 +193,98 @@ describe('PushPrompt menunggu peran diketahui', () => {
     expect(kode).toContain('if (!roleKnown || isSatpam) return null')
   })
 })
+
+/**
+ * Satpam tidak boleh punya pilihan yang bisa melumpuhkan tugasnya.
+ */
+describe('satpam tanpa opsi privasi', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    invalidateCache()
+    window.location.hash = '#/'
+  })
+
+  function masuk(role: Member['role']) {
+    const f = register({
+      name: 'Satpam 1',
+      phone: '0811000055',
+      email: 'sat@x.id',
+      password: 'secret1',
+      house: 'Pos 1',
+      language: 'id',
+      mode: 'create',
+      communityName: 'The Regent',
+    })
+    if (!f.ok) throw new Error('setup gagal')
+    const db = loadDB()
+    db.members.find((m) => m.id === f.member.id)!.role = role
+    saveDB(db)
+    return f
+  }
+
+  it('tidak menampilkan panel Privasi di Pengaturan satpam', async () => {
+    masuk('satpam')
+    window.location.hash = '#/app/settings'
+    render(<App />)
+    await waitFor(() => expect(document.body.textContent).toContain('Pengaturan'))
+
+    const teks = document.body.textContent ?? ''
+    expect(teks).not.toContain('Bantu tetangga terdekat')
+    expect(teks).not.toContain('Letak rumah')
+    expect(teks).not.toContain('PRIVASI')
+  })
+
+  it('tetap menampilkannya untuk warga biasa', async () => {
+    masuk('warga')
+    window.location.hash = '#/app/settings'
+    render(<App />)
+    await waitFor(() =>
+      expect(document.body.textContent).toContain('Bantu tetangga terdekat'),
+    )
+  })
+
+  it('pilihan privasi lama tidak melumpuhkan jalur tugas satpam', async () => {
+    const { presenceDisabled, rememberRole } = await import('../lib/presence')
+
+    // Seseorang pernah menekan "Nonaktif" sebagai warga…
+    localStorage.setItem('wjw.presence.off', '1')
+    rememberRole('warga')
+    expect(presenceDisabled()).toBe(true)
+
+    // …lalu diangkat menjadi satpam. Lokasi kini alat kerja, bukan pilihan.
+    rememberRole('satpam')
+    expect(presenceDisabled()).toBe(false)
+  })
+})
+
+/**
+ * Ronda yang sedang berjalan adalah pernyataan "saya bertugas", dan lebih
+ * dapat dipercaya daripada pembacaan GPS sesaat.
+ */
+describe('ronda menandakan sedang bertugas', () => {
+  const satpamAktif = { role: 'satpam', status: 'active' } as Member
+  const wilayah = { area: KOTAK } as Community
+
+  it('bertugas selama ronda berjalan, walau berada di luar area', () => {
+    expect(onDutyInArea(satpamAktif, wilayah, { lat: 9, lng: 9 }, true)).toBe(true)
+  })
+
+  it('bertugas selama ronda berjalan, walau GPS belum memberi posisi', () => {
+    expect(onDutyInArea(satpamAktif, wilayah, null, true)).toBe(true)
+  })
+
+  it('bertugas selama ronda berjalan, walau area belum digambar', () => {
+    const tanpaArea = { area: [] } as unknown as Community
+    expect(onDutyInArea(satpamAktif, tanpaArea, null, true)).toBe(true)
+  })
+
+  it('ronda tidak memberi hak itu kepada peran lain', () => {
+    const warga = { role: 'warga', status: 'active' } as Member
+    expect(onDutyInArea(warga, wilayah, { lat: 1, lng: 1 }, true)).toBe(false)
+  })
+
+  it('tanpa ronda, tetap bergantung pada keberadaan di area', () => {
+    expect(onDutyInArea(satpamAktif, wilayah, { lat: 9, lng: 9 }, false)).toBe(false)
+    expect(onDutyInArea(satpamAktif, wilayah, { lat: 1, lng: 1 }, false)).toBe(true)
+  })
+})

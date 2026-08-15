@@ -38,8 +38,20 @@ export function onDutyInArea(
   me: Member | null,
   community: Community | null,
   at: { lat: number; lng: number } | null,
+  /** Satpam ini sedang menjalankan ronda yang belum ditutup. */
+  patrolling = false,
 ): boolean {
   if (!me || me.role !== 'satpam' || me.status !== 'active') return false
+
+  /*
+   * Ronda yang sedang berjalan adalah pernyataan tegas "saya bertugas".
+   * Itu lebih dapat dipercaya daripada pembacaan GPS: satpam yang sedang
+   * berkeliling bisa saja sejenak melewati batas area, atau sinyalnya
+   * hilang di antara bangunan. Selama rondanya belum ditutup, notifikasi
+   * tidak boleh padam.
+   */
+  if (patrolling) return true
+
   if (!community || community.area.length < 3) return false
   if (!at) return false
   return pointInPolygon(at, community.area)

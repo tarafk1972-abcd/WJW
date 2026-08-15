@@ -38,9 +38,29 @@ const OPT_OUT_KEY = 'wjw.presence.off'
 let lastSentAt = 0
 let sending = false
 
-/** Apakah warga mematikan bantuan lokasi darurat? */
+/**
+ * Apakah warga mematikan bantuan lokasi darurat?
+ *
+ * Tidak pernah berlaku bagi satpam: bagi mereka lokasi adalah alat kerja,
+ * bukan pilihan. Penyimpanan ini bisa saja berisi '1' dari sebelum
+ * seseorang diangkat menjadi satpam — atau dari versi lama yang sempat
+ * menawarkan tombolnya — dan itu tidak boleh melumpuhkan jalur tugasnya.
+ */
 export function presenceDisabled(): boolean {
+  if (isGuard()) return false
   return localStorage.getItem(OPT_OUT_KEY) === '1'
+}
+
+/** Peran anggota pada perangkat ini, dicatat saat sinkronisasi. */
+const ROLE_KEY = 'wjw.role.v1'
+
+export function rememberRole(role: string | null | undefined): void {
+  if (role) localStorage.setItem(ROLE_KEY, role)
+  else localStorage.removeItem(ROLE_KEY)
+}
+
+function isGuard(): boolean {
+  return localStorage.getItem(ROLE_KEY) === 'satpam'
 }
 
 /** Matikan, sekaligus hapus titik yang mungkin masih tersimpan. */

@@ -19,6 +19,7 @@ import { roleChip, roleKey } from '../lib/meta'
 
 export default function Settings() {
   const { me, community, t, lang, plan, signOut, isAdmin, refresh, reload } = useApp()
+  const isSatpam = me?.role === 'satpam'
   const nav = useNavigate()
   const toast = useToast()
   // ganti nama lingkungan (hanya admin)
@@ -160,7 +161,15 @@ export default function Settings() {
       {/*
         Berbagi posisi menyangkut privasi warga, jadi harus terlihat dan
         bisa ditolak — bukan berjalan diam-diam.
+
+        TIDAK ditampilkan kepada satpam. Bagi mereka lokasi dan notifikasi
+        darurat adalah alat kerja, bukan pilihan: satu ketukan "Nonaktif"
+        akan melumpuhkan seluruh jalur peringatan pada orang yang justru
+        ditugaskan menerimanya. Rumah pun tidak relevan — satpam dipanggil
+        karena sedang berjaga, bukan karena tempat tinggalnya.
       */}
+      {!isSatpam && (
+        <>
       <div className="section-title">{t('privacy')}</div>
       <div className="card">
         <div className="row-between">
@@ -221,6 +230,8 @@ export default function Settings() {
           </>
         )}
       </div>
+        </>
+      )}
 
       <div className="section-title">{t('helpSupport')}</div>
       <button className="list-link" onClick={() => nav('/app/support')}>
