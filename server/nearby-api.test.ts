@@ -5,6 +5,7 @@
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join as pathJoin } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 let app: { fetch: (r: Request) => Response | Promise<Response> }
@@ -266,31 +267,33 @@ describe('letak rumah', () => {
     expect(entri!.basis).toBe('home')
   })
 
-  it('titik malam menggantikan titik pendaftaran yang kurang tepat', async () => {
-    const m = await anggota(null, 'Uji Malam')
+  it('warga bisa memperbaiki titik yang meleset saat mendaftar', async () => {
+    const m = await anggota(null, 'Uji Perbaiki')
     const { db } = await import('./db.js')
 
+    // GPS buruk saat mendaftar.
     await call(
       'POST',
       '/api/me/home',
       { ...utara(30), accuracy: 60, source: 'register' },
       m.token,
     )
+    // Warga menandainya sendiri kemudian.
     await call(
       'POST',
       '/api/me/home',
-      { ...utara(10), accuracy: 8, source: 'night' },
+      { ...utara(10), accuracy: 8, source: 'manual' },
       m.token,
     )
 
     const row = db
       .prepare('SELECT home_accuracy, home_source FROM members WHERE id=?')
       .get(m.id) as { home_accuracy: number; home_source: string }
-    expect(row.home_source).toBe('night')
+    expect(row.home_source).toBe('manual')
     expect(row.home_accuracy).toBe(8)
   })
 
-  it('titik yang ditandai warga sendiri tidak tergeser pembacaan otomatis', async () => {
+  it('titik yang ditandai warga sendiri tidak tergeser pendaftaran ulang', async () => {
     const m = await anggota(null, 'Uji Manual')
     const { db } = await import('./db.js')
 
@@ -300,10 +303,11 @@ describe('letak rumah', () => {
       { ...utara(5), accuracy: 4, source: 'manual' },
       m.token,
     )
+    // Mendaftar ulang dari tempat lain tidak boleh menggeser titik itu.
     await call(
       'POST',
       '/api/me/home',
-      { ...utara(90), accuracy: 3, source: 'night' },
+      { ...utara(90), accuracy: 3, source: 'register' },
       m.token,
     )
 
@@ -311,6 +315,16 @@ describe('letak rumah', () => {
       .prepare('SELECT home_source FROM members WHERE id=?')
       .get(m.id) as { home_source: string }
     expect(row.home_source).toBe('manual')
+  })
+
+  it('rumah dicatat sekali saja — tidak ada pembacaan berkala', () => {
+    const kode = readFileSync('src/lib/presence.ts', 'utf8')
+    // Jalur penghalusan tiap malam sudah dibuang; hanya tersisa dua
+    // pemicu, keduanya atas tindakan pengguna.
+    expect(kode).not.toContain('night')
+    expect(kode).not.toContain('setInterval')
+    expect(kode).toContain('markHomeOnRegister')
+    expect(kode).toContain('setHomeManually')
   })
 
   it('warga bisa menghapus letak rumahnya', async () => {

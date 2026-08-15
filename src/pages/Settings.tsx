@@ -6,6 +6,7 @@ import {
   disablePresence,
   enablePresence,
   presenceDisabled,
+  setHomeManually,
 } from '../lib/presence'
 import { apiMode, mutate } from '../lib/sync'
 import { fmtDate, initials } from '../lib/format'
@@ -25,6 +26,7 @@ export default function Settings() {
   const [newName, setNewName] = useState('')
   const [newCity, setNewCity] = useState('')
   const [shareOff, setShareOff] = useState(() => presenceDisabled())
+  const [homeBusy, setHomeBusy] = useState(false)
 
   if (!me || !community) return null
 
@@ -185,6 +187,39 @@ export default function Settings() {
             {shareOff ? t('off') : t('on')}
           </button>
         </div>
+
+        {/*
+          Letak rumah dicatat sekali saat mendaftar. Bila GPS sedang
+          buruk waktu itu, inilah satu-satunya cara memperbaikinya —
+          tidak ada pembacaan ulang otomatis.
+        */}
+        {!shareOff && (
+          <>
+            <div className="divider" />
+            <div className="row-between">
+              <div className="grow" style={{ paddingRight: 12 }}>
+                <div className="strong" style={{ fontSize: 13.5 }}>
+                  {t('markHome')}
+                </div>
+                <div className="tiny" style={{ marginTop: 3, lineHeight: 1.5 }}>
+                  {t('markHomeHint')}
+                </div>
+              </div>
+              <button
+                className="btn btn-sm btn-ghost"
+                disabled={homeBusy}
+                onClick={async () => {
+                  setHomeBusy(true)
+                  const ok = await setHomeManually()
+                  setHomeBusy(false)
+                  toast(ok ? t('homeMarked') : t('homeFailed'), ok ? 'ok' : 'err')
+                }}
+              >
+                {homeBusy ? '…' : t('markHomeNow')}
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="section-title">{t('helpSupport')}</div>

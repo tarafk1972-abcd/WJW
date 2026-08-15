@@ -1058,13 +1058,13 @@ app.post('/api/me/location', auth, active, async (c) => {
 /**
  * Menandai letak rumah warga.
  *
- * Dicatat sekali saat mendaftar, lalu diperhalus pada kesempatan
- * berikutnya ketika warga membuka aplikasi larut malam — saat itu ia
- * hampir pasti sedang di rumah, sehingga titiknya lebih tepat.
+ * Dicatat SEKALI saat mendaftar. Rumah tidak berpindah, jadi satu titik
+ * cukup untuk selamanya: inilah yang membuat warga tetap terhitung
+ * sebagai tetangga terdekat walaupun aplikasinya tertutup, tanpa perlu
+ * melacak pergerakannya sama sekali.
  *
- * Rumah tidak berpindah, jadi satu titik ini cukup untuk selamanya: ia
- * membuat warga tetap terhitung sebagai tetangga terdekat walaupun
- * aplikasinya tertutup, tanpa perlu melacak pergerakannya.
+ * Bila titiknya meleset — mis. GPS sedang buruk saat mendaftar — warga
+ * bisa menandainya ulang sendiri ('manual').
  */
 app.post('/api/me/home', auth, active, async (c) => {
   const me = c.get('me')
@@ -1078,28 +1078,18 @@ app.post('/api/me/home', auth, active, async (c) => {
     return bad(c, 'errRequired')
   if (Math.abs(b.lat) > 90 || Math.abs(b.lng) > 180) return bad(c, 'errRequired')
 
-  const source = ['register', 'night', 'manual'].includes(b.source ?? '')
-    ? b.source!
-    : 'manual'
+  const source = b.source === 'register' ? 'register' : 'manual'
 
   const lama = db
-    .prepare('SELECT home_accuracy, home_source FROM members WHERE id=?')
-    .get(me.id) as { home_accuracy: number | null; home_source: string | null }
+    .prepare('SELECT home_source FROM members WHERE id=?')
+    .get(me.id) as { home_source: string | null } | undefined
 
   /*
-   * Jangan menimpa titik yang lebih baik dengan yang lebih buruk.
-   * Titik yang ditandai warga sendiri ('manual') paling dipercaya dan
-   * tidak boleh tergeser oleh pembacaan otomatis.
+   * Titik yang ditandai warga sendiri tidak boleh tergeser oleh
+   * pembacaan otomatis saat mendaftar — mis. bila ia mendaftar ulang di
+   * perangkat baru dari tempat lain.
    */
   if (lama?.home_source === 'manual' && source !== 'manual')
-    return c.json({ ok: true, kept: true })
-
-  const akurasiBaru = b.accuracy ?? 9999
-  if (
-    lama?.home_source === 'night' &&
-    source === 'register' &&
-    (lama.home_accuracy ?? 9999) <= akurasiBaru
-  )
     return c.json({ ok: true, kept: true })
 
   db.prepare(

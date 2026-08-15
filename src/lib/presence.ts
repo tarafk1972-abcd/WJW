@@ -97,41 +97,23 @@ export function resetPresenceState(): void {
 
 /* ---------------- letak rumah ---------------- */
 
-const HOME_KEY = 'wjw.home.lastTry'
-
-/** Jam yang dianggap "warga hampir pasti sedang di rumah". */
-const NIGHT_FROM = 1
-const NIGHT_TO = 5
-
 /**
  * Catat letak rumah saat warga baru mendaftar.
  *
- * Dipanggil tepat setelah pendaftaran berhasil, ketika warga biasanya
- * memang sedang berada di rumahnya.
+ * Dipanggil sekali, tepat setelah pendaftaran berhasil, ketika warga
+ * biasanya memang sedang berada di rumahnya. Rumah tidak berpindah, jadi
+ * satu titik ini cukup — tidak ada pembacaan ulang berkala.
  */
 export async function markHomeOnRegister(): Promise<boolean> {
   return sendHome('register')
 }
 
 /**
- * Perhalus letak rumah bila sekarang larut malam.
+ * Warga menandai rumahnya sendiri.
  *
- * Aman dipanggil sesering apa pun: hanya berbuat sesuatu paling banyak
- * sekali sehari, dan hanya pada rentang jam malam.
+ * Satu-satunya cara memperbaiki titik yang meleset, mis. karena GPS
+ * sedang buruk saat mendaftar.
  */
-export async function refineHomeAtNight(now = new Date()): Promise<boolean> {
-  const jam = now.getHours()
-  if (jam < NIGHT_FROM || jam >= NIGHT_TO) return false
-
-  // Sekali sehari saja.
-  const hariIni = now.toISOString().slice(0, 10)
-  if (localStorage.getItem(HOME_KEY) === hariIni) return false
-  localStorage.setItem(HOME_KEY, hariIni)
-
-  return sendHome('night')
-}
-
-/** Warga menandai rumahnya sendiri — paling dipercaya. */
 export async function setHomeManually(): Promise<boolean> {
   return sendHome('manual')
 }
@@ -144,7 +126,7 @@ export async function forgetHome(): Promise<void> {
   }
 }
 
-async function sendHome(source: 'register' | 'night' | 'manual'): Promise<boolean> {
+async function sendHome(source: 'register' | 'manual'): Promise<boolean> {
   if (presenceDisabled()) return false
   try {
     const pos = await getFix()

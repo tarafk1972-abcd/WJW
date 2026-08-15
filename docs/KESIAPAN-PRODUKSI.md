@@ -158,16 +158,16 @@ Bila saat darurat tidak ada posisi terkini (aplikasinya tertutup),
 jaraknya dihitung dari rumah itu. Dengan begitu warga tetap terpanggil
 sebagai tetangga terdekat.
 
-Titik rumah dicatat:
+Titik rumah dicatat **sekali saja, saat mendaftar** — warga biasanya
+sedang di rumahnya ketika itu.
 
-1. **saat mendaftar** — warga biasanya sedang di rumahnya;
-2. **diperhalus otomatis** pada kesempatan pertama aplikasi dibuka antara
-   pukul 01.00–05.00, ketika warga hampir pasti sedang di rumah;
-3. **manual** bila warga menandainya sendiri — ini yang paling dipercaya
-   dan tidak akan tergeser pembacaan otomatis.
+Bila titiknya meleset (mis. GPS buruk waktu mendaftar), warga
+memperbaikinya lewat **Pengaturan → Privasi → Letak rumah → Tandai di
+sini**. Titik yang ditandai sendiri tidak akan tergeser oleh pencatatan
+otomatis.
 
-Rumah tidak berpindah, jadi satu titik cukup: tidak ada pelacakan
-pergerakan sama sekali.
+Rumah tidak berpindah, jadi satu titik cukup: tidak ada pembacaan ulang
+berkala dan tidak ada pelacakan pergerakan sama sekali.
 
 ### Batas teknis yang tidak bisa diatasi
 

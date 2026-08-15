@@ -619,6 +619,12 @@ const id = {
   shareNearby: 'Bantu tetangga terdekat',
   shareNearbyHint:
     'Lokasi Anda hanya diambil saat ada warga menekan tombol darurat, untuk memanggil orang terdekat. Di luar keadaan darurat aplikasi tidak menyentuh GPS sama sekali, dan titiknya hangus setelah 10 menit.',
+  markHome: 'Letak rumah',
+  markHomeHint:
+    'Dicatat sekali saat Anda mendaftar. Dipakai agar Anda tetap terpanggil sebagai tetangga terdekat walau aplikasi tertutup. Perbarui bila letaknya meleset.',
+  markHomeNow: 'Tandai di sini',
+  homeMarked: 'Letak rumah tersimpan.',
+  homeFailed: 'Gagal membaca lokasi. Coba di luar ruangan.',
   pushUnsupported: 'Perangkat ini tidak mendukung notifikasi.',
   serverDown: 'Server tidak aktif — memakai data di HP ini saja.',
   consoleLocalOnly:
@@ -1278,6 +1284,12 @@ const en: Dict = {
   shareNearby: 'Help nearby neighbours',
   shareNearbyHint:
     'Your location is read only when someone raises an alert, to call the closest people. Outside an emergency the app never touches GPS, and the point expires after 10 minutes.',
+  markHome: 'Home location',
+  markHomeHint:
+    'Recorded once when you registered. It keeps you reachable as a nearby neighbour even with the app closed. Update it if the point is off.',
+  markHomeNow: 'Set to here',
+  homeMarked: 'Home location saved.',
+  homeFailed: 'Could not read your location. Try outdoors.',
   pushUnsupported: 'This device does not support notifications.',
   serverDown: 'Server is down — using data on this phone only.',
   consoleLocalOnly:
