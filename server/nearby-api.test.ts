@@ -226,3 +226,108 @@ describe('kapan lokasi diminta', () => {
     expect(st.body.locationWanted).toBe(false)
   })
 })
+
+/**
+ * Inti permintaan: warga yang aplikasinya TERTUTUP tetap terhitung
+ * sebagai tetangga terdekat, berkat letak rumah yang dicatat sekali.
+ */
+describe('letak rumah', () => {
+  it('warga tanpa posisi terkini tetap dipanggil lewat rumahnya', async () => {
+    const pelapor = await anggota(null, 'Pelapor Rumah')
+    const { db } = await import('./db.js')
+    const tetangga = await anggota(pelapor.communityId, 'Tetangga Tidur')
+    db.prepare("UPDATE members SET status='active' WHERE id=?").run(tetangga.id)
+
+    // Saat mendaftar, rumahnya tercatat.
+    await call(
+      'POST',
+      '/api/me/home',
+      { ...utara(12), accuracy: 8, source: 'register' },
+      tetangga.token,
+    )
+    // Aplikasinya lalu ditutup: tidak ada posisi terkini sama sekali.
+    const row = db
+      .prepare('SELECT last_lat FROM members WHERE id=?')
+      .get(tetangga.id) as { last_lat: number | null }
+    expect(row.last_lat).toBeNull()
+
+    const r = await call(
+      'POST',
+      '/api/alerts',
+      { category: 'other', at: PUSAT, accuracy: 5 },
+      pelapor.token,
+    )
+    const penerima = r.body.report.recipients as {
+      memberId: string
+      basis?: string
+    }[]
+    const entri = penerima.find((p) => p.memberId === tetangga.id)
+    expect(entri).toBeTruthy()
+    expect(entri!.basis).toBe('home')
+  })
+
+  it('titik malam menggantikan titik pendaftaran yang kurang tepat', async () => {
+    const m = await anggota(null, 'Uji Malam')
+    const { db } = await import('./db.js')
+
+    await call(
+      'POST',
+      '/api/me/home',
+      { ...utara(30), accuracy: 60, source: 'register' },
+      m.token,
+    )
+    await call(
+      'POST',
+      '/api/me/home',
+      { ...utara(10), accuracy: 8, source: 'night' },
+      m.token,
+    )
+
+    const row = db
+      .prepare('SELECT home_accuracy, home_source FROM members WHERE id=?')
+      .get(m.id) as { home_accuracy: number; home_source: string }
+    expect(row.home_source).toBe('night')
+    expect(row.home_accuracy).toBe(8)
+  })
+
+  it('titik yang ditandai warga sendiri tidak tergeser pembacaan otomatis', async () => {
+    const m = await anggota(null, 'Uji Manual')
+    const { db } = await import('./db.js')
+
+    await call(
+      'POST',
+      '/api/me/home',
+      { ...utara(5), accuracy: 4, source: 'manual' },
+      m.token,
+    )
+    await call(
+      'POST',
+      '/api/me/home',
+      { ...utara(90), accuracy: 3, source: 'night' },
+      m.token,
+    )
+
+    const row = db
+      .prepare('SELECT home_source FROM members WHERE id=?')
+      .get(m.id) as { home_source: string }
+    expect(row.home_source).toBe('manual')
+  })
+
+  it('warga bisa menghapus letak rumahnya', async () => {
+    const m = await anggota(null, 'Uji Hapus Rumah')
+    const { db } = await import('./db.js')
+    await call('POST', '/api/me/home', { ...PUSAT, accuracy: 5 }, m.token)
+    await call('DELETE', '/api/me/home', undefined, m.token)
+
+    const row = db.prepare('SELECT home_lat FROM members WHERE id=?').get(m.id) as {
+      home_lat: number | null
+    }
+    expect(row.home_lat).toBeNull()
+  })
+
+  it('menolak koordinat rumah yang tidak masuk akal', async () => {
+    const m = await anggota(null, 'Uji Koordinat Rumah')
+    const r = await call('POST', '/api/me/home', { lat: 999, lng: 0 }, m.token)
+    expect(r.status).toBe(400)
+  })
+})

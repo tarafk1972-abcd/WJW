@@ -151,14 +151,44 @@ Pembatas lain:
 - posisi tidak pernah dikirim ke sesama warga — hanya dipakai server
   untuk memutuskan siapa yang dikabari.
 
-### Batas yang perlu diketahui
+### Letak rumah — agar aplikasi tertutup tetap terhitung
 
-**Aplikasi harus terbuka.** Bila aplikasi warga tertutup, langkah 3 tidak
-berjalan dan ia tidak terhitung sebagai tetangga terdekat. Notifikasi
-push tidak bisa menutupi ini: peramban tidak mengizinkan service worker
-menyentuh GPS. Karena itu satpam dan pengurus tetap dikabari tanpa
-bergantung pada jarak — jalur itu tidak boleh ikut bergantung pada
-keberadaan lokasi.
+Selain posisi terkini, setiap warga punya **satu titik letak rumah**.
+Bila saat darurat tidak ada posisi terkini (aplikasinya tertutup),
+jaraknya dihitung dari rumah itu. Dengan begitu warga tetap terpanggil
+sebagai tetangga terdekat.
+
+Titik rumah dicatat:
+
+1. **saat mendaftar** — warga biasanya sedang di rumahnya;
+2. **diperhalus otomatis** pada kesempatan pertama aplikasi dibuka antara
+   pukul 01.00–05.00, ketika warga hampir pasti sedang di rumah;
+3. **manual** bila warga menandainya sendiri — ini yang paling dipercaya
+   dan tidak akan tergeser pembacaan otomatis.
+
+Rumah tidak berpindah, jadi satu titik cukup: tidak ada pelacakan
+pergerakan sama sekali.
+
+### Batas teknis yang tidak bisa diatasi
+
+**Aplikasi tidak bisa mengambil lokasi saat benar-benar tertutup.**
+Permintaan semula adalah mengirim posisi pukul 03.00 walau aplikasi
+tertutup. Itu tidak mungkin di aplikasi web: `navigator.geolocation`
+hanya ada pada `Navigator` (jendela peramban), sedangkan service worker
+memakai `WorkerNavigator` yang tidak punya properti itu sama sekali.
+Tidak ada jalan memutarnya — bukan soal izin, melainkan API-nya memang
+tidak tersedia di sana.
+
+Karena itu dipakai letak rumah: hasilnya sama untuk tujuan Anda —
+warga dengan aplikasi tertutup tetap terhitung sebagai tetangga terdekat
+— tanpa bergantung pada kemampuan yang tidak dimiliki peramban.
+
+Konsekuensi yang harus disadari: bila jarak dihitung dari rumah, orangnya
+**belum tentu sedang berada di sana**. Notifikasinya karena itu berbunyi
+"… m dari rumah Anda", bukan "… m dari Anda".
+
+Untuk benar-benar mengambil lokasi saat aplikasi tertutup, satu-satunya
+jalan adalah aplikasi Android/iOS asli — bukan PWA.
 
 ### Belum dikerjakan
 

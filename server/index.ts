@@ -951,6 +951,8 @@ function alertAudience(
     memberId: string | null
     /** Jarak dari lokasi kejadian, bila orang ini dipanggil karena dekat. */
     meters?: number
+    /** 'live' = posisi terkini, 'home' = letak rumahnya. */
+    basis?: 'live' | 'home'
   }[] = []
   const seen = new Set<string>()
   const push = (r: (typeof out)[number]) => {
@@ -996,14 +998,21 @@ function alertAudience(
    * dulu oleh pengirim.
    */
   if (at) {
+    /*
+     * Ambil siapa pun yang punya salah satu titik: posisi terkini ATAU
+     * letak rumah. Rumahlah yang membuat warga tetap terpanggil ketika
+     * aplikasinya sedang tertutup.
+     */
     const rows = db
       .prepare(
-        `SELECT id, name, phone, role, last_lat, last_lng, last_seen_at, last_accuracy
+        `SELECT id, name, phone, role,
+                last_lat, last_lng, last_seen_at, last_accuracy,
+                home_lat, home_lng, home_accuracy
          FROM members
          WHERE community_id=? AND status='active' AND id<>?
-           AND last_lat IS NOT NULL AND last_seen_at > ?`,
+           AND (last_lat IS NOT NULL OR home_lat IS NOT NULL)`,
       )
-      .all(me.community_id, me.id, now() - FRESH_MS) as NearbyRow[]
+      .all(me.community_id, me.id) as NearbyRow[]
 
     for (const hit of nearbyMembers(at, accuracy, rows)) {
       push({
@@ -1013,6 +1022,7 @@ function alertAudience(
         kind: hit.member.role === 'satpam' ? 'guard' : 'neighbour',
         memberId: hit.member.id,
         meters: hit.meters,
+        basis: hit.basis,
       })
     }
   }
@@ -1042,6 +1052,68 @@ app.post('/api/me/location', auth, active, async (c) => {
   db.prepare(
     'UPDATE members SET last_lat=?, last_lng=?, last_accuracy=?, last_seen_at=? WHERE id=?',
   ).run(b.lat, b.lng, b.accuracy ?? null, now(), me.id)
+  return c.json({ ok: true })
+})
+
+/**
+ * Menandai letak rumah warga.
+ *
+ * Dicatat sekali saat mendaftar, lalu diperhalus pada kesempatan
+ * berikutnya ketika warga membuka aplikasi larut malam — saat itu ia
+ * hampir pasti sedang di rumah, sehingga titiknya lebih tepat.
+ *
+ * Rumah tidak berpindah, jadi satu titik ini cukup untuk selamanya: ia
+ * membuat warga tetap terhitung sebagai tetangga terdekat walaupun
+ * aplikasinya tertutup, tanpa perlu melacak pergerakannya.
+ */
+app.post('/api/me/home', auth, active, async (c) => {
+  const me = c.get('me')
+  const b = (await c.req.json().catch(() => ({}))) as {
+    lat?: number
+    lng?: number
+    accuracy?: number | null
+    source?: string
+  }
+  if (typeof b.lat !== 'number' || typeof b.lng !== 'number')
+    return bad(c, 'errRequired')
+  if (Math.abs(b.lat) > 90 || Math.abs(b.lng) > 180) return bad(c, 'errRequired')
+
+  const source = ['register', 'night', 'manual'].includes(b.source ?? '')
+    ? b.source!
+    : 'manual'
+
+  const lama = db
+    .prepare('SELECT home_accuracy, home_source FROM members WHERE id=?')
+    .get(me.id) as { home_accuracy: number | null; home_source: string | null }
+
+  /*
+   * Jangan menimpa titik yang lebih baik dengan yang lebih buruk.
+   * Titik yang ditandai warga sendiri ('manual') paling dipercaya dan
+   * tidak boleh tergeser oleh pembacaan otomatis.
+   */
+  if (lama?.home_source === 'manual' && source !== 'manual')
+    return c.json({ ok: true, kept: true })
+
+  const akurasiBaru = b.accuracy ?? 9999
+  if (
+    lama?.home_source === 'night' &&
+    source === 'register' &&
+    (lama.home_accuracy ?? 9999) <= akurasiBaru
+  )
+    return c.json({ ok: true, kept: true })
+
+  db.prepare(
+    'UPDATE members SET home_lat=?, home_lng=?, home_accuracy=?, home_set_at=?, home_source=? WHERE id=?',
+  ).run(b.lat, b.lng, b.accuracy ?? null, now(), source, me.id)
+  audit(me.community_id, me.id, 'home.set', source)
+  return c.json({ ok: true })
+})
+
+/** Anggota menghapus letak rumahnya. */
+app.delete('/api/me/home', auth, active, (c) => {
+  db.prepare(
+    'UPDATE members SET home_lat=NULL, home_lng=NULL, home_accuracy=NULL, home_set_at=NULL, home_source=NULL WHERE id=?',
+  ).run(c.get('me').id)
   return c.json({ ok: true })
 })
 
@@ -1137,9 +1209,15 @@ app.post('/api/alerts', auth, active, async (c) => {
   )
 
   for (const a of dekat) {
+    // Jangan mengaku tahu lebih banyak daripada yang sebenarnya: bila
+    // dasarnya letak rumah, orangnya belum tentu sedang berada di sana.
+    const judul =
+      a.basis === 'live'
+        ? `🆘 DARURAT ${a.meters} m dari Anda`
+        : `🆘 DARURAT ${a.meters} m dari rumah Anda`
     void pushToMembers([a.memberId!], {
-      title: `🆘 DARURAT ${a.meters} m dari Anda`,
-      body: `${me.name} · ${me.house}. Anda sedang berada paling dekat.`,
+      title: judul,
+      body: `${me.name} · ${me.house}. Anda termasuk yang paling dekat.`,
       url: `#/app/reports?id=${id}`,
       tag: `sos-${id}`,
       urgent: true,

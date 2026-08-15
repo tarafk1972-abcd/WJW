@@ -1,5 +1,13 @@
 /**
- * Mengirim posisi HANYA ketika ada peringatan darurat.
+ * Dua hal: menandai letak rumah, dan mengirim posisi saat darurat.
+ *
+ * LETAK RUMAH dicatat sekali ketika warga mendaftar, lalu diperhalus
+ * pada kesempatan pertama ia membuka aplikasi larut malam — saat itu ia
+ * hampir pasti sedang di rumah. Rumah tidak berpindah, jadi titik ini
+ * cukup dicatat sekali dan membuat warga tetap terhitung sebagai
+ * tetangga terdekat walaupun aplikasinya tertutup.
+ *
+ * POSISI TERKINI hanya dikirim ketika ada peringatan darurat.
  *
  * Tidak ada pengiriman berkala. GPS tidak disentuh sama sekali di
  * hari-hari biasa; server tidak pernah tahu warga sedang di mana.
@@ -85,4 +93,70 @@ export async function shareLocationForEmergency(now = Date.now()): Promise<boole
 export function resetPresenceState(): void {
   lastSentAt = 0
   sending = false
+}
+
+/* ---------------- letak rumah ---------------- */
+
+const HOME_KEY = 'wjw.home.lastTry'
+
+/** Jam yang dianggap "warga hampir pasti sedang di rumah". */
+const NIGHT_FROM = 1
+const NIGHT_TO = 5
+
+/**
+ * Catat letak rumah saat warga baru mendaftar.
+ *
+ * Dipanggil tepat setelah pendaftaran berhasil, ketika warga biasanya
+ * memang sedang berada di rumahnya.
+ */
+export async function markHomeOnRegister(): Promise<boolean> {
+  return sendHome('register')
+}
+
+/**
+ * Perhalus letak rumah bila sekarang larut malam.
+ *
+ * Aman dipanggil sesering apa pun: hanya berbuat sesuatu paling banyak
+ * sekali sehari, dan hanya pada rentang jam malam.
+ */
+export async function refineHomeAtNight(now = new Date()): Promise<boolean> {
+  const jam = now.getHours()
+  if (jam < NIGHT_FROM || jam >= NIGHT_TO) return false
+
+  // Sekali sehari saja.
+  const hariIni = now.toISOString().slice(0, 10)
+  if (localStorage.getItem(HOME_KEY) === hariIni) return false
+  localStorage.setItem(HOME_KEY, hariIni)
+
+  return sendHome('night')
+}
+
+/** Warga menandai rumahnya sendiri — paling dipercaya. */
+export async function setHomeManually(): Promise<boolean> {
+  return sendHome('manual')
+}
+
+export async function forgetHome(): Promise<void> {
+  try {
+    await api.del('/me/home')
+  } catch {
+    /* diamkan */
+  }
+}
+
+async function sendHome(source: 'register' | 'night' | 'manual'): Promise<boolean> {
+  if (presenceDisabled()) return false
+  try {
+    const pos = await getFix()
+    if (!pos) return false
+    await api.post('/me/home', {
+      lat: pos.lat,
+      lng: pos.lng,
+      accuracy: pos.accuracy,
+      source,
+    })
+    return true
+  } catch {
+    return false
+  }
 }

@@ -36,6 +36,9 @@ function warga(over: Partial<NearbyRow> = {}): NearbyRow {
     last_lng: PUSAT.lng,
     last_seen_at: SEKARANG,
     last_accuracy: 0,
+    home_lat: null,
+    home_lng: null,
+    home_accuracy: null,
     ...over,
   }
 }
@@ -132,5 +135,92 @@ describe('nearbyMembers', () => {
       SEKARANG,
     )
     expect(hits.map((h) => h.member.role).sort()).toEqual(['satpam', 'warga'])
+  })
+})
+
+/**
+ * Letak rumah sebagai cadangan.
+ *
+ * Inilah yang membuat warga tetap terpanggil ketika aplikasinya tertutup:
+ * tanpa posisi terkini, jaraknya dihitung dari rumahnya.
+ */
+describe('cadangan letak rumah', () => {
+  it('memanggil warga berdasarkan rumahnya walau tanpa posisi terkini', () => {
+    const tertutup = warga({
+      last_lat: null,
+      last_lng: null,
+      last_seen_at: null,
+      home_lat: utara(10).lat,
+      home_lng: utara(10).lng,
+      home_accuracy: 0,
+    })
+    const hits = nearbyMembers(PUSAT, 0, [tertutup], SEKARANG)
+    expect(hits).toHaveLength(1)
+    expect(hits[0].basis).toBe('home')
+  })
+
+  it('memakai rumah ketika posisi terkini sudah basi', () => {
+    const basi = warga({
+      last_lat: utara(500).lat,
+      last_seen_at: SEKARANG - FRESH_MS - 1,
+      home_lat: utara(10).lat,
+      home_lng: utara(10).lng,
+      home_accuracy: 0,
+    })
+    const hits = nearbyMembers(PUSAT, 0, [basi], SEKARANG)
+    expect(hits).toHaveLength(1)
+    // Jaraknya dihitung dari rumah, bukan dari titik basi yang jauh itu.
+    expect(hits[0].basis).toBe('home')
+    expect(hits[0].meters).toBeLessThanOrEqual(15)
+  })
+
+  it('mengutamakan posisi terkini daripada rumah', () => {
+    // Rumahnya dekat, tetapi orangnya sedang jauh: jangan dipanggil.
+    const sedangPergi = warga({
+      last_lat: utara(400).lat,
+      last_seen_at: SEKARANG,
+      home_lat: PUSAT.lat,
+      home_lng: PUSAT.lng,
+      home_accuracy: 0,
+    })
+    expect(nearbyMembers(PUSAT, 0, [sedangPergi], SEKARANG)).toHaveLength(0)
+  })
+
+  it('tidak memanggil siapa pun yang rumahnya jauh', () => {
+    const jauh = warga({
+      last_lat: null,
+      last_lng: null,
+      last_seen_at: null,
+      home_lat: utara(300).lat,
+      home_lng: utara(300).lng,
+      home_accuracy: 0,
+    })
+    expect(nearbyMembers(PUSAT, 0, [jauh], SEKARANG)).toHaveLength(0)
+  })
+
+  it('melewati anggota yang tidak punya rumah maupun posisi', () => {
+    const kosong = warga({ last_lat: null, last_lng: null, last_seen_at: null })
+    expect(nearbyMembers(PUSAT, 0, [kosong], SEKARANG)).toHaveLength(0)
+  })
+
+  it('pada jarak sama, yang posisinya terkini didahulukan', () => {
+    const hits = nearbyMembers(
+      PUSAT,
+      0,
+      [
+        warga({
+          id: 'rumah',
+          last_lat: null,
+          last_lng: null,
+          last_seen_at: null,
+          home_lat: utara(10).lat,
+          home_lng: utara(10).lng,
+          home_accuracy: 0,
+        }),
+        warga({ id: 'hadir', last_lat: utara(10).lat }),
+      ],
+      SEKARANG,
+    )
+    expect(hits.map((h) => h.member.id)).toEqual(['hadir', 'rumah'])
   })
 })

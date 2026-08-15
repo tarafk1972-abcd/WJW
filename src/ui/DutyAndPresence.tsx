@@ -20,7 +20,7 @@ import {
   resumeDutyPush,
   silencedFor,
 } from '../lib/dutyPush'
-import { shareLocationForEmergency } from '../lib/presence'
+import { refineHomeAtNight, shareLocationForEmergency } from '../lib/presence'
 import { useApp } from '../lib/store'
 import { apiMode } from '../lib/sync'
 import { enablePush, pushSupported, registerServiceWorker } from '../lib/pushClient'
@@ -64,6 +64,17 @@ export function DutyAndPresence() {
     if (!apiMode() || !me || !locationWanted) return
     void shareLocationForEmergency()
   }, [me, locationWanted])
+
+  /*
+   * Perhalus letak rumah bila aplikasi kebetulan dibuka larut malam —
+   * saat itu warga hampir pasti sedang di rumah, sehingga titiknya lebih
+   * tepat daripada yang terekam ketika mendaftar. Paling banyak sekali
+   * sehari, dan tidak pernah di luar jam malam.
+   */
+  useEffect(() => {
+    if (!apiMode() || !me) return
+    void refineHomeAtNight()
+  }, [me])
 
   // Nyalakan sendiri begitu masuk area.
   useEffect(() => {

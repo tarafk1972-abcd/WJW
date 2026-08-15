@@ -64,6 +64,10 @@ export interface NearbyRow {
   last_lng: number | null
   last_seen_at: number | null
   last_accuracy: number | null
+  /** Letak rumah — dipakai bila posisi terkini tidak tersedia. */
+  home_lat: number | null
+  home_lng: number | null
+  home_accuracy: number | null
 }
 
 export interface NearbyHit {
@@ -72,6 +76,12 @@ export interface NearbyHit {
   meters: number
   /** Radius yang berlaku untuk orang ini. */
   radius: number
+  /**
+   * Dasar perhitungan jaraknya:
+   *   'live' — posisi terkini, orangnya memang sedang di sana;
+   *   'home' — letak rumah, orangnya BELUM TENTU sedang di rumah.
+   */
+  basis: 'live' | 'home'
 }
 
 /**
@@ -94,15 +104,37 @@ export function nearbyMembers(
 
   const hits: NearbyHit[] = []
   for (const m of rows) {
-    if (m.last_lat === null || m.last_lng === null || !m.last_seen_at) continue
-    if (now - m.last_seen_at > FRESH_MS) continue
+    /*
+     * Utamakan posisi terkini; bila tidak ada, pakai letak rumah.
+     *
+     * Rumah adalah yang membuat warga tetap terpanggil walau aplikasinya
+     * tertutup. Konsekuensinya harus diakui: orangnya belum tentu sedang
+     * di rumah. Karena itu dasarnya ditandai, agar pesan yang dikirim
+     * tidak mengaku tahu lebih banyak daripada yang sebenarnya.
+     */
+    const segar =
+      m.last_lat !== null &&
+      m.last_lng !== null &&
+      !!m.last_seen_at &&
+      now - m.last_seen_at <= FRESH_MS
 
-    const radius = alertRadius(accuracy, m.last_accuracy)
-    const meters = distanceMeters(at, { lat: m.last_lat, lng: m.last_lng })
-    if (meters <= radius) hits.push({ member: m, meters: Math.round(meters), radius })
+    const basis: 'live' | 'home' = segar ? 'live' : 'home'
+    const lat = segar ? m.last_lat : m.home_lat
+    const lng = segar ? m.last_lng : m.home_lng
+    const acc = segar ? m.last_accuracy : m.home_accuracy
+    if (lat === null || lng === null) continue
+
+    const radius = alertRadius(accuracy, acc)
+    const meters = distanceMeters(at, { lat, lng })
+    if (meters <= radius)
+      hits.push({ member: m, meters: Math.round(meters), radius, basis })
   }
 
-  // Yang terdekat lebih dulu — merekalah yang paling cepat bisa menolong.
-  hits.sort((x, y) => x.meters - y.meters)
+  /*
+   * Yang terdekat lebih dulu. Bila jaraknya sama, yang posisinya terkini
+   * didahulukan: kepastian bahwa orangnya benar-benar di sana lebih
+   * berharga daripada tebakan berdasarkan letak rumah.
+   */
+  hits.sort((x, y) => x.meters - y.meters || (x.basis === 'live' ? -1 : 1))
   return hits
 }

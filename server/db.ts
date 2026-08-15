@@ -59,6 +59,20 @@ addColumn('members', 'last_lng', 'REAL')
 addColumn('members', 'last_seen_at', 'INTEGER')
 addColumn('members', 'last_accuracy', 'REAL')
 
+/*
+ * Letak rumah warga.
+ *
+ * Rumah tidak berpindah, jadi cukup dicatat sekali. Inilah yang membuat
+ * warga tetap terhitung sebagai tetangga terdekat walaupun aplikasinya
+ * sedang tertutup — tanpa perlu melacak pergerakannya sama sekali.
+ */
+addColumn('members', 'home_lat', 'REAL')
+addColumn('members', 'home_lng', 'REAL')
+addColumn('members', 'home_accuracy', 'REAL')
+addColumn('members', 'home_set_at', 'INTEGER')
+/** 'register' | 'night' | 'manual' — dari mana titik ini berasal. */
+addColumn('members', 'home_source', 'TEXT')
+
 export function uid(prefix = ''): string {
   return prefix + randomBytes(9).toString('base64url')
 }

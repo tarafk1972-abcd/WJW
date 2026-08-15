@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { ApiError, authApi, publicApi } from '../lib/api'
 import { deviceId, lookupInvite, register, searchCommunities, setSession } from '../lib/db'
+import { markHomeOnRegister } from '../lib/presence'
 import { syncState } from '../lib/sync'
 import { LANGS, translate } from '../lib/i18n'
 import { useApp } from '../lib/store'
@@ -199,6 +200,14 @@ export default function Register() {
       const res = await authApi.register({ ...payload, deviceId: deviceId() })
       const m = res.member as { id: string; status: string }
       setSession(m.id)
+      /*
+       * Tandai letak rumah sekarang: saat mendaftar, warga biasanya
+       * memang sedang di rumahnya. Titik inilah yang nanti membuat ia
+       * tetap terhitung sebagai tetangga terdekat walau aplikasinya
+       * tertutup. Tidak ditunggu — pendaftaran tidak boleh tertahan
+       * hanya karena GPS lambat.
+       */
+      void markHomeOnRegister()
       await syncState()
       setBusy(false)
       if (m.status === 'active') {
