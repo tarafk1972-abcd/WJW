@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate } from 'react-router'
 import { useApp } from '../lib/store'
 import { Icon, type IconName } from '../ui/Icon'
+import { DutyPush } from '../ui/DutyPush'
 import { PushPrompt } from '../ui/PushPrompt'
 import { useEffect } from 'react'
 
@@ -94,6 +95,8 @@ export default function AppShell() {
         </div>
       )}
 
+      {/* Satpam: otomatis. Peran lain: ajakan biasa. */}
+      <DutyPush />
       <PushPrompt />
 
       <Outlet />

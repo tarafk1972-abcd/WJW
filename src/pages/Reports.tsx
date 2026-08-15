@@ -7,6 +7,7 @@ import {
   respondToReport,
   updateReport,
 } from '../lib/db'
+import { silenceWhileResponding } from '../lib/dutyPush'
 import { fmtDateTime, timeAgo } from '../lib/format'
 import {
   CATEGORY_META,
@@ -632,6 +633,13 @@ function ReportDetail({
               className="btn btn-ghost"
               onClick={() => {
                 respondToReport(me.id, report.id)
+                /*
+                 * Satu-satunya jalan meredam notifikasi tugas: satpam yang
+                 * sedang menuju lokasi tidak perlu terus dibunyikan oleh
+                 * peringatan yang sama. Di luar ini, tidak ada tombol untuk
+                 * mematikannya.
+                 */
+                if (me.role === 'satpam') silenceWhileResponding()
                 toast(t('responding'))
               }}
             >

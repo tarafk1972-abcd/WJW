@@ -600,6 +600,19 @@ const id = {
   pushEnabled: 'Notifikasi darurat aktif',
   pushBlocked: 'Notifikasi diblokir. Izinkan lewat pengaturan browser.',
   pushHint: 'Agar peringatan tetap berbunyi walau aplikasi tertutup.',
+  dutyPushOn: 'Notifikasi darurat aktif — Anda sedang bertugas',
+  dutyPushOnHint:
+    'Aktif otomatis selama Anda berada di dalam area. Dapat diredam saat Anda merespons peringatan.',
+  dutyPushRequired: 'Izinkan notifikasi darurat',
+  dutyPushRequiredHint:
+    'Anda sedang bertugas di dalam area. Peringatan warga tidak akan terdengar sebelum izin diberikan.',
+  dutyPushActivate: 'Izinkan',
+  dutyPushBlocked: 'Notifikasi diblokir peramban',
+  dutyPushBlockedHint:
+    'Peringatan warga tidak akan terdengar. Aktifkan lewat setelan situs pada peramban Anda.',
+  dutyPushSilenced: 'Notifikasi diredam {n} menit',
+  dutyPushSilencedHint: 'Anda sedang menangani sebuah peringatan.',
+  dutyPushResume: 'Aktifkan lagi',
   pushUnsupported: 'Perangkat ini tidak mendukung notifikasi.',
   serverDown: 'Server tidak aktif — memakai data di HP ini saja.',
   consoleLocalOnly:
@@ -1240,6 +1253,19 @@ const en: Dict = {
   pushEnabled: 'Emergency notifications on',
   pushBlocked: 'Notifications blocked. Allow them in your browser settings.',
   pushHint: 'So alerts still sound when the app is closed.',
+  dutyPushOn: 'Emergency alerts on — you are on duty',
+  dutyPushOnHint:
+    'Enabled automatically while you are inside the area. Can be muted while you respond to an alert.',
+  dutyPushRequired: 'Allow emergency notifications',
+  dutyPushRequiredHint:
+    'You are on duty inside the area. Residents\u2019 alerts will not sound until permission is granted.',
+  dutyPushActivate: 'Allow',
+  dutyPushBlocked: 'Notifications blocked by the browser',
+  dutyPushBlockedHint:
+    'Residents\u2019 alerts will not sound. Enable them in your browser\u2019s site settings.',
+  dutyPushSilenced: 'Alerts muted for {n} min',
+  dutyPushSilencedHint: 'You are handling an alert.',
+  dutyPushResume: 'Turn back on',
   pushUnsupported: 'This device does not support notifications.',
   serverDown: 'Server is down — using data on this phone only.',
   consoleLocalOnly:

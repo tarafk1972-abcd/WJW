@@ -1860,3 +1860,9 @@ p {
   padding: 9px 12px;
   color: var(--text-3);
 }
+
+/* Penanda tenang: notifikasi tugas satpam sedang aktif. */
+.push-prompt.duty-on {
+  border-color: rgba(46, 194, 126, 0.35);
+  background: var(--brand-soft);
+}
