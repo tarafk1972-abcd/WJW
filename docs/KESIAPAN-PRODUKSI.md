@@ -198,3 +198,16 @@ jalan adalah aplikasi Android/iOS asli — bukan PWA.
 - **Bawaannya aktif.** Perlu diputuskan apakah sebaiknya sebaliknya.
 - **Belum ada penghapusan berkala** atas titik kedaluwarsa; saat ini
   hanya diabaikan, bukan dihapus dari basis data.
+
+## Pesan pada utas insiden belum tersimpan di server
+
+Balasan yang diketik pada sebuah peringatan (`addIncidentMessage`) baru
+disimpan di perangkat pengirim. Server belum punya endpoint untuk itu,
+sehingga pesan tersebut **tidak terlihat oleh anggota lain** dan hilang
+bila data perangkat dibersihkan.
+
+Status peringatan sendiri sudah tersimpan di server: "Saya menuju lokasi"
+dan "Tandai selesai" kini menulis lewat `/api/alerts/:id/ack` dan
+`/api/alerts/:id/close`.
+
+Perlu dikerjakan sebelum utas insiden diandalkan untuk koordinasi nyata.

@@ -7,7 +7,9 @@ import {
   respondToReport,
   updateReport,
 } from '../lib/db'
+import { alertApi } from '../lib/api'
 import { silenceWhileResponding } from '../lib/dutyPush'
+import { apiMode, mutate } from '../lib/sync'
 import { fmtDateTime, timeAgo } from '../lib/format'
 import {
   CATEGORY_META,
@@ -617,6 +619,12 @@ function ReportDetail({
             style={{ background: 'var(--brand-soft)', color: 'var(--brand)' }}
             onClick={() => {
               if (!msg.trim()) return
+              /*
+               * CATATAN: pesan utas insiden belum punya endpoint di server,
+               * jadi untuk sementara hanya tersimpan di perangkat pengirim
+               * dan tidak terlihat oleh anggota lain. Lihat
+               * docs/KESIAPAN-PRODUKSI.md.
+               */
               addIncidentMessage(report.id, me.id, msg.trim())
               setMsg('')
             }}
@@ -631,7 +639,10 @@ function ReportDetail({
           {!iAmResponding && (
             <button
               className="btn btn-ghost"
-              onClick={() => {
+              onClick={async () => {
+                // Sama seperti di atas: server harus ikut tahu, kalau tidak
+                // status "Ditangani" hilang lagi pada sinkronisasi berikutnya.
+                if (apiMode()) await mutate(() => alertApi.ack(report.id))
                 respondToReport(me.id, report.id)
                 /*
                  * Satu-satunya jalan meredam notifikasi tugas: satpam yang
@@ -648,7 +659,19 @@ function ReportDetail({
           )}
           <button
             className="btn btn-primary"
-            onClick={() => {
+            onClick={async () => {
+              /*
+               * Tulis ke server lebih dulu, bukan hanya ke cache.
+               *
+               * Sebelumnya perubahan hanya disimpan di perangkat, jadi
+               * status sempat berubah "Selesai" lalu dikembalikan menjadi
+               * "Ditangani" oleh sinkronisasi berikutnya — server tidak
+               * pernah tahu peringatan itu sudah ditutup.
+               */
+              if (apiMode()) {
+                const ok = await mutate(() => alertApi.close(report.id, false))
+                if (!ok) return toast(t('errOffline'), 'err')
+              }
               updateReport(me.id, report.id, { status: 'resolved' })
               toast(t('statusResolved'))
               onClose()
