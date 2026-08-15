@@ -1294,6 +1294,64 @@ app.post('/api/alerts/:id/ack', auth, active, (c) => {
   return c.json({ ok: true })
 })
 
+/**
+ * Kirim pesan pada utas sebuah peringatan.
+ *
+ * Utas ini dipakai untuk berkoordinasi selama kejadian berlangsung —
+ * "sudah sampai gerbang", "pelaku ke arah utara". Sebelumnya balasan
+ * hanya tersimpan di perangkat pengirim, jadi tidak pernah terlihat oleh
+ * siapa pun. Diam-diam gagal seperti itu berbahaya saat darurat.
+ *
+ * Yang boleh menulis: pelapor sendiri, penerima peringatan, satpam, dan
+ * pengurus — sama seperti yang boleh menutupnya.
+ */
+app.post('/api/alerts/:id/messages', auth, active, async (c) => {
+  const me = c.get('me')
+  const r = db.prepare('SELECT * FROM reports WHERE id=?').get(c.req.param('id')) as
+    | Record<string, unknown>
+    | undefined
+  if (!r) return bad(c, 'not_found', 404)
+  if (!sameCommunity(me, r.community_id as string)) return bad(c, 'forbidden', 403)
+
+  const isOwner = r.author_id === me.id
+  const recipients = (J(r.recipients as string) ?? []) as { memberId: string | null }[]
+  const isRecipient = recipients.some((x) => x.memberId === me.id)
+  if (!isOwner && !isRecipient && !requireAdmin(c) && me.role !== 'satpam')
+    return bad(c, 'forbidden', 403)
+
+  const b = (await c.req.json().catch(() => ({}))) as { body?: string }
+  const body = (b.body ?? '').trim().slice(0, 1000)
+  if (!body) return bad(c, 'errRequired')
+
+  const messages = (J(r.messages as string) ?? []) as unknown[]
+  // Batasi agar satu utas tidak tumbuh tanpa henti.
+  if (messages.length >= 500) messages.shift()
+
+  const msg = { id: uid('im_'), from: me.id, body, at: now(), system: false }
+  messages.push(msg)
+  db.prepare('UPDATE reports SET messages=? WHERE id=?').run(
+    JSON.stringify(messages),
+    r.id,
+  )
+
+  /*
+   * Beri tahu peserta lain — pelapor dan para penanggap. Tanpa ini,
+   * pesan hanya terlihat oleh yang kebetulan sedang membuka layarnya.
+   */
+  const responders: string[] = J(r.responders as string) ?? []
+  const tujuan = new Set<string>([r.author_id as string, ...responders])
+  tujuan.delete(me.id)
+  if (tujuan.size > 0)
+    void pushToMembers([...tujuan], {
+      title: `${me.name}`,
+      body,
+      url: `#/app/reports?id=${r.id}`,
+      tag: `im-${r.id}`,
+    })
+
+  return c.json({ message: msg }, 201)
+})
+
 app.post('/api/alerts/:id/close', auth, active, async (c) => {
   const me = c.get('me')
   const r = db.prepare('SELECT * FROM reports WHERE id=?').get(c.req.param('id')) as

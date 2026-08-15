@@ -136,6 +136,9 @@ export const alertApi = {
   ack: (id: string) => api.post(`/alerts/${id}/ack`),
   close: (id: string, cancelled = false) => api.post(`/alerts/${id}/close`, { cancelled }),
   audience: () => api.get<{ audience: unknown[] }>('/alerts/audience'),
+  /** Kirim pesan pada utas insiden, agar terlihat peserta lain. */
+  message: (id: string, body: string) =>
+    api.post<{ message: Record<string, unknown> }>(`/alerts/${id}/messages`, { body }),
 }
 
 export const patrolApi = {

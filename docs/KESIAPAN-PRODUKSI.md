@@ -199,15 +199,23 @@ jalan adalah aplikasi Android/iOS asli — bukan PWA.
 - **Belum ada penghapusan berkala** atas titik kedaluwarsa; saat ini
   hanya diabaikan, bukan dihapus dari basis data.
 
-## Pesan pada utas insiden belum tersimpan di server
+## Utas insiden
 
-Balasan yang diketik pada sebuah peringatan (`addIncidentMessage`) baru
-disimpan di perangkat pengirim. Server belum punya endpoint untuk itu,
-sehingga pesan tersebut **tidak terlihat oleh anggota lain** dan hilang
-bila data perangkat dibersihkan.
+Balasan pada sebuah peringatan kini tersimpan di server lewat
+`POST /api/alerts/:id/messages`, sehingga terlihat oleh pelapor dan para
+penanggap, dan tidak hilang bila data perangkat dibersihkan. Peserta lain
+juga menerima notifikasi setiap ada pesan baru.
 
-Status peringatan sendiri sudah tersimpan di server: "Saya menuju lokasi"
-dan "Tandai selesai" kini menulis lewat `/api/alerts/:id/ack` dan
+Yang boleh menulis: pelapor, penerima peringatan, satpam, dan pengurus —
+sama seperti yang boleh menutup peringatan. Anggota lingkungan lain
+ditolak.
+
+Status peringatan juga tersimpan di server: "Saya menuju lokasi" dan
+"Tandai selesai" menulis lewat `/api/alerts/:id/ack` dan
 `/api/alerts/:id/close`.
 
-Perlu dikerjakan sebelum utas insiden diandalkan untuk koordinasi nyata.
+Yang masih perlu diperhatikan:
+
+- **Foto bukti** (`addAttachment`) masih tersimpan di perangkat saja.
+- **Belum ada penyuntingan atau penghapusan** pesan yang sudah terkirim.
+- Utas dibatasi 500 pesan; yang terlama dibuang saat penuh.

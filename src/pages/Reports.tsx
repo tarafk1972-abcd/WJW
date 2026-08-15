@@ -439,6 +439,31 @@ function ReportDetail({
   const { db, me, t, lang, community } = useApp()
   const toast = useToast()
   const [msg, setMsg] = useState('')
+  const [sending, setSending] = useState(false)
+
+  /**
+   * Kirim pesan utas insiden.
+   *
+   * Menulis ke server lebih dulu: pesan koordinasi yang hanya tersimpan
+   * di perangkat pengirim tidak berguna sama sekali saat darurat, dan
+   * lebih buruk lagi — pengirim mengira pesannya sudah sampai.
+   */
+  const kirimPesan = async () => {
+    const teks = msg.trim()
+    if (!teks || sending || !me) return
+
+    setSending(true)
+    if (apiMode()) {
+      const ok = await mutate(() => alertApi.message(report.id, teks))
+      setSending(false)
+      if (!ok) return toast(t('errOffline'), 'err')
+      setMsg('')
+      return
+    }
+    addIncidentMessage(report.id, me.id, teks)
+    setSending(false)
+    setMsg('')
+  }
   const fileRef = useRef<HTMLInputElement>(null)
 
   if (!me) return null
@@ -593,10 +618,7 @@ function ReportDetail({
             onChange={(e) => setMsg(e.target.value)}
             placeholder={t('writeUpdate')}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && msg.trim()) {
-                addIncidentMessage(report.id, me.id, msg.trim())
-                setMsg('')
-              }
+              if (e.key === 'Enter') void kirimPesan()
             }}
           />
           <input
@@ -617,17 +639,8 @@ function ReportDetail({
           <button
             className="icon-btn"
             style={{ background: 'var(--brand-soft)', color: 'var(--brand)' }}
-            onClick={() => {
-              if (!msg.trim()) return
-              /*
-               * CATATAN: pesan utas insiden belum punya endpoint di server,
-               * jadi untuk sementara hanya tersimpan di perangkat pengirim
-               * dan tidak terlihat oleh anggota lain. Lihat
-               * docs/KESIAPAN-PRODUKSI.md.
-               */
-              addIncidentMessage(report.id, me.id, msg.trim())
-              setMsg('')
-            }}
+            disabled={sending || !msg.trim()}
+            onClick={() => void kirimPesan()}
           >
             <Icon name="send" size={17} />
           </button>
