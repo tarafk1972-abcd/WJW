@@ -72,6 +72,7 @@ export default function Reports() {
   const [anon, setAnon] = useState(false)
   const [photos, setPhotos] = useState<string[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
+  const cameraRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     let changed = false
@@ -355,20 +356,42 @@ export default function Reports() {
               ))}
             </div>
           )}
+          {/* Potret langsung; lihat catatan di utas insiden. */}
+          <input
+            ref={cameraRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            onChange={(e) => {
+              void pickPhotos(e.target.files)
+              e.target.value = ''
+            }}
+          />
           <input
             ref={fileRef}
             type="file"
             accept="image/*"
             multiple
             hidden
-            onChange={(e) => void pickPhotos(e.target.files)}
+            onChange={(e) => {
+              void pickPhotos(e.target.files)
+              e.target.value = ''
+            }}
           />
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => cameraRef.current?.click()}
+            disabled={photos.length >= 3}
+          >
+            <Icon name="camera" size={14} /> {t('takePhoto')}
+          </button>
           <button
             className="btn btn-ghost btn-sm"
             onClick={() => fileRef.current?.click()}
             disabled={photos.length >= 3}
           >
-            <Icon name="camera" size={14} /> {t('addPhoto')}
+            <Icon name="clipboard" size={14} /> {t('fromGallery')}
           </button>
         </div>
 
@@ -485,6 +508,7 @@ function ReportDetail({
     setMsg('')
   }
   const fileRef = useRef<HTMLInputElement>(null)
+  const cameraRef = useRef<HTMLInputElement>(null)
 
   if (!me) return null
   const author = db.members.find((m) => m.id === report.authorId)
@@ -641,6 +665,28 @@ function ReportDetail({
               if (e.key === 'Enter') void kirimPesan()
             }}
           />
+          {/*
+            Dua jalan masuk yang berbeda.
+
+            `capture` menyuruh ponsel langsung membuka kamera — itu yang
+            dibutuhkan saat kejadian sedang berlangsung. Tetapi atribut itu
+            juga MENUTUP akses ke galeri, jadi foto yang sudah terlanjur
+            diambil beberapa menit lalu tidak bisa dilampirkan. Karena itu
+            keduanya disediakan, bukan salah satu.
+          */}
+          <input
+            ref={cameraRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            onChange={async (e) => {
+              const f = e.target.files?.[0]
+              // Kosongkan dulu, agar memotret ulang tetap memicu onChange.
+              e.target.value = ''
+              if (f) await lampirkanFoto(f)
+            }}
+          />
           <input
             ref={fileRef}
             type="file"
@@ -648,15 +694,25 @@ function ReportDetail({
             hidden
             onChange={async (e) => {
               const f = e.target.files?.[0]
-              // Kosongkan dulu, agar memilih berkas yang sama dua kali
-              // tetap memicu onChange.
               e.target.value = ''
-              if (!f) return
-              await lampirkanFoto(f)
+              if (f) await lampirkanFoto(f)
             }}
           />
-          <button className="icon-btn" onClick={() => fileRef.current?.click()}>
+          <button
+            className="icon-btn"
+            title={t('takePhoto')}
+            aria-label={t('takePhoto')}
+            onClick={() => cameraRef.current?.click()}
+          >
             <Icon name="camera" size={17} />
+          </button>
+          <button
+            className="icon-btn"
+            title={t('fromGallery')}
+            aria-label={t('fromGallery')}
+            onClick={() => fileRef.current?.click()}
+          >
+            <Icon name="clipboard" size={17} />
           </button>
           <button
             className="icon-btn"
