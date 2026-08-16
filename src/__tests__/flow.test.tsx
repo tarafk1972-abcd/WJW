@@ -136,7 +136,16 @@ describe('Warga Jaga Warga', () => {
     await user.click(screen.getByRole('button', { name: /^Masuk$/i }))
     await waitFor(() => expect(window.location.hash).toBe('#/app'))
 
-    await user.click(screen.getByRole('link', { name: /Admin/i }))
+    /*
+     * Tunggu tautannya benar-benar dirender, jangan hanya menunggu hash.
+     *
+     * Perubahan hash terjadi lebih dulu daripada React selesai menggambar
+     * bilah navigasi, dan tautan Admin hanya muncul setelah store membaca
+     * ulang sesi yang baru. Mencarinya seketika membuat tes ini gagal
+     * sesekali — tetapi hanya dalam rangkaian penuh, ketika mesin sedang
+     * sibuk dan render tertunda beberapa milidetik.
+     */
+    await user.click(await screen.findByRole('link', { name: /Admin/i }))
     await waitFor(() => expect(screen.getByText('Siti Aminah')).toBeTruthy())
     await user.click(screen.getByRole('button', { name: /Konfirmasi/i }))
 
