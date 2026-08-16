@@ -29,3 +29,11 @@ server/data/
 
 # rahasia
 .env
+
+# Wadah Android hasil `npx cap add android` — dibuat ulang, jangan di-commit
+android/
+
+# Kunci penandatanganan APK. JANGAN PERNAH masuk Git:
+# bila bocor, orang lain bisa merilis pembaruan palsu atas nama Anda.
+*.keystore
+*.jks
