@@ -55,6 +55,10 @@ jobs:
 
       - uses: android-actions/setup-android@v3
 
+      # Menyimpan unduhan Gradle antar-jalan. Build pertama tetap lambat,
+      # berikutnya jauh lebih cepat.
+      - uses: gradle/actions/setup-gradle@v4
+
       - name: Periksa alamat API
         env:
           API_BASE: ${{ inputs.api_base }}

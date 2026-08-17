@@ -163,3 +163,47 @@ describe('workflow pembuatan APK', () => {
     expect(wf).toContain('if-no-files-found: error')
   })
 })
+
+/**
+ * Versi action yang dipakai workflow.
+ *
+ * `actions/upload-artifact@v3` dimatikan GitHub sejak 30 Januari 2025:
+ * memakainya membuat workflow gagal, bukan sekadar memberi peringatan.
+ * Contoh workflow yang beredar di internet banyak yang masih memakainya.
+ */
+describe('workflow memakai action yang masih hidup', () => {
+  const wf = readFileSync('docs/workflow/apk.yml', 'utf8')
+
+  it('tidak memakai artifact action v3 yang sudah dimatikan', () => {
+    expect(wf).not.toMatch(/actions\/(upload|download)-artifact@v[123]\b/)
+    expect(wf).toContain('actions/upload-artifact@v4')
+  })
+
+  it('memakai setup-java v4, bukan v3', () => {
+    expect(wf).not.toMatch(/actions\/setup-java@v[123]\b/)
+  })
+
+  it('memakai gradle/actions/setup-gradle, bukan gradle-build-action lama', () => {
+    // gradle-build-action sudah digantikan gradle/actions/setup-gradle.
+    expect(wf).not.toContain('gradle/gradle-build-action')
+    expect(wf).toContain('gradle/actions/setup-gradle@v4')
+  })
+
+  it('menyertakan langkah membangun aplikasi web sebelum membungkus', () => {
+    /*
+     * Contoh workflow Android biasa langsung memanggil ./gradlew di akar
+     * repositori. Di sini tidak ada gradlew sampai Capacitor membuatnya,
+     * jadi urutannya wajib: build web -> cap add -> gradlew.
+     */
+    const i = wf.indexOf('npm run build')
+    const j = wf.indexOf('npx cap add android')
+    const k = wf.indexOf('gradlew assembleDebug')
+    expect(i).toBeGreaterThan(-1)
+    expect(j).toBeGreaterThan(i)
+    expect(k).toBeGreaterThan(j)
+  })
+
+  it('menjalankan gradlew di dalam folder android/, bukan akar repo', () => {
+    expect(wf).toContain('working-directory: android')
+  })
+})
