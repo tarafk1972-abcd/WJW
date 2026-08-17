@@ -74,7 +74,7 @@ describe('kode undangan yang hanya ada di perangkat', () => {
     await waitFor(() =>
       expect(document.body.textContent).toContain('RW 05 Griya Soreang'),
     )
-    expect(document.body.textContent).not.toContain('tidak valid atau sudah dipakai')
+    expect(document.body.textContent).not.toContain('tidak dikenali')
   })
 
   it('memperingatkan bahwa undangan itu tidak sampai ke admin', async () => {
@@ -101,7 +101,7 @@ describe('kode undangan yang hanya ada di perangkat', () => {
     await user.click(screen.getByRole('button', { name: /Periksa kode/i }))
 
     await waitFor(() =>
-      expect(document.body.textContent).toContain('tidak valid atau sudah dipakai'),
+      expect(document.body.textContent).toContain('tidak dikenali'),
     )
   })
 

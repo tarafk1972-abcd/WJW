@@ -149,6 +149,23 @@ export default function Register() {
     }
   }
 
+  /*
+   * Tautan/QR undangan dibuka di perangkat calon anggota, yang isinya
+   * kosong. Dulu kodenya hanya dicari di penyimpanan lokal, sehingga di
+   * HP baru nama lingkungan tidak pernah muncul dan tombol Lanjut tetap
+   * mati — kode yang sah terlihat seperti kode yang ditolak. Tanyakan ke
+   * server begitu halaman terbuka, tanpa menunggu pengguna menekan
+   * "Periksa kode" (banyak yang tidak sadar harus menekannya).
+   */
+  const [codeChecked, setCodeChecked] = useState(false)
+  useEffect(() => {
+    if (!codeParam || codeChecked) return
+    setCodeChecked(true)
+    void applyCode(codeParam)
+    // applyCode sengaja tidak masuk daftar: identitasnya berubah tiap render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codeParam, codeChecked])
+
   const back = () => {
     setErr('')
     if (step === 'profile') setStep('community')

@@ -310,7 +310,14 @@ const id = {
   errPhoneTaken: 'Nomor HP sudah terdaftar.',
   errLogin: 'Email/HP atau kata sandi salah.',
   errNoCommunity: 'Pilih lingkungan atau buat yang baru.',
-  errInvite: 'Kode undangan tidak valid atau sudah dipakai.',
+  /*
+   * Jangan menyebut "sudah dipakai" di sini. Kode undangan memang dibuat
+   * untuk dipakai banyak orang, jadi kalimat itu menuduh keadaan yang
+   * hampir selalu bukan penyebabnya, dan membuat pengurus mengira kodenya
+   * hangus setelah satu orang mendaftar. Kode yang benar-benar habis atau
+   * kedaluwarsa punya pesannya sendiri di bawah.
+   */
+  errInvite: 'Kode undangan tidak dikenali. Periksa lagi hurufnya, atau minta kode baru ke pengurus.',
   inviteLocalOnly:
     'Undangan ini hanya ada di perangkat ini, bukan di server. Pendaftaran Anda tidak akan terlihat oleh admin. Mintalah kode baru kepada pengurus.',
   errGeo: 'Tidak dapat mengambil lokasi. Pilih di peta.',
@@ -510,7 +517,7 @@ const id = {
   selectedCommunity: 'Lingkungan dipilih',
   changeCommunity: 'Ganti',
   errInviteExpired: 'Kode undangan sudah kedaluwarsa.',
-  errInviteUsed: 'Kode undangan sudah mencapai batas pemakaian.',
+  errInviteUsed: 'Kode undangan sudah mencapai batas jumlah pemakai.',
   errNoMatch: 'Tidak ada lingkungan yang cocok.',
   viaInvite: 'Lewat kode undangan',
   viaSearch: 'Lewat pencarian',
@@ -1005,7 +1012,7 @@ const en: Dict = {
   errPhoneTaken: 'Phone number is already registered.',
   errLogin: 'Wrong email/phone or password.',
   errNoCommunity: 'Pick a neighbourhood or create a new one.',
-  errInvite: 'Invite code is invalid or already used.',
+  errInvite: 'That invite code is not recognised. Check the letters, or ask the organiser for a new one.',
   inviteLocalOnly:
     'This invite exists only on this device, not on the server. Your registration will not reach the admin. Ask the organiser for a fresh code.',
   errGeo: 'Could not get your location. Pick it on the map.',

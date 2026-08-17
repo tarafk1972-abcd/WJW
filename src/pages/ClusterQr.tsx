@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { adminApi } from '../lib/api'
 import { createInvite, inviteLink, revokeInvite } from '../lib/db'
 import { fmtDate } from '../lib/format'
 import { useApp } from '../lib/store'
+import { apiMode, mutate } from '../lib/sync'
 import { Icon } from '../ui/Icon'
 import { QrCode } from '../ui/QrCode'
 import { useToast } from '../ui/Toast'
@@ -49,8 +51,25 @@ export default function ClusterQr() {
     )
   }
 
-  const make = () => {
+  /*
+   * QR ini dicetak dan ditempel di pos satpam: yang memindainya adalah
+   * perangkat orang lain. Karena itu kodenya HARUS dibuat di server.
+   *
+   * Dulu halaman ini hanya memanggil createInvite() lokal, jadi kode itu
+   * hanya dikenal peramban admin. Setiap warga yang memindai posternya
+   * ditolak dengan "Kode undangan tidak valid atau sudah dipakai" —
+   * padahal kodenya benar dan belum kedaluwarsa; ia memang tidak pernah
+   * ada di server.
+   */
+  const make = async () => {
     setBusy(true)
+    if (apiMode()) {
+      const ok = await mutate(() => adminApi.createInvite('warga', 365, null))
+      setBusy(false)
+      if (!ok) return toast(t('errOffline'), 'err')
+      toast(t('inviteCreated'))
+      return
+    }
     createInvite(me.id, community.id, 'warga', { days: 365, maxUses: null })
     setBusy(false)
     toast(t('inviteCreated'))
@@ -205,6 +224,9 @@ export default function ClusterQr() {
             style={{ marginTop: 12 }}
             onClick={() => {
               revokeInvite(me.id, clusterInvite.id)
+              // Cabut juga di server, kalau tidak kode lama tetap hidup di
+              // sana dan poster yang sudah dicetak masih bisa dipakai.
+              if (apiMode()) void mutate(() => adminApi.revokeInvite(clusterInvite.id))
               toast(t('revoked'))
             }}
           >
@@ -217,7 +239,7 @@ export default function ClusterQr() {
             <span className="em">📇</span>
             {t('clusterQrSub')}
           </div>
-          <button className="btn btn-primary" disabled={busy} onClick={make}>
+          <button className="btn btn-primary" disabled={busy} onClick={() => void make()}>
             <Icon name="key" size={16} /> {t('makeClusterQr')}
           </button>
         </>
