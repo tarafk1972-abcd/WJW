@@ -38,13 +38,15 @@ ada di [docs/UPDATE-DI-WINDOWS.md](docs/UPDATE-DI-WINDOWS.md).
 
 ## Memasang di ponsel
 
-Cara tercepat: buka alamat aplikasi di Chrome Android → menu ⋮ →
-**Instal aplikasi**. Ikonnya muncul di layar utama dan berjalan tanpa
-bilah alamat.
+Buka alamat aplikasi di **Chrome Android** → menu ⋮ → **Instal aplikasi**.
+Ikonnya muncul di layar utama dan berjalan tanpa bilah alamat.
+
+Menu itu hanya muncul bila aplikasi dilayani lewat **HTTPS** — alamat
+`http://192.168.x.x` dari jaringan lokal tidak bisa dipasang. Langkah
+lengkap dan cara mengatasinya bila menunya tak muncul ada di
+[docs/PASANG-DI-HP.md](docs/PASANG-DI-HP.md).
 
 Untuk membuat berkas APK, lihat [docs/BUAT-APK.md](docs/BUAT-APK.md).
-Perlu diperhatikan: APK **wajib** dibangun dengan alamat server publik
-(`VITE_API_BASE`), kalau tidak semua layarnya akan kosong.
 
 ## MVP (Versi 1) — satu layar, satu tombol
 

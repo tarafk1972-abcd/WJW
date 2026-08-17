@@ -73,3 +73,44 @@ describe('konfigurasi Capacitor', () => {
     expect(cfg.webDir).toBe('dist')
   })
 })
+
+/**
+ * Syarat Chrome agar "Instal aplikasi" muncul di Android.
+ *
+ * Bila salah satu tidak terpenuhi, menunya tidak muncul sama sekali —
+ * tanpa pesan galat apa pun, sehingga sangat mudah lolos dari perhatian.
+ */
+describe('syarat pemasangan di Android', () => {
+  const sw = readFileSync('public/sw.js', 'utf8')
+
+  it('service worker menangani fetch', () => {
+    // Ini syarat mutlak Chrome; tanpa handler fetch tidak ada tawaran instal.
+    expect(sw).toMatch(/addEventListener\(\s*'fetch'/)
+  })
+
+  it('service worker didaftarkan untuk semua pengunjung, bukan setelah login', () => {
+    // Kalau hanya didaftarkan di layar tertentu, warga yang baru membuka
+    // halaman depan tidak akan pernah ditawari memasang.
+    const main = readFileSync('src/main.tsx', 'utf8')
+    expect(main).toContain("navigator.serviceWorker.register('/sw.js')")
+  })
+
+  it('tidak menyimpan jawaban API ke cache', () => {
+    /*
+     * Data darurat harus selalu yang terbaru. Menyajikan salinan lama
+     * saat kejadian berlangsung lebih berbahaya daripada gagal memuat.
+     */
+    expect(sw).toContain("url.pathname.startsWith('/api/')")
+  })
+
+  it('halaman menautkan manifest dan warna tema', () => {
+    const html = readFileSync('index.html', 'utf8')
+    expect(html).toContain('rel="manifest"')
+    expect(html).toContain('name="theme-color"')
+  })
+
+  it('start_url berada dalam scope', () => {
+    // start_url di luar scope membuat manifest ditolak.
+    expect(manifest.start_url).toBe('./')
+  })
+})
