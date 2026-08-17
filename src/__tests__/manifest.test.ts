@@ -114,3 +114,52 @@ describe('syarat pemasangan di Android', () => {
     expect(manifest.start_url).toBe('./')
   })
 })
+
+/**
+ * Alur pembuatan APK di GitHub Actions.
+ *
+ * APK dibangun di mesin GitHub karena ia sudah punya JDK dan Android SDK.
+ * Yang paling mudah salah adalah alamat server: bila keliru, APK-nya
+ * terpasang tetapi setiap layar kosong — dan build tetap "berhasil".
+ */
+describe('workflow pembuatan APK', () => {
+  // Disimpan di docs/ karena token otomatis tidak boleh membuat workflow;
+  // pemilik repositori menyalinnya ke .github/workflows/ sekali saja.
+  const wf = readFileSync('docs/workflow/apk.yml', 'utf8')
+
+  it('meminta alamat API sebagai masukan wajib', () => {
+    expect(wf).toContain('api_base')
+    expect(wf).toMatch(/required:\s*true/)
+  })
+
+  it('menolak alamat yang tidak bisa dijangkau dari HP', () => {
+    // https wajib, dan alamat lokal tidak ada artinya di dalam APK.
+    expect(wf).toContain('https://*')
+    expect(wf).toContain('localhost')
+    expect(wf).toContain('192.168.')
+  })
+
+  it('memastikan alamat benar-benar tertanam sebelum membungkus', () => {
+    // Salah ketik nama variabel akan lolos tanpa pemeriksaan ini.
+    expect(wf).toContain('grep -rqF "$API_BASE" dist/assets/')
+  })
+
+  it('menambahkan izin yang dibutuhkan fitur inti', () => {
+    for (const izin of [
+      'ACCESS_FINE_LOCATION',
+      'POST_NOTIFICATIONS',
+      'CAMERA',
+      'RECORD_AUDIO',
+    ]) {
+      expect(wf, izin).toContain(izin)
+    }
+  })
+
+  it('menjalankan tes sebelum membangun APK', () => {
+    expect(wf).toContain('npm test')
+  })
+
+  it('gagal bila APK tidak terbentuk, bukan diam-diam kosong', () => {
+    expect(wf).toContain('if-no-files-found: error')
+  })
+})

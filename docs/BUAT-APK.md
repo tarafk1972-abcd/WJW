@@ -4,9 +4,58 @@ Aplikasi ini dibuat sebagai web (PWA). Untuk menjadikannya APK, isinya
 dibungkus memakai **Capacitor** — kerangka resmi yang menjalankan aplikasi
 web di dalam wadah Android.
 
-Semua berkas yang diperlukan sudah disiapkan di repositori ini. Yang
-belum bisa dikerjakan dari sini hanyalah proses kompilasinya, karena
-membutuhkan Java dan Android SDK.
+Ada dua jalan:
+
+- **Bangun di GitHub Actions** — tidak perlu memasang apa pun. Ini yang
+  paling mudah, dijelaskan tepat di bawah.
+- **Bangun di komputer sendiri** — perlu JDK dan Android Studio.
+  Dijelaskan setelahnya.
+
+---
+
+## Cara termudah: bangun di GitHub (tanpa memasang apa pun)
+
+Mesin GitHub Actions sudah punya JDK dan Android SDK, jadi APK bisa
+dibuat tanpa Android Studio di komputer Anda.
+
+### Sekali saja: aktifkan workflow-nya
+
+Berkasnya ada di `docs/workflow/apk.yml`. Salin ke tempat yang dibaca
+GitHub:
+
+```
+mkdir -p .github/workflows
+cp docs/workflow/apk.yml .github/workflows/apk.yml
+git add .github/workflows/apk.yml
+git commit -m "Aktifkan workflow pembuatan APK"
+git push
+```
+
+Ia tidak diletakkan langsung di sana karena GitHub melarang token
+otomatis membuat berkas workflow — pengamanan yang wajar, agar sebuah
+bot tidak bisa diam-diam menjalankan kode di repositori orang.
+
+### Setiap kali ingin membuat APK
+
+1. Buka repositori di GitHub → tab **Actions**
+2. Pilih **Build APK** di daftar kiri
+3. Klik **Run workflow**
+4. Isi **Alamat server API** — lihat bagian berikutnya, ini yang paling
+   menentukan
+5. Klik **Run workflow** hijau
+
+Tunggu sekitar 5–10 menit. Setelah selesai, buka jalannya workflow lalu
+unduh **wjw-apk** di bagian **Artifacts**.
+
+Berkas itu berisi `app-debug.apk`. Salin ke HP, lalu pasang — Android
+akan meminta izin "Instal aplikasi tidak dikenal" satu kali.
+
+> Bila tab Actions belum aktif, buka **Settings → Actions → General**
+> lalu izinkan menjalankan workflow.
+
+Workflow ini juga menjalankan seluruh tes lebih dulu, dan berhenti bila
+alamat servernya tidak masuk akal — supaya Anda tidak menunggu sepuluh
+menit hanya untuk mendapat APK yang layarnya kosong.
 
 ---
 
