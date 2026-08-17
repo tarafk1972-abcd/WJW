@@ -170,8 +170,17 @@ export const adminApi = {
     api.post(`/members/${id}/decide`, { decision, role, reason }),
   setRole: (id: string, role: string) => api.post(`/members/${id}/role`, { role }),
   saveArea: (area: { lat: number; lng: number }[]) => api.put('/community/area', { area }),
+  /**
+   * Buat kode undangan.
+   *
+   * Jawabannya menyertakan `expiresAt` — pemanggil harus memakainya
+   * langsung, bukan mencari undangan itu di cache: cache pada render
+   * yang sedang berjalan belum memuatnya.
+   */
   createInvite: (role: string, days?: number, maxUses?: number | null) =>
-    api.post<{ invite: { id: string; code: string } }>('/invites', { role, days, maxUses }),
+    api.post<{
+      invite: { id: string; code: string; role: string; expiresAt: number }
+    }>('/invites', { role, days, maxUses }),
   revokeInvite: (id: string) => api.del(`/invites/${id}`),
   addCheckpoint: (b: { name: string; lat: number; lng: number; radiusM: number }) =>
     api.post<{ id: string }>('/checkpoints', b),

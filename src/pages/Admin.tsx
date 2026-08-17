@@ -94,8 +94,29 @@ export default function Admin() {
         const r = await adminApi.createInvite(inviteRole, inviteDays, inviteMax)
         await mutate(async () => r)
         setLastCode(r.invite.code)
-        const fresh = loadDBInvite(r.invite.id)
-        if (fresh) setShareInvite(fresh)
+
+        /*
+         * Pakai jawaban server apa adanya, jangan mencarinya di cache.
+         *
+         * `db` pada penutupan ini adalah snapshot dari render sebelum
+         * sinkronisasi, jadi undangan yang baru dibuat belum ada di
+         * dalamnya. Pencarian itu selalu gagal, panel QR tidak pernah
+         * tampil, dan admin hanya melihat kodenya tanpa tanggal berlaku —
+         * yang membuat undangan seolah tidak punya masa berlaku sama
+         * sekali.
+         */
+        setShareInvite({
+          id: r.invite.id,
+          communityId: community.id,
+          code: r.invite.code,
+          role: r.invite.role as Exclude<Role, 'superadmin'>,
+          createdBy: me.id,
+          createdAt: Date.now(),
+          expiresAt: r.invite.expiresAt,
+          usedBy: [],
+          maxUses: inviteMax,
+          revokedAt: null,
+        })
         toast(t('inviteCreated'))
         return
       } catch {
@@ -110,11 +131,6 @@ export default function Admin() {
     setLastCode(inv.code)
     setShareInvite(inv)
     toast(t('inviteCreated'))
-  }
-
-  /** Ambil undangan hasil server dari cache yang baru disegarkan. */
-  function loadDBInvite(id: string): Invite | null {
-    return db.invites.find((i) => i.id === id) ?? null
   }
 
   return (
@@ -617,7 +633,9 @@ export default function Admin() {
           </>
         ) : (
           <button className="btn btn-primary" onClick={() => void makeInvite()}>
-            <Icon name="key" size={16} /> {t('inviteCreated')}
+            {/* Tombol ini MEMBUAT undangan; dulu berlabel "Kode undangan
+                dibuat", yang berbunyi seperti pemberitahuan. */}
+            <Icon name="key" size={16} /> {t('makeInvite')}
           </button>
         )}
       </Sheet>
@@ -640,7 +658,7 @@ export default function Admin() {
                 {shareInvite.code}
               </div>
               <div className="tiny" style={{ marginTop: 6 }}>
-                {t('expired')}: {fmtDate(shareInvite.expiresAt, lang)} ·{' '}
+                {t('inviteValidUntil')} {fmtDate(shareInvite.expiresAt, lang)} ·{' '}
                 {t('inviteUses', { n: shareInvite.usedBy.length })}
               </div>
             </div>
