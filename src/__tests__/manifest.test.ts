@@ -207,3 +207,36 @@ describe('workflow memakai action yang masih hidup', () => {
     expect(wf).toContain('working-directory: android')
   })
 })
+
+/**
+ * Versi Capacitor yang dipakai.
+ *
+ * Diuji satu per satu pada Agustus 2026: v6 membawa kerentanan `tar`
+ * bertingkat critical, v8 membawa `uuid` moderate lewat `xcode`, dan v7
+ * bersih. Tanpa nomor versi, npm memasang yang terbaru — yaitu v8.
+ */
+describe('versi Capacitor', () => {
+  const wf = readFileSync('docs/workflow/apk.yml', 'utf8')
+  const doc = readFileSync('docs/BUAT-APK.md', 'utf8')
+
+  it('workflow menyebut versi secara tegas, bukan mengambil yang terbaru', () => {
+    expect(wf).toContain('@capacitor/core@7')
+    expect(wf).toContain('@capacitor/cli@7')
+    expect(wf).toContain('@capacitor/android@7')
+  })
+
+  it('workflow tidak memakai versi yang diketahui bermasalah', () => {
+    expect(wf).not.toMatch(/@capacitor\/cli@[68]\b/)
+    // Tanpa @ berarti npm mengambil versi terbaru; itu yang harus dihindari.
+    expect(wf).not.toMatch(/@capacitor\/cli(?!@)/)
+  })
+
+  it('workflow memeriksa kerentanan setelah memasangnya', () => {
+    // Kalau kelak v7 ikut terdampak, biar ketahuan sebelum jadi APK.
+    expect(wf).toContain('npm audit --audit-level=high')
+  })
+
+  it('panduan manual juga menyebut versinya', () => {
+    expect(doc).toContain('@capacitor/core@7')
+  })
+})

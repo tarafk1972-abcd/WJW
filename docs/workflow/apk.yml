@@ -103,7 +103,17 @@ jobs:
           echo "Alamat API tertanam: $API_BASE"
 
       - name: Pasang Capacitor
-        run: npm i --no-save @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
+        # Versi 7, bukan 6 atau 8. Diuji satu per satu pada Agustus 2026:
+        #   v6 -> tar critical (GHSA-34x7-hfp2-rc4v dan lainnya)
+        #   v7 -> 0 kerentanan
+        #   v8 -> uuid moderate lewat xcode (GHSA-w5hq-g745-h8pq)
+        # Periksa ulang bila kelak versinya dinaikkan.
+        run: npm i --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
+
+      - name: Periksa kerentanan bawaan Capacitor
+        # Gagalkan bila versi yang dipasang ternyata membawa kerentanan
+        # baru — lebih baik ketahuan di sini daripada di dalam APK.
+        run: npm audit --audit-level=high
 
       - name: Siapkan wadah Android
         env:

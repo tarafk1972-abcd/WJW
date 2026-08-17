@@ -110,8 +110,21 @@ Jalankan di folder proyek.
 ### 1. Pasang Capacitor
 
 ```
-npm install @capacitor/core @capacitor/cli @capacitor/android
+npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
 ```
+
+**Sebutkan `@7`.** Diuji satu per satu pada Agustus 2026:
+
+| Versi | Hasil `npm audit` |
+|---|---|
+| 6 | `tar` **critical** |
+| **7** | **0 kerentanan** |
+| 8 | `uuid` moderate lewat `xcode` |
+
+Tanpa nomor versi, npm memasang v8 dan `npm audit` langsung memunculkan
+peringatan. Perlu diketahui: kerentanan itu ada pada **perkakas
+pembangun**, bukan pada aplikasi yang dihasilkan — tetapi tidak ada
+alasan memakainya bila v7 bersih.
 
 ### 2. Bangun aplikasi webnya, dengan alamat server
 
