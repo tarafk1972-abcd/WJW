@@ -8,7 +8,7 @@
  */
 
 /** Naikkan bila daftar berkas di bawah berubah. */
-const CACHE = 'wjw-shell-v1'
+const CACHE = 'wjw-shell-v2'
 
 /** Berkas yang membuat aplikasi bisa terbuka tanpa jaringan. */
 const SHELL = ['./', './index.html', './manifest.webmanifest', './favicon.svg']
@@ -67,17 +67,42 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // Berkas statis: pakai yang tersimpan bila ada, sambil menyegarkannya.
+  const simpan = (res) => {
+    if (res && res.ok && res.type === 'basic') {
+      const salinan = res.clone()
+      void caches.open(CACHE).then((c) => c.put(req, salinan))
+    }
+    return res
+  }
+
+  /*
+   * Kode aplikasi: JARINGAN DULU.
+   *
+   * Skrip dan gaya membawa logika aplikasi, jadi salinan lama berarti
+   * aplikasi lama. Dulu semua berkas statis disajikan cache-first, dan
+   * akibatnya nyata di lapangan: setelah perbaikan dirilis, warga masih
+   * melihat pesan galat versi lama dan kode undangan yang sah tetap
+   * tampak ditolak. Perbaikan tertahan sampai kunjungan berikutnya —
+   * lebih lama lagi bila tabnya tidak pernah ditutup.
+   *
+   * Bila jaringan gagal, salinan tersimpan tetap dipakai, sehingga
+   * aplikasi ini tetap bisa dibuka saat sinyal hilang.
+   */
+  if (req.destination === 'script' || req.destination === 'style') {
+    event.respondWith(
+      fetch(req)
+        .then(simpan)
+        .catch(() => caches.match(req)),
+    )
+    return
+  }
+
+  // Sisanya (ikon, gambar, font) jarang berubah dan boros kuota bila
+  // diambil ulang terus: pakai yang tersimpan, segarkan di belakang.
   event.respondWith(
     caches.match(req).then((cached) => {
       const jaringan = fetch(req)
-        .then((res) => {
-          if (res && res.ok && res.type === 'basic') {
-            const salinan = res.clone()
-            void caches.open(CACHE).then((c) => c.put(req, salinan))
-          }
-          return res
-        })
+        .then(simpan)
         .catch(() => cached)
       return cached || jaringan
     }),
