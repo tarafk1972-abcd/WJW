@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router'
 import { deviceId, resetDB, setSession } from '../lib/db'
 import { LANGS } from '../lib/i18n'
+import { BUILD_STAMP } from '../lib/meta'
 import { seedDemo } from '../lib/seed'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'
@@ -47,7 +48,9 @@ export default function Landing() {
         <div className="brand-mark">WJW</div>
         <div className="grow">
           <div style={{ fontWeight: 800, fontSize: 15 }}>{t('appName')}</div>
-          <div className="tiny">{t('appTagline')}</div>
+          <div className="tiny">
+            {t('appTagline')} · v{BUILD_STAMP}
+          </div>
         </div>
       </div>
 

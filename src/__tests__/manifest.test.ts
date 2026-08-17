@@ -91,8 +91,13 @@ describe('syarat pemasangan di Android', () => {
   it('service worker didaftarkan untuk semua pengunjung, bukan setelah login', () => {
     // Kalau hanya didaftarkan di layar tertentu, warga yang baru membuka
     // halaman depan tidak akan pernah ditawari memasang.
+    //
+    // Pendaftarannya kini membawa opsi updateViaCache, jadi yang diperiksa
+    // adalah pemanggilannya di modul masuk aplikasi — bukan satu baris
+    // teks yang persis. Syarat "bukan setelah login" tetap terjaga:
+    // main.tsx berjalan untuk setiap pengunjung.
     const main = readFileSync('src/main.tsx', 'utf8')
-    expect(main).toContain("navigator.serviceWorker.register('/sw.js')")
+    expect(main).toMatch(/serviceWorker[\s\S]{0,400}?\.register\(\s*'\/sw\.js'/)
   })
 
   it('tidak menyimpan jawaban API ke cache', () => {

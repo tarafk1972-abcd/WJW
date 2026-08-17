@@ -126,3 +126,15 @@ export function statusKey(status: 'open' | 'ack' | 'resolved'): Key {
       ? 'statusAck'
       : 'statusOpen'
 }
+
+/**
+ * Penanda kapan berkas ini dibangun, mis. "18 Agt 18:52".
+ *
+ * Dicetak kecil di halaman depan. Gunanya satu: menjawab "apakah yang
+ * saya lihat ini versi terbaru?" tanpa membuka DevTools. Bila angka ini
+ * tidak berubah setelah aplikasi dijalankan ulang, yang tampil memang
+ * salinan lama — dan pencarian penyebab dimulai dari situ, bukan dari
+ * kode fiturnya.
+ */
+export const BUILD_STAMP: string =
+  typeof __BUILD_STAMP__ === 'string' ? __BUILD_STAMP__ : 'dev'

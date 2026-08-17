@@ -14,8 +14,24 @@ logger.error = (msg, opts) => {
   errorAsli(msg, opts)
 }
 
+/*
+ * Waktu build, ditanam ke dalam berkas hasil build.
+ *
+ * Dipakai BUILD_STAMP (src/lib/meta.ts) untuk menjawab satu pertanyaan
+ * yang kemarin memakan waktu berjam-jam: apakah yang berjalan di
+ * peramban ini benar-benar kode terbaru?
+ */
+const stamp = new Date().toLocaleString('id-ID', {
+  day: 'numeric',
+  month: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+  timeZone: 'Asia/Jakarta',
+})
+
 export default defineConfig({
   customLogger: logger,
+  define: { __BUILD_STAMP__: JSON.stringify(stamp) },
   plugins: [react()],
   server: {
     host: '0.0.0.0',
