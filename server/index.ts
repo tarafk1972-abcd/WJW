@@ -34,6 +34,7 @@ import {
   pointInPolygon,
   type LatLng,
 } from './geo.js'
+import { BATAS, alamatKlien, hitRateLimit } from './ratelimit.js'
 import {
   PAYMENT_INFO,
   PRICE_MONTHLY,
@@ -417,6 +418,18 @@ const registerSchema = z.object({
 })
 
 app.post('/api/auth/register', async (c) => {
+  /*
+   * Tiap pendaftaran menambah satu baris di antrean persetujuan admin —
+   * pekerjaan untuk manusia sungguhan. Tanpa batas, satu skrip bisa
+   * mengubur pendaftar asli di antara ratusan yang palsu.
+   *
+   * Batasnya lapang karena QR di pos satpam memang dimaksudkan untuk
+   * dipindai banyak warga berturut-turut, sering dari Wi-Fi yang sama.
+   * Penyaring sesungguhnya tetap persetujuan admin.
+   */
+  if (!hitRateLimit('register', alamatKlien(c.req.raw.headers), BATAS.register))
+    return bad(c, 'errTooManyAttempts', 429)
+
   const parsed = registerSchema.safeParse(await c.req.json().catch(() => ({})))
   if (!parsed.success) return bad(c, 'errRequired')
   const i = parsed.data
@@ -564,6 +577,23 @@ app.post('/api/auth/register', async (c) => {
 })
 
 app.post('/api/auth/login', async (c) => {
+  /*
+   * Batasi percobaan masuk per alamat.
+   *
+   * Sengaja longgar: SATU RW berbagi satu alamat publik, jadi seluruh
+   * warga tampak datang dari alamat yang sama persis seperti penyerang.
+   * Batas yang ketat akan mengunci tetangga sungguhan. Yang benar-benar
+   * memperlambat penebakan sandi adalah bcrypt; batas ini hanya
+   * mencegah pembanjiran.
+   *
+   * Dibatasi per alamat, BUKAN per akun. Mengunci akun terdengar lebih
+   * aman, padahal memberi penyerang cara membungkam warga: salah-sandi
+   * berkali-kali atas nama orang lain, dan orang itu terkunci dari
+   * aplikasi yang mungkin ia butuhkan malam itu juga.
+   */
+  if (!hitRateLimit('login', alamatKlien(c.req.raw.headers), BATAS.login))
+    return bad(c, 'errTooManyAttempts', 429)
+
   const body = (await c.req.json().catch(() => ({}))) as {
     identifier?: string
     password?: string

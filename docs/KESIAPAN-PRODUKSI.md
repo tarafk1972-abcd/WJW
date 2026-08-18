@@ -48,10 +48,22 @@ Aplikasi menyimpan data lokasi dan kesehatan (golongan darah, alergi,
 riwayat penyakit). Perlu kebijakan privasi tertulis dan persetujuan yang
 tercatat — bukan sekadar tombol di Pengaturan.
 
-### 4. Belum ada pembatasan laju permintaan
+### 4. Pembatasan laju — sudah ada, tetapi sederhana
 
-Endpoint publik seperti pendaftaran dan login belum dibatasi, sehingga
-terbuka terhadap percobaan sandi beruntun dan pendaftaran massal.
+Login dan pendaftaran kini dibatasi per alamat IP (`server/ratelimit.ts`).
+Batasnya sengaja longgar, karena satu RW berbagi satu alamat publik:
+membatasi terlalu ketat akan mengunci tetangga sungguhan yang mendaftar
+bersama-sama seusai rapat lingkungan.
+
+Yang perlu diketahui tentang batas ini:
+
+- penghitungnya di memori, jadi hilang saat server dijalankan ulang, dan
+  tidak berlaku bila nanti berjalan di banyak proses;
+- ia mencegah pembanjiran mesin, bukan serangan yang sabar dan pelan;
+- perlindungan sesungguhnya atas sandi tetap bcrypt, dan atas
+  pendaftaran palsu tetap persetujuan admin.
+
+Bisa disetel lewat `.env`: `WJW_RATE_LOGIN_MAX`, `WJW_RATE_REGISTER_MAX`.
 
 ### 5. Perubahan luring belum dikirim ulang
 

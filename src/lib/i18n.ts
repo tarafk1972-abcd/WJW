@@ -309,6 +309,8 @@ const id = {
   errEmailTaken: 'Email sudah terdaftar.',
   errPhoneTaken: 'Nomor HP sudah terdaftar.',
   errLogin: 'Email/HP atau kata sandi salah.',
+  errTooManyAttempts:
+    'Terlalu banyak percobaan dari jaringan ini. Tunggu beberapa menit, lalu coba lagi.',
   errNoCommunity: 'Pilih lingkungan atau buat yang baru.',
   /*
    * Jangan menyebut "sudah dipakai" di sini. Kode undangan memang dibuat
@@ -1020,6 +1022,8 @@ const en: Dict = {
   errEmailTaken: 'Email is already registered.',
   errPhoneTaken: 'Phone number is already registered.',
   errLogin: 'Wrong email/phone or password.',
+  errTooManyAttempts:
+    'Too many attempts from this network. Wait a few minutes, then try again.',
   errNoCommunity: 'Pick a neighbourhood or create a new one.',
   errInvite: 'That invite code is not recognised. Check the letters, or ask the organiser for a new one.',
   inviteLocalOnly:
