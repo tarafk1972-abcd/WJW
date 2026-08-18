@@ -34,6 +34,33 @@ function alamatLan() {
   return '127.0.0.1'
 }
 
+/**
+ * Cari OpenSSL yang bisa dipakai.
+ *
+ * Di Windows, OpenSSL ikut terpasang bersama Git for Windows — tetapi
+ * hanya terdaftar di PATH milik Git Bash, bukan Command Prompt. Padahal
+ * seluruh panduan proyek ini memakai Command Prompt. Menyerah di titik
+ * ini berarti menolak menjalankan program yang sebenarnya sudah ada di
+ * komputer pengguna, hanya karena letaknya tidak dicari.
+ */
+function cariOpenssl() {
+  const kandidat = [
+    'openssl', // Linux, macOS, Git Bash — PATH sudah benar
+    'C:\\Program Files\\Git\\usr\\bin\\openssl.exe',
+    'C:\\Program Files (x86)\\Git\\usr\\bin\\openssl.exe',
+    'C:\\Program Files\\OpenSSL-Win64\\bin\\openssl.exe',
+  ]
+  for (const exe of kandidat) {
+    try {
+      execFileSync(exe, ['version'], { stdio: 'ignore' })
+      return exe
+    } catch {
+      // coba kandidat berikutnya
+    }
+  }
+  return null
+}
+
 const ip = alamatLan()
 
 if (!existsSync(KEY) || !existsSync(CRT)) {
@@ -58,9 +85,20 @@ subjectAltName = IP:${ip}, IP:127.0.0.1, DNS:localhost
 `,
   )
 
+  const openssl = cariOpenssl()
+  if (!openssl) {
+    console.error(
+      '\n  [WJW] OpenSSL tidak ditemukan.' +
+        '\n        Biasanya sudah ikut terpasang bersama Git for Windows.' +
+        '\n        Pasang Git dari https://git-scm.com/download/win' +
+        '\n        lalu jalankan lagi perintah ini.\n',
+    )
+    process.exit(1)
+  }
+
   try {
     execFileSync(
-      'openssl',
+      openssl,
       [
         'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
         '-keyout', KEY, '-out', CRT,
@@ -71,9 +109,9 @@ subjectAltName = IP:${ip}, IP:127.0.0.1, DNS:localhost
     console.log(`  [WJW] Sertifikat dibuat untuk ${ip} (berlaku 365 hari).`)
   } catch {
     console.error(
-      '\n  [WJW] Gagal membuat sertifikat — OpenSSL tidak ditemukan.' +
-        '\n        Di Windows, OpenSSL ikut terpasang bersama Git.' +
-        '\n        Coba jalankan skrip ini dari "Git Bash".\n',
+      '\n  [WJW] Gagal membuat sertifikat, padahal OpenSSL ditemukan di:' +
+        `\n        ${openssl}` +
+        '\n        Kirimkan pesan galat di atas bila perlu bantuan.\n',
     )
     process.exit(1)
   }
