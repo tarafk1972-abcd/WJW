@@ -1,0 +1,235 @@
+/**
+ * Dua hal yang berjalan diam-diam di latar:
+ *
+ *   1. Notifikasi darurat otomatis bagi satpam yang sedang bertugas.
+ *   2. Pelaporan posisi terakhir bagi SEMUA peran, agar peringatan
+ *      darurat bisa memanggil warga terdekat — yang belum tentu satpam.
+ *
+ * Menggantikan `PushPrompt` untuk peran satpam. Tidak ada ajakan dan
+ * tidak ada tombol tutup: selama satpam berada di dalam area lingkungan,
+ * langganan push dipasang sendiri.
+ *
+ * Yang ditampilkan hanyalah keadaannya, dan hanya bila ada yang perlu
+ * dilakukan pengguna — yaitu ketika browser masih menahan izin.
+ */
+import { useEffect, useState } from 'react'
+import { watchLocation } from '../lib/capture'
+import {
+  ensureDutyPush,
+  onDutyInArea,
+  requestPushOnNextTouch,
+  resumeDutyPush,
+  silencedFor,
+} from '../lib/dutyPush'
+import { rememberRole, shareLocationForEmergency } from '../lib/presence'
+import { useApp } from '../lib/store'
+import { apiMode } from '../lib/sync'
+import { pushSupported, registerServiceWorker } from '../lib/pushClient'
+import { Icon } from './Icon'
+
+type State = 'off' | 'on' | 'needsPermission' | 'blocked'
+
+export function DutyAndPresence() {
+  const { t, me, community, locationWanted, db } = useApp()
+  const [state, setState] = useState<State>('off')
+  const [onDuty, setOnDuty] = useState(false)
+  const [silenced, setSilenced] = useState(0)
+
+  const isSatpam = me?.role === 'satpam'
+
+  /*
+   * Ronda yang belum ditutup = satpam menyatakan dirinya sedang bertugas.
+   * Dipakai bersama posisi GPS, agar notifikasi tidak padam ketika sinyal
+   * hilang atau ia sejenak melewati batas area.
+   */
+  const patrolling = !!me && db.patrols.some((p) => !p.endedAt && p.satpamId === me.id)
+
+  // Catat peran, supaya jalur tugas tidak pernah terblokir oleh pilihan
+  // privasi yang hanya berlaku bagi warga.
+  useEffect(() => {
+    rememberRole(me?.role)
+  }, [me?.role])
+
+  /*
+   * Ronda berjalan langsung menandai bertugas, tanpa menunggu GPS.
+   * Ditulis lewat effect, bukan saat render, agar tidak memicu
+   * pembaruan berulang.
+   */
+  useEffect(() => {
+    if (patrolling) setOnDuty(true)
+  }, [patrolling])
+
+  /*
+   * Pantau posisi HANYA untuk satpam, dan hanya demi mengetahui ia
+   * sedang di dalam area atau tidak — itu yang menentukan notifikasi
+   * tugasnya menyala. Warga biasa tidak disentuh GPS-nya di sini.
+   */
+  useEffect(() => {
+    if (!apiMode() || !me || !isSatpam) return
+    void registerServiceWorker()
+
+    const stop = watchLocation((pos) => {
+      setOnDuty(onDutyInArea(me, community, pos, patrolling))
+    })
+    return stop
+  }, [isSatpam, me, community, patrolling])
+
+  /*
+   * Kirim posisi hanya ketika sedang ada darurat.
+   *
+   * `locationWanted` datang dari server dan bernilai true hanya selama
+   * ada peringatan yang masih berlangsung. Di luar itu GPS tidak
+   * disentuh sama sekali, sehingga posisi warga tidak pernah terkumpul
+   * pada hari-hari biasa.
+   */
+  useEffect(() => {
+    if (!apiMode() || !me || !locationWanted) return
+    void shareLocationForEmergency()
+  }, [me, locationWanted])
+
+
+  // Nyalakan sendiri begitu masuk area.
+  useEffect(() => {
+    if (!isSatpam) return
+    let alive = true
+    void ensureDutyPush(onDuty).then((s) => {
+      if (alive) setState(s)
+    })
+    return () => {
+      alive = false
+    }
+  }, [isSatpam, onDuty, silenced])
+
+  /*
+   * Bertugas tetapi izin peramban belum ada: minta izin pada sentuhan
+   * pertama, tanpa menawarkan pilihan apa pun kepada satpam.
+   */
+  useEffect(() => {
+    if (!isSatpam || !onDuty || state !== 'needsPermission') return
+    return requestPushOnNextTouch(() => {
+      void ensureDutyPush(true).then(setState)
+    })
+  }, [isSatpam, onDuty, state])
+
+  // Peredaman berakhir sendiri; periksa berkala agar kembali menyala.
+  useEffect(() => {
+    if (!isSatpam) return
+    const tick = () => setSilenced(silencedFor())
+    tick()
+    const id = setInterval(tick, 30_000)
+    return () => clearInterval(id)
+  }, [isSatpam])
+
+  if (!isSatpam || !pushSupported()) return null
+
+  /*
+   * Area belum digambar admin.
+   *
+   * Tanpa area, tidak ada cara memastikan satpam sedang bertugas, jadi
+   * notifikasi otomatis tidak bisa berjalan. Diam saja akan menyesatkan:
+   * satpam mengira notifikasinya aktif padahal tidak ada apa pun yang
+   * menyalakannya.
+   */
+  if (!patrolling && (!community || community.area.length < 3)) {
+    return (
+      <div className="push-prompt">
+        <Icon name="alert" size={17} color="var(--warn)" />
+        <div className="grow">
+          <div className="strong" style={{ fontSize: 13.5 }}>
+            {t('dutyNoArea')}
+          </div>
+          <div className="tiny">{t('dutyNoAreaHint')}</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (!onDuty) {
+    // Di luar area: notifikasi memang tidak aktif. Katakan apa adanya,
+    // supaya satpam tahu bedanya "mati" dengan "rusak".
+    return (
+      <div className="push-prompt">
+        <Icon name="bell" size={17} color="var(--text-3)" />
+        <div className="grow">
+          <div className="strong" style={{ fontSize: 13.5 }}>
+            {t('dutyPushOff')}
+          </div>
+          <div className="tiny">{t('dutyPushOffHint')}</div>
+        </div>
+      </div>
+    )
+  }
+
+  // Sedang diredam karena satpam merespons sebuah peringatan.
+  if (silenced > 0) {
+    return (
+      <div className="push-prompt">
+        <Icon name="bell" size={17} color="var(--text-3)" />
+        <div className="grow">
+          <div className="strong" style={{ fontSize: 13.5 }}>
+            {t('dutyPushSilenced', { n: Math.ceil(silenced / 60000) })}
+          </div>
+          <div className="tiny">{t('dutyPushSilencedHint')}</div>
+        </div>
+        <button
+          className="btn btn-sm btn-ghost"
+          onClick={() => {
+            resumeDutyPush()
+            setSilenced(0)
+          }}
+        >
+          {t('dutyPushResume')}
+        </button>
+      </div>
+    )
+  }
+
+  /*
+   * Peramban belum memberi izin.
+   *
+   * Tidak ada tombol pilihan di sini: izin diminta sendiri pada sentuhan
+   * pertama satpam di layar (lihat effect di atas). Yang ditampilkan
+   * hanya keterangan, supaya satpam tahu mengapa dialog peramban muncul.
+   */
+  if (state === 'needsPermission') {
+    return (
+      <div className="push-prompt">
+        <Icon name="bell" size={17} color="var(--warn)" />
+        <div className="grow">
+          <div className="strong" style={{ fontSize: 13.5 }}>
+            {t('dutyPushArming')}
+          </div>
+          <div className="tiny">{t('dutyPushArmingHint')}</div>
+        </div>
+      </div>
+    )
+  }
+
+  // Izin ditolak permanen — hanya bisa dipulihkan lewat setelan browser.
+  if (state === 'blocked') {
+    return (
+      <div className="push-prompt">
+        <Icon name="alert" size={17} color="var(--danger)" />
+        <div className="grow">
+          <div className="strong" style={{ fontSize: 13.5 }}>
+            {t('dutyPushBlocked')}
+          </div>
+          <div className="tiny">{t('dutyPushBlockedHint')}</div>
+        </div>
+      </div>
+    )
+  }
+
+  // Aktif: tampilkan sebagai penanda tenang, tanpa tombol apa pun.
+  return (
+    <div className="push-prompt duty-on">
+      <Icon name="shield" size={17} color="var(--brand)" />
+      <div className="grow">
+        <div className="strong" style={{ fontSize: 13.5 }}>
+          {t('dutyPushOn')}
+        </div>
+        <div className="tiny">{t('dutyPushOnHint')}</div>
+      </div>
+    </div>
+  )
+}

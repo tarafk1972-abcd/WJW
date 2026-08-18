@@ -1,0 +1,168 @@
+# Membangun APK Android di GitHub Actions.
+#
+# ┌──────────────────────────────────────────────────────────────────┐
+# │ BERKAS INI PERLU DIPINDAHKAN LEBIH DULU                          │
+# │                                                                  │
+# │ Salin ke:  .github/workflows/apk.yml                             │
+# │                                                                  │
+# │ Ia ditaruh di sini karena token otomatis tidak diizinkan GitHub  │
+# │ membuat berkas workflow. Memindahkannya cukup sekali.            │
+# └──────────────────────────────────────────────────────────────────┘
+#
+# Mesin GitHub sudah punya JDK dan Android SDK, jadi APK bisa dibuat
+# tanpa memasang apa pun di komputer Anda.
+#
+# Cara memakai: buka tab Actions di GitHub -> "Build APK" -> Run workflow.
+# Hasilnya diunduh dari bagian Artifacts pada halaman jalannya workflow.
+
+name: Build APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_base:
+        description: >-
+          Alamat server API (HTTPS penuh, mis. https://api.domain-anda.com).
+          WAJIB diisi: di dalam APK tidak ada alamat halaman, sehingga
+          panggilan /api tidak menemukan apa pun dan semua layar kosong.
+        required: true
+        type: string
+      app_name:
+        description: Nama aplikasi yang tampil di bawah ikon
+        required: false
+        default: Warga Jaga Warga
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      # Menyimpan unduhan Gradle antar-jalan. Build pertama tetap lambat,
+      # berikutnya jauh lebih cepat.
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Periksa alamat API
+        env:
+          API_BASE: ${{ inputs.api_base }}
+        run: |
+          # Gagalkan lebih awal dengan sebab yang jelas, daripada
+          # menghasilkan APK yang terpasang tetapi layarnya kosong.
+          case "$API_BASE" in
+            https://*) ;;
+            *)
+              echo "::error::Alamat API harus diawali https:// — diterima: $API_BASE"
+              exit 1
+              ;;
+          esac
+          case "$API_BASE" in
+            *localhost*|*127.0.0.1*|*192.168.*)
+              echo "::error::Alamat lokal tidak bisa dijangkau dari HP: $API_BASE"
+              exit 1
+              ;;
+          esac
+
+      - run: npm ci --ignore-scripts
+      - run: npm rebuild better-sqlite3
+
+      - name: Jalankan tes
+        run: npm test
+
+      - name: Bangun aplikasi web
+        env:
+          VITE_API_BASE: ${{ inputs.api_base }}
+        run: npm run build
+
+      - name: Pastikan alamat API benar-benar tertanam
+        env:
+          API_BASE: ${{ inputs.api_base }}
+        run: |
+          # Tanpa pemeriksaan ini, salah ketik nama variabel menghasilkan
+          # APK yang gagal total tetapi build-nya "berhasil".
+          if ! grep -rqF "$API_BASE" dist/assets/; then
+            echo "::error::Alamat API tidak ditemukan di hasil build."
+            exit 1
+          fi
+          echo "Alamat API tertanam: $API_BASE"
+
+      - name: Pasang Capacitor
+        # Versi 7, bukan 6 atau 8. Diuji satu per satu pada Agustus 2026:
+        #   v6 -> tar critical (GHSA-34x7-hfp2-rc4v dan lainnya)
+        #   v7 -> 0 kerentanan
+        #   v8 -> uuid moderate lewat xcode (GHSA-w5hq-g745-h8pq)
+        # Periksa ulang bila kelak versinya dinaikkan.
+        run: npm i --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
+
+      - name: Periksa kerentanan bawaan Capacitor
+        # Gagalkan bila versi yang dipasang ternyata membawa kerentanan
+        # baru — lebih baik ketahuan di sini daripada di dalam APK.
+        run: npm audit --audit-level=high
+
+      - name: Siapkan wadah Android
+        env:
+          APP_NAME: ${{ inputs.app_name }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const c = JSON.parse(fs.readFileSync('capacitor.config.json', 'utf8'));
+            c.appName = process.env.APP_NAME;
+            fs.writeFileSync('capacitor.config.json', JSON.stringify(c, null, 2));
+          "
+          npx cap add android
+          npx cap sync android
+
+      - name: Tambahkan izin Android
+        run: |
+          # Tanpa izin lokasi, penandaan ronda dan pemanggilan tetangga
+          # terdekat tidak bekerja. Tanpa POST_NOTIFICATIONS (Android 13+),
+          # notifikasi darurat tidak pernah muncul.
+          python3 - <<'PY'
+          import re
+          p = 'android/app/src/main/AndroidManifest.xml'
+          s = open(p, encoding='utf-8').read()
+          izin = [
+              'android.permission.INTERNET',
+              'android.permission.ACCESS_FINE_LOCATION',
+              'android.permission.ACCESS_COARSE_LOCATION',
+              'android.permission.CAMERA',
+              'android.permission.RECORD_AUDIO',
+              'android.permission.POST_NOTIFICATIONS',
+              'android.permission.VIBRATE',
+          ]
+          baris = '\n'.join(
+              f'    <uses-permission android:name="{i}" />' for i in izin if i not in s
+          )
+          if baris:
+              s = s.replace('</manifest>', baris + '\n</manifest>')
+              open(p, 'w', encoding='utf-8').write(s)
+          print(s)
+          PY
+
+      - name: Bangun APK debug
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Unggah APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: wjw-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
