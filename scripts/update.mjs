@@ -52,9 +52,18 @@ const kotor = baca('git status --porcelain')
 if (kotor) {
   console.log('\n  [WJW] Ada perubahan lokal. Disimpan dulu (bisa dikembalikan):')
   for (const baris of kotor.split('\n')) console.log('        ' + baris)
-  // Disimpan, bukan dibuang: kalau ternyata itu pekerjaan penting,
-  // masih bisa diambil lagi dengan `git stash pop`.
-  jalan(`git stash push -u -m "wjw-update ${new Date().toISOString()}"`)
+
+  /*
+   * `-u` sengaja TIDAK dipakai.
+   *
+   * Dulu skrip ini menyimpan berkas tak-terlacak juga, dan itu menelan
+   * `.github/workflows/apk.yml` yang baru saja dibuat pengguna —
+   * berkasnya lenyap tanpa sepatah kata, lalu `git add` menjawab
+   * "did not match any files". Berkas yang belum dilacak Git tidak
+   * pernah menghalangi `git merge --ff-only`, jadi tidak ada alasan
+   * menyentuhnya sama sekali.
+   */
+  jalan(`git stash push -m "wjw-update ${new Date().toISOString()}"`)
   console.log('        (kembalikan dengan: git stash pop)\n')
 }
 
