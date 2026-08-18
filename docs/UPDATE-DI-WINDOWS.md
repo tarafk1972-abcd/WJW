@@ -37,7 +37,31 @@ belum mengenal perintah `git`. Uji dengan:
 git --version
 ```
 
-### Memperbarui
+### Memperbarui — satu perintah
+
+```
+cd /d D:\Program\WJW4\WJW
+npm run update
+```
+
+Itu saja. Skrip itu menyimpan perubahan lokal Anda (bisa dikembalikan),
+menarik versi terbaru, lalu memasang paket.
+
+> **Kenapa bukan `git pull`?** Karena `git pull` berhenti setiap kali ada
+> berkas yang tersentuh di komputer Anda — dan `npm install` hampir selalu
+> menyentuh `package.json` atau `package-lock.json`. Pesannya berakhir
+> dengan **`Aborting`**, yang artinya **tidak ada satu berkas pun yang
+> berubah**. Baris itu mudah terlewat, lalu aplikasi lama tetap berjalan
+> dan bug yang sudah diperbaiki tampak masih ada. Itu sudah terjadi dua
+> kali di proyek ini.
+
+Kalau perubahan lokal itu ternyata penting, kembalikan dengan:
+
+```
+git stash pop
+```
+
+### Memperbarui — cara manual
 
 ```
 cd /d D:\Program\WJW4\WJW
