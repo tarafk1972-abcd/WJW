@@ -16,7 +16,8 @@
     "dev:all": "node scripts/dev-all.mjs",
     "reset-password": "tsx server/reset-password.ts",
     "dev:https": "node scripts/dev-https.mjs",
-    "update": "node scripts/update.mjs"
+    "update": "node scripts/update.mjs",
+    "pasang-workflow": "node scripts/pasang-workflow.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",

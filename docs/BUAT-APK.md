@@ -20,20 +20,33 @@ dibuat tanpa Android Studio di komputer Anda.
 
 ### Sekali saja: aktifkan workflow-nya
 
-Berkasnya ada di `docs/workflow/apk.yml`. Salin ke tempat yang dibaca
-GitHub:
+Berkasnya ada di `docs/workflow/apk.yml`. Pindahkan dengan satu
+perintah:
 
 ```
-mkdir -p .github/workflows
-cp docs/workflow/apk.yml .github/workflows/apk.yml
+npm run pasang-workflow
+```
+
+Skrip itu menyalinnya ke `.github/workflows/apk.yml` lalu mencetak
+perintah `git` berikutnya. Kirimkan ke GitHub:
+
+```
 git add .github/workflows/apk.yml
 git commit -m "Aktifkan workflow pembuatan APK"
-git push
+git push origin arena/019fad5f-wjw
 ```
 
-Ia tidak diletakkan langsung di sana karena GitHub melarang token
-otomatis membuat berkas workflow — pengamanan yang wajar, agar sebuah
-bot tidak bisa diam-diam menjalankan kode di repositori orang.
+Ia tidak diletakkan langsung di sana karena GitHub **menolak** token
+otomatis membuat berkas workflow:
+
+```
+refusing to allow a GitHub App to create or update workflow
+`.github/workflows/apk.yml` without `workflows` permission
+```
+
+Itu pengamanan yang wajar — tanpa aturan itu, sebuah bot yang dibajak
+bisa menjalankan kode apa pun atas nama pemilik repositori. Karena itu
+langkah ini memang harus Anda lakukan sendiri, sekali saja.
 
 ### Setiap kali ingin membuat APK
 
@@ -49,6 +62,14 @@ unduh **wjw-apk** di bagian **Artifacts**.
 
 Berkas itu berisi `app-debug.apk`. Salin ke HP, lalu pasang — Android
 akan meminta izin "Instal aplikasi tidak dikenal" satu kali.
+
+> **Ini APK "debug", bukan versi rilis.** Cukup untuk dipasang sendiri
+> dan diuji satpam, tetapi **tidak bisa** diunggah ke Play Store dan
+> tidak boleh disebarkan luas: ia ditandatangani kunci debug bawaan
+> yang sama di semua mesin, jadi tidak membuktikan aplikasi itu dari
+> Anda. Untuk sebaran sungguhan diperlukan keystore milik sendiri —
+> lihat bagian "APK untuk disebarkan (bukan debug)" di bawah bila sudah
+> sampai tahap itu.
 
 > Bila tab Actions belum aktif, buka **Settings → Actions → General**
 > lalu izinkan menjalankan workflow.
