@@ -14,7 +14,8 @@
     "server:start": "tsx server/index.ts",
     "vapid": "node -e \"const w=require('web-push');const k=w.generateVAPIDKeys();console.log('VAPID_PUBLIC_KEY='+k.publicKey);console.log('VAPID_PRIVATE_KEY='+k.privateKey)\"",
     "dev:all": "node scripts/dev-all.mjs",
-    "reset-password": "tsx server/reset-password.ts"
+    "reset-password": "tsx server/reset-password.ts",
+    "dev:https": "node scripts/dev-https.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.0",

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ApiError, patrolApi } from '../lib/api'
-import { getFix } from '../lib/capture'
+import { getFix, locationBlockedReason } from '../lib/capture'
 import { apiMode, syncState } from '../lib/sync'
 import {
   activeSchedule,
@@ -71,7 +71,20 @@ export default function PatrolCheck() {
     return best
   }, [pos, checkpoints])
 
+  /*
+   * Halangan permanen (alamat http biasa / peramban tanpa GPS) dipisahkan
+   * dari "sinyal sedang lemah". Tanpa pemisahan itu satpam disuruh
+   * menunggu keadaan yang tidak akan pernah berubah.
+   */
+  const blocked = locationBlockedReason()
+
   const locate = useCallback(async () => {
+    // Percuma menyalakan GPS bila peramban memang memblokirnya: yang
+    // didapat hanya jeda 8 detik lalu kegagalan yang sama.
+    if (locationBlockedReason()) {
+      setLocating(false)
+      return
+    }
     setLocating(true)
     const fix = await getFix()
     if (fix) {
@@ -202,6 +215,26 @@ export default function PatrolCheck() {
           )}
         </span>
       </div>
+
+      {/*
+        Halangan permanen: katakan sebabnya dan jalan keluarnya. Ini
+        dipasang di atas tombol, karena tombolnya tidak akan pernah
+        berhasil selama alamatnya masih http biasa.
+      */}
+      {blocked && (
+        <div className="banner banner-warn" style={{ marginTop: 12 }}>
+          <Icon name="info" size={17} />
+          <span>
+            <b>{t(blocked === 'insecure' ? 'geoInsecure' : 'geoUnsupported')}</b>
+            {blocked === 'insecure' && (
+              <>
+                <br />
+                <span className="tiny">{t('geoInsecureHint')}</span>
+              </>
+            )}
+          </span>
+        </div>
+      )}
 
       {checkpoints.length === 0 ? (
         <>

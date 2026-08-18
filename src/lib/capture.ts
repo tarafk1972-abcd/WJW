@@ -89,6 +89,25 @@ export function recordVoice(seconds = VOICE_SECONDS): VoiceCapture {
   return { done, stop: () => stopFn() }
 }
 
+/**
+ * Mengapa lokasi tidak bisa diambil sama sekali — bila memang begitu.
+ *
+ * Peramban hanya mengizinkan geolokasi pada "konteks aman": https://
+ * atau localhost. Aplikasi yang dibuka lewat alamat Wi-Fi biasa seperti
+ * http://192.168.1.5:5173 ditolak tanpa pernah menampilkan permintaan
+ * izin, jadi dari layar hal itu tidak bisa dibedakan dari GPS yang
+ * sedang lemah sinyal. Perbedaannya penting: yang satu bisa membaik
+ * dengan menunggu, yang satu lagi tidak akan pernah.
+ *
+ * Mengembalikan null bila tidak ada halangan permanen.
+ */
+export function locationBlockedReason(): 'insecure' | 'unsupported' | null {
+  // isSecureContext bisa tidak ada di lingkungan non-peramban.
+  if (typeof isSecureContext === 'boolean' && !isSecureContext) return 'insecure'
+  if (!navigator.geolocation) return 'unsupported'
+  return null
+}
+
 /** One-shot GPS fix. Resolves null instead of throwing. */
 export function getFix(
   timeout = 8000,

@@ -433,6 +433,15 @@ const id = {
   gettingLocation: 'Mengambil lokasi…',
   locationLocked: 'Lokasi terkunci',
   locationUnavailable: 'Lokasi tidak tersedia',
+  /*
+   * Dua sebab yang TIDAK akan membaik dengan menunggu. Keduanya perlu
+   * kalimatnya sendiri: satpam yang disuruh "menunggu sinyal" akan
+   * berdiri di titik ronda tanpa hasil, mengira HP-nya rusak.
+   */
+  geoInsecure: 'GPS diblokir karena alamatnya belum aman',
+  geoInsecureHint:
+    'Peramban hanya mengizinkan lokasi pada alamat https:// atau localhost. Buka aplikasi lewat alamat https, atau langsung di komputer server (localhost). Ronda masih bisa dicatat manual oleh admin.',
+  geoUnsupported: 'Peramban ini tidak mendukung GPS',
   accuracyM: '±{n} m',
   recordingVoice: 'Merekam suara {n} dtk…',
   voiceRecorded: 'Rekaman suara {n} dtk',
@@ -1122,6 +1131,10 @@ const en: Dict = {
   gettingLocation: 'Getting location…',
   locationLocked: 'Location locked',
   locationUnavailable: 'Location unavailable',
+  geoInsecure: 'GPS is blocked because this address is not secure',
+  geoInsecureHint:
+    'Browsers only allow location on https:// or localhost. Open the app over https, or directly on the server machine (localhost). An admin can still log the patrol manually.',
+  geoUnsupported: 'This browser has no GPS support',
   accuracyM: '±{n} m',
   recordingVoice: 'Recording {n}s of audio…',
   voiceRecorded: 'Voice note {n}s',

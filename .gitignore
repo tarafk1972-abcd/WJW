@@ -37,3 +37,6 @@ android/
 # bila bocor, orang lain bisa merilis pembaruan palsu atas nama Anda.
 *.keystore
 *.jks
+
+# Sertifikat pengujian HTTPS lokal — jangan pernah di-commit
+.cert/
