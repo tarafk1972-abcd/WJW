@@ -45,7 +45,9 @@ describe('PanicGrid hold-to-activate', () => {
       .mockImplementation((cb: FrameRequestCallback) => {
         return setTimeout(() => cb(now), 16) as unknown as number
       })
-
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id: number) =>
+      clearTimeout(id as unknown as NodeJS.Timeout),
+    )
     const onTrigger = vi.fn()
     render(wrap(<PanicGrid onTrigger={onTrigger} />))
     const tile = screen.getByRole('button', { name: 'Kebakaran' })
@@ -70,7 +72,9 @@ describe('PanicGrid hold-to-activate', () => {
       .mockImplementation((cb: FrameRequestCallback) => {
         return setTimeout(() => cb(now), 16) as unknown as number
       })
-
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id: number) =>
+      clearTimeout(id as unknown as NodeJS.Timeout),
+    )
     const onTrigger = vi.fn()
     render(wrap(<PanicGrid onTrigger={onTrigger} />))
     const tile = screen.getByRole('button', { name: 'Darurat medis' })
@@ -127,7 +131,9 @@ describe('BigSOS one-button behaviour', () => {
     perf.mockRestore()
     vi.useRealTimers()
   })
-
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id: number) =>
+      clearTimeout(id as unknown as NodeJS.Timeout),
+    )
   it('never fires if the finger lifts early', async () => {
     const { BigSOS, SOS_HOLD_MS } = await import('../ui/BigSOS')
     vi.useFakeTimers()
@@ -155,3 +161,6 @@ describe('BigSOS one-button behaviour', () => {
     vi.useRealTimers()
   })
 })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id: number) =>
+      clearTimeout(id as unknown as NodeJS.Timeout),
+    )
