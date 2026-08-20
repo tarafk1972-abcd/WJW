@@ -54,5 +54,8 @@
     "vite": "^8.2.0",
     "vitest": "^4.1.10"
   },
-  "description": "Warga Jaga Warga — aplikasi keamanan lingkungan warga"
+  "description": "Warga Jaga Warga — aplikasi keamanan lingkungan warga",
+  "engines": {
+    "node": "22.x"
+  }
 }
