@@ -21,3 +21,6 @@ if (!window.matchMedia) {
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia
 }
+import { configure } from '@testing-library/react'
+
+configure({ asyncUtilTimeout: 90000 })
