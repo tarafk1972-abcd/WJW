@@ -45,6 +45,8 @@ interface StatePayload {
   communities?: Record<string, unknown>[]
   members?: Record<string, unknown>[]
   reports?: Record<string, unknown>[]
+  managementResponsibilities?: Record<string, unknown>[]
+  canAssignManagementResponsibilities?: boolean
   checkpoints?: Record<string, unknown>[]
   schedules?: Record<string, unknown>[]
   patrolLogs?: Record<string, unknown>[]
@@ -75,6 +77,8 @@ export function syncState(): Promise<void> {
           (s.community ? [s.community] : [])) as unknown as DBShape['communities'],
         members: (s.members ?? []) as unknown as DBShape['members'],
         reports: (s.reports ?? []) as unknown as DBShape['reports'],
+        managementResponsibilities: (s.managementResponsibilities ?? []) as unknown as DBShape['managementResponsibilities'],
+        canAssignManagementResponsibilities: s.canAssignManagementResponsibilities === true,
         checkpoints: (s.checkpoints ?? []) as unknown as DBShape['checkpoints'],
         schedules: (s.schedules ?? []) as unknown as DBShape['schedules'],
         patrolLogs: (s.patrolLogs ?? []) as unknown as DBShape['patrolLogs'],

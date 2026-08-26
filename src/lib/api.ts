@@ -180,6 +180,12 @@ export const adminApi = {
   decide: (id: string, decision: 'accept' | 'reject', role?: string, reason?: string) =>
     api.post(`/members/${id}/decide`, { decision, role, reason }),
   setRole: (id: string, role: string) => api.post(`/members/${id}/role`, { role }),
+  assignManagementResponsibility: (
+    scope: 'map_patrol' | 'dues' | 'patrol_schedule',
+    memberId: string,
+    /** Diisi hanya oleh konsol superadmin saat memilih tenant. */
+    communityId?: string,
+  ) => api.put(`/management-responsibilities/${scope}`, { memberId, ...(communityId ? { communityId } : {}) }),
   saveArea: (area: { lat: number; lng: number }[]) => api.put('/community/area', { area }),
   /**
    * Buat kode undangan.
@@ -211,6 +217,76 @@ export const publicApi = {
       invite: { code: string; role: string; expiresAt: number }
       community: { id: string; name: string; city: string }
     }>(`/invites/${encodeURIComponent(code)}`),
+}
+
+export type DuesInvoiceStatus = 'unpaid' | 'awaiting_verification' | 'paid' | 'overdue'
+
+export interface DuesInvoiceDto {
+  id: string
+  communityId: string
+  memberId: string
+  period: string
+  label: string
+  amount: number
+  dueAt: number
+  status: DuesInvoiceStatus
+  reference: string
+  paymentNote: string
+  verifierNote: string
+  createdAt: number
+  generatedBy: string
+  claimedAt: number | null
+  paidAt: number | null
+  verifiedBy: string | null
+  /** Hanya dikirim ke Admin 2 yang berwenang. */
+  memberName?: string
+  memberHouse?: string
+}
+
+export interface DuesSettingsDto {
+  communityId: string
+  label: string
+  amount: number
+  dueDay: number
+  paymentInstructions: string
+  updatedBy: string
+  updatedAt: number
+}
+
+export interface DuesSummaryDto {
+  billed: number
+  paid: number
+  outstanding: number
+  invoices: number
+  paidInvoices: number
+  awaitingVerification: number
+  overdue: number
+}
+
+export const duesApi = {
+  fetch: () =>
+    api.get<{
+      settings: DuesSettingsDto | null
+      summary: DuesSummaryDto
+      canManage: boolean
+      invoices: DuesInvoiceDto[]
+      members: { id: string; name: string; house: string }[]
+    }>('/dues'),
+  saveSettings: (body: {
+    label: string
+    amount: number
+    dueDay: number
+    paymentInstructions: string
+  }) => api.put<{ settings: DuesSettingsDto }>('/dues/settings', body),
+  generate: (period: string, memberIds: string[]) =>
+    api.post<{ created: number; existing: number; invoices: DuesInvoiceDto[] }>(
+      '/dues/invoices/generate',
+      { period, memberIds },
+    ),
+  claim: (id: string, paymentNote: string) =>
+    api.post<{ invoice: DuesInvoiceDto }>(`/dues/${id}/claim`, { paymentNote }),
+  verify: (id: string, approve: boolean, note = '') =>
+    api.post<{ invoice: DuesInvoiceDto }>(`/dues/${id}/verify`, { approve, note }),
 }
 
 export interface InvoiceDto {

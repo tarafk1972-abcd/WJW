@@ -90,6 +90,10 @@ addColumn('members', 'home_source', 'TEXT')
 // memakai state machine insiden dan kunci idempotensi.
 addColumn('reports', 'incident_status', "TEXT NOT NULL DEFAULT 'NEW'")
 addColumn('reports', 'idempotency_key', 'TEXT')
+// Jadwal lama tetap berlaku untuk seluruh satpam sampai Admin 3 menetapkan
+// personel spesifik. Kolom ini perlu migrasi eksplisit karena SQLite tidak
+// menerapkan DEFAULT dari CREATE TABLE pada tabel schedules yang sudah ada.
+addColumn('schedules', 'assigned_satpam_ids', "TEXT NOT NULL DEFAULT '[]'")
 db.exec(
   `UPDATE reports
    SET incident_status = CASE status

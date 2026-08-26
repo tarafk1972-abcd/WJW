@@ -27,6 +27,23 @@ import {
 import { decryptSensitiveJson, encryptSensitiveJson } from './crypto.js'
 import { publishCommunityEvent, subscribeCommunity, type RealtimeEvent } from './events.js'
 import {
+  assignManagementResponsibility,
+  canAssignManagementResponsibilities,
+  canManageScope,
+  isManagementScope,
+  listManagementResponsibilities,
+} from './community-ops.js'
+import {
+  claimDuesInvoice,
+  duesSummary,
+  generateDuesInvoices,
+  getDuesInvoice,
+  getDuesSettings,
+  listDuesInvoices,
+  saveDuesSettings,
+  verifyDuesInvoice,
+} from './dues.js'
+import {
   addIncidentTimeline,
   initialIncidentStatus,
   isIncidentStatus,
@@ -298,6 +315,7 @@ function mapSchedule(r: Record<string, unknown>) {
     startMinute: r.start_minute,
     endMinute: r.end_minute,
     days: J(r.days as string) ?? [],
+    assignedSatpamIds: J(r.assigned_satpam_ids as string) ?? [],
     graceMin: r.grace_min,
     active: !!r.active,
     createdAt: r.created_at,
@@ -862,6 +880,10 @@ app.get('/api/state', auth, (c) => {
   return c.json({
     me: publicMember(me),
     community: mapCommunity(community),
+    // Semua anggota aktif boleh tahu siapa penanggung jawab operasional;
+    // hak mengubahnya tetap hanya pendiri/superadmin dan ditegakkan endpoint.
+    managementResponsibilities: listManagementResponsibilities(cid),
+    canAssignManagementResponsibilities: canAssignManagementResponsibilities(me),
     members,
     reports,
     locationWanted: !!daruratAktif,
@@ -1004,7 +1026,16 @@ app.post('/api/members/:id/role', auth, active, async (c) => {
   const b = (await c.req.json()) as { role?: string }
   if (!['warga', 'satpam', 'admin'].includes(b.role ?? '')) return bad(c, 'bad_role')
   db.prepare('UPDATE members SET role=? WHERE id=?').run(b.role, t.id)
+  // Tanggung jawab tidak boleh bertahan pada akun yang baru diturunkan
+  // menjadi warga/satpam. Fallback pendiri langsung mengambil alih sampai
+  // penugasan admin baru dilakukan.
+  if (b.role !== 'admin')
+    db.prepare('DELETE FROM management_responsibilities WHERE community_id=? AND member_id=?').run(
+      t.community_id,
+      t.id,
+    )
   audit(t.community_id, me.id, 'member.role', `${t.name} → ${b.role}`)
+  publishCommunityEvent(t.community_id!, 'management.updated', t.id)
   return c.json({ ok: true })
 })
 
@@ -1078,6 +1109,35 @@ app.delete('/api/invites/:id', auth, active, (c) => {
   return c.json({ ok: true })
 })
 
+/* ================= penanggung jawab operasional ================= */
+
+/**
+ * Pendiri tenant (atau superadmin) menunjuk Admin 1/2/3 berdasarkan mandat.
+ * Pengguna yang ditunjuk harus admin aktif dari tenant yang sama; ID lintas
+ * tenant atau akun satpam/warga tidak pernah dapat dijadikan pemegang mandat.
+ */
+app.put('/api/management-responsibilities/:scope', auth, active, async (c) => {
+  const me = c.get('me')
+  const scope = c.req.param('scope')
+  if (!isManagementScope(scope)) return bad(c, 'invalid_scope')
+
+  const body = (await c.req.json().catch(() => ({}))) as {
+    memberId?: string
+    /** Hanya dipakai konsol superadmin; admin tenant selalu memakai tenant sendiri. */
+    communityId?: string
+  }
+  const targetCommunityId = me.role === 'superadmin' ? body.communityId : me.community_id
+  if (!targetCommunityId || !canAssignManagementResponsibilities(me, targetCommunityId))
+    return bad(c, 'forbidden', 403)
+  if (!body.memberId) return bad(c, 'errRequired')
+  const responsibility = assignManagementResponsibility(me, scope, body.memberId, targetCommunityId)
+  if (!responsibility) return bad(c, 'invalid_admin', 422)
+
+  audit(targetCommunityId, me.id, 'management.responsibility.assign', `${scope} → ${body.memberId}`)
+  publishCommunityEvent(targetCommunityId, 'management.updated', scope)
+  return c.json({ responsibility })
+})
+
 /* ================= area lingkungan ================= */
 
 /**
@@ -1118,8 +1178,8 @@ app.put('/api/community/name', auth, active, async (c) => {
 })
 
 app.put('/api/community/area', auth, active, async (c) => {
-  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
   const me = c.get('me')
+  if (!canManageScope(me, 'map_patrol')) return bad(c, 'forbidden', 403)
   const b = (await c.req.json()) as { area?: LatLng[] }
   const area = Array.isArray(b.area) ? b.area : []
   const center =
@@ -1142,6 +1202,7 @@ app.put('/api/community/area', auth, active, async (c) => {
     ],
   )
   audit(me.community_id, me.id, 'area.save', `${area.length} titik`)
+  publishCommunityEvent(me.community_id!, 'community.map.updated', '')
   return c.json({ ok: true })
 })
 
@@ -1877,8 +1938,8 @@ app.post('/api/alerts/:id/close', auth, active, async (c) => {
 /* ================= titik ronda & jadwal ================= */
 
 app.post('/api/checkpoints', auth, active, async (c) => {
-  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
   const me = c.get('me')
+  if (!canManageScope(me, 'map_patrol')) return bad(c, 'forbidden', 403)
   const b = (await c.req.json()) as {
     name?: string
     lat?: number
@@ -1899,58 +1960,99 @@ app.post('/api/checkpoints', auth, active, async (c) => {
      VALUES (?,?,?,?,?,?,?,?,?,1)`,
   ).run(id, me.community_id, b.name.trim(), b.lat, b.lng, b.radiusM ?? 50, n + 1, me.id, now())
   audit(me.community_id, me.id, 'checkpoint.add', b.name.trim())
+  publishCommunityEvent(me.community_id!, 'patrol.checkpoint.updated', id)
   return c.json({ id }, 201)
 })
 
 app.delete('/api/checkpoints/:id', auth, active, (c) => {
-  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
   const me = c.get('me')
+  if (!canManageScope(me, 'map_patrol')) return bad(c, 'forbidden', 403)
   const cp = db
     .prepare('SELECT * FROM checkpoints WHERE id=?')
     .get(c.req.param('id')) as Record<string, unknown> | undefined
   if (!cp || !sameCommunity(me, cp.community_id as string))
     return bad(c, 'forbidden', 403)
   db.prepare('DELETE FROM checkpoints WHERE id=?').run(cp.id)
+  audit(me.community_id, me.id, 'checkpoint.remove', String(cp.name))
+  publishCommunityEvent(me.community_id!, 'patrol.checkpoint.updated', String(cp.id))
   return c.json({ ok: true })
 })
 
 app.post('/api/schedules', auth, active, async (c) => {
-  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
   const me = c.get('me')
+  if (!canManageScope(me, 'patrol_schedule')) return bad(c, 'forbidden', 403)
   const b = (await c.req.json()) as {
     label?: string
     startMinute?: number
     endMinute?: number
     days?: number[]
     graceMin?: number
+    satpamIds?: string[]
   }
-  if (!b.label?.trim()) return bad(c, 'errRequired')
+  const startMinute = Number(b.startMinute)
+  const endMinute = Number(b.endMinute)
+  const graceMin = Number(b.graceMin ?? 15)
+  const days = Array.isArray(b.days) ? [...new Set(b.days)] : []
+  const satpamIds = Array.isArray(b.satpamIds) ? [...new Set(b.satpamIds)].slice(0, 50) : []
+  if (
+    !b.label?.trim() ||
+    !Number.isInteger(startMinute) ||
+    !Number.isInteger(endMinute) ||
+    startMinute < 0 ||
+    startMinute > 1439 ||
+    endMinute < 0 ||
+    endMinute > 1439 ||
+    !Number.isInteger(graceMin) ||
+    graceMin < 0 ||
+    graceMin > 180 ||
+    days.some((day) => !Number.isInteger(day) || day < 0 || day > 6)
+  )
+    return bad(c, 'errRequired')
+
+  // Jangan izinkan Admin 3 menjadwalkan orang dari tenant lain atau peran lain.
+  if (satpamIds.length) {
+    const marks = satpamIds.map(() => '?').join(',')
+    const staff = db
+      .prepare(
+        `SELECT id FROM members WHERE community_id=? AND status='active'
+         AND role='satpam' AND id IN (${marks})`,
+      )
+      .all(me.community_id, ...satpamIds) as { id: string }[]
+    if (staff.length !== satpamIds.length) return bad(c, 'invalid_satpam', 422)
+  }
+
   const id = uid('sc_')
   db.prepare(
-    `INSERT INTO schedules (id,community_id,label,start_minute,end_minute,days,grace_min,active,created_at)
-     VALUES (?,?,?,?,?,?,?,1,?)`,
+    `INSERT INTO schedules
+     (id,community_id,label,start_minute,end_minute,days,assigned_satpam_ids,grace_min,active,created_at)
+     VALUES (?,?,?,?,?,?,?,?,1,?)`,
   ).run(
     id,
     me.community_id,
-    b.label.trim(),
-    b.startMinute ?? 0,
-    b.endMinute ?? 0,
-    JSON.stringify(b.days ?? []),
-    b.graceMin ?? 15,
+    b.label.trim().slice(0, 100),
+    startMinute,
+    endMinute,
+    JSON.stringify(days),
+    JSON.stringify(satpamIds),
+    graceMin,
     now(),
   )
+  audit(me.community_id, me.id, 'patrol.schedule.add', `${b.label.trim()} · ${satpamIds.length} satpam`)
+  publishCommunityEvent(me.community_id!, 'patrol.schedule.updated', id)
   return c.json({ id }, 201)
 })
 
 app.delete('/api/schedules/:id', auth, active, (c) => {
-  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
   const me = c.get('me')
+  if (!canManageScope(me, 'patrol_schedule')) return bad(c, 'forbidden', 403)
   const sc = db.prepare('SELECT * FROM schedules WHERE id=?').get(c.req.param('id')) as
     | Record<string, unknown>
     | undefined
   if (!sc || !sameCommunity(me, sc.community_id as string))
     return bad(c, 'forbidden', 403)
   db.prepare('DELETE FROM schedules WHERE id=?').run(sc.id)
+  audit(me.community_id, me.id, 'patrol.schedule.remove', String(sc.label))
+  publishCommunityEvent(me.community_id!, 'patrol.schedule.updated', String(sc.id))
   return c.json({ ok: true })
 })
 
@@ -2024,8 +2126,10 @@ app.post('/api/patrol/log', auth, active, async (c) => {
 
   const schedules = db
     .prepare('SELECT * FROM schedules WHERE community_id=?')
-    .all(me.community_id) as Parameters<typeof activeSchedule>[0]
-  const act = activeSchedule(schedules, now())
+    .all(me.community_id) as unknown as Parameters<typeof activeSchedule>[0]
+  // Jadwal tanpa nama berlaku untuk seluruh tim. Admin dapat mencatat sebagai
+  // pengawas; helper memaksa filter penugasan saat pelakunya seorang satpam.
+  const act = activeSchedule(schedules, now(), me.role === 'satpam' ? me.id : undefined)
   const status = act ? (act.late ? 'late' : 'ontime') : 'offschedule'
 
   const id = uid('pl_')
@@ -2051,6 +2155,7 @@ app.post('/api/patrol/log', auth, active, async (c) => {
     (b.note ?? '').trim(),
   )
   audit(me.community_id, me.id, 'patrol.log', `${cp.name} · ${status}`)
+  publishCommunityEvent(me.community_id!, 'patrol.log.created', id)
 
   const row = db.prepare('SELECT * FROM patrol_logs WHERE id=?').get(id) as Record<
     string,
@@ -2213,6 +2318,148 @@ app.post('/api/broadcasts/:id/respond', auth, active, async (c) => {
     )
   }
   return c.json({ ok: true })
+})
+
+/* ================= iuran pengelolaan lingkungan ================= */
+
+/**
+ * Iuran warga sengaja berdiri sendiri dari `/api/billing`: yang terakhir
+ * adalah langganan SaaS tenant kepada WJW, sedangkan endpoint ini adalah kas
+ * operasional sebuah RT/RW/cluster. Pemisahan mencegah uang keduanya tertukar.
+ */
+app.get('/api/dues', auth, active, (c) => {
+  const me = c.get('me')
+  if (!me.community_id) return bad(c, 'errNoCommunity', 404)
+  const canManage = canManageScope(me, 'dues')
+  const invoices = listDuesInvoices(me.community_id, canManage ? undefined : me.id)
+  const members = canManage
+    ? (db
+        .prepare(
+          "SELECT id,name,house FROM members WHERE community_id=? AND status='active' AND role IN ('warga','satpam','admin') ORDER BY house,name",
+        )
+        .all(me.community_id) as { id: string; name: string; house: string }[])
+    : []
+  const names = new Map(members.map((member) => [member.id, member]))
+
+  return c.json({
+    settings: getDuesSettings(me.community_id),
+    // Warga hanya menerima agregat tagihannya sendiri; total kas dan
+    // tunggakan tetangga adalah rincian operasional khusus Admin 2.
+    summary: duesSummary(me.community_id, canManage ? undefined : me.id),
+    canManage,
+    invoices: invoices.map((invoice) => {
+      const member = names.get(invoice.memberId)
+      // Nama penunggak hanya dikirim kepada Admin 2; warga mendapat tagihan
+      // miliknya sendiri tanpa daftar keuangan tetangga.
+      return canManage
+        ? { ...invoice, memberName: member?.name ?? 'Anggota', memberHouse: member?.house ?? '' }
+        : invoice
+    }),
+    members,
+  })
+})
+
+app.put('/api/dues/settings', auth, active, async (c) => {
+  const me = c.get('me')
+  if (!me.community_id || !canManageScope(me, 'dues')) return bad(c, 'forbidden', 403)
+  const body = (await c.req.json().catch(() => ({}))) as {
+    label?: string
+    amount?: number
+    dueDay?: number
+    paymentInstructions?: string
+  }
+  const label = (body.label ?? '').trim().slice(0, 100)
+  const amount = Number(body.amount)
+  const dueDay = Number(body.dueDay)
+  const paymentInstructions = (body.paymentInstructions ?? '').trim().slice(0, 1000)
+  if (
+    label.length < 3 ||
+    !Number.isInteger(amount) ||
+    amount < 1_000 ||
+    amount > 50_000_000 ||
+    !Number.isInteger(dueDay) ||
+    dueDay < 1 ||
+    dueDay > 28
+  )
+    return bad(c, 'invalid_dues_settings')
+
+  const settings = saveDuesSettings({
+    communityId: me.community_id,
+    actorId: me.id,
+    label,
+    amount,
+    dueDay,
+    paymentInstructions,
+  })
+  audit(me.community_id, me.id, 'dues.settings.update', `${label} · ${amount} · tgl ${dueDay}`)
+  publishCommunityEvent(me.community_id, 'dues.updated', 'settings')
+  return c.json({ settings })
+})
+
+app.post('/api/dues/invoices/generate', auth, active, async (c) => {
+  const me = c.get('me')
+  if (!me.community_id || !canManageScope(me, 'dues')) return bad(c, 'forbidden', 403)
+  const body = (await c.req.json().catch(() => ({}))) as { period?: string; memberIds?: string[] }
+  const memberIds = Array.isArray(body.memberIds) ? body.memberIds.filter((id) => typeof id === 'string') : []
+  try {
+    const result = generateDuesInvoices({
+      communityId: me.community_id,
+      actorId: me.id,
+      period: body.period ?? '',
+      memberIds,
+    })
+    audit(me.community_id, me.id, 'dues.invoice.generate', `${body.period} · ${result.created} baru`)
+    publishCommunityEvent(me.community_id, 'dues.updated', body.period ?? '')
+    return c.json(result, 201)
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'errUnknown'
+    const status = code === 'invalid_member' ? 422 : 400
+    return bad(c, code, status)
+  }
+})
+
+app.post('/api/dues/:id/claim', auth, active, async (c) => {
+  const me = c.get('me')
+  const invoiceId = c.req.param('id')
+  if (!invoiceId) return bad(c, 'not_found', 404)
+  const invoice = getDuesInvoice(invoiceId)
+  if (!invoice || !sameCommunity(me, invoice.communityId)) return bad(c, 'forbidden', 403)
+  const body = (await c.req.json().catch(() => ({}))) as { paymentNote?: string }
+  const paymentNote = (body.paymentNote ?? '').trim().slice(0, 500)
+  try {
+    const updated = claimDuesInvoice({ invoiceId: invoice.id, memberId: me.id, paymentNote })
+    if (!updated) return bad(c, 'forbidden', 403)
+    audit(me.community_id, me.id, 'dues.invoice.claim', invoice.reference)
+    publishCommunityEvent(me.community_id!, 'dues.updated', invoice.id)
+    return c.json({ invoice: updated })
+  } catch (error) {
+    return bad(c, error instanceof Error ? error.message : 'errUnknown', 409)
+  }
+})
+
+app.post('/api/dues/:id/verify', auth, active, async (c) => {
+  const me = c.get('me')
+  if (!me.community_id || !canManageScope(me, 'dues')) return bad(c, 'forbidden', 403)
+  const invoiceId = c.req.param('id')
+  if (!invoiceId) return bad(c, 'not_found', 404)
+  const invoice = getDuesInvoice(invoiceId)
+  if (!invoice || invoice.communityId !== me.community_id) return bad(c, 'forbidden', 403)
+  const body = (await c.req.json().catch(() => ({}))) as { approve?: boolean; note?: string }
+  if (typeof body.approve !== 'boolean') return bad(c, 'errRequired')
+  try {
+    const updated = verifyDuesInvoice({
+      invoiceId: invoice.id,
+      actorId: me.id,
+      approve: body.approve,
+      note: (body.note ?? '').trim().slice(0, 500),
+    })
+    if (!updated) return bad(c, 'not_found', 404)
+    audit(me.community_id, me.id, body.approve ? 'dues.invoice.verify' : 'dues.invoice.reject', invoice.reference)
+    publishCommunityEvent(me.community_id, 'dues.updated', invoice.id)
+    return c.json({ invoice: updated })
+  } catch (error) {
+    return bad(c, error instanceof Error ? error.message : 'errUnknown', 409)
+  }
 })
 
 /* ================= push ================= */

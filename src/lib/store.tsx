@@ -26,7 +26,7 @@ import {
   syncState,
 } from './sync'
 import { DEFAULT_LANG, translate, type Key } from './i18n'
-import type { Community, DBShape, Lang, Member } from './types'
+import type { Community, DBShape, Lang, ManagementScope, Member } from './types'
 
 interface Ctx {
   db: DBShape
@@ -41,6 +41,10 @@ interface Ctx {
   isAdmin: boolean
   isSuperadmin: boolean
   isSatpam: boolean
+  /** Hak tulis mandat operasional, diputuskan dari assignment server. */
+  canManageScope: (scope: ManagementScope) => boolean
+  /** Pendiri komunitas/superadmin boleh menunjuk Admin 1/2/3. */
+  canAssignManagementResponsibilities: boolean
   /** true bila aplikasi terhubung ke server (bukan mode lokal saja). */
   online: boolean
   /** Kode error sinkronisasi terakhir, mis. 'errOffline'. */
@@ -122,6 +126,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [db, me, tick],
   )
 
+  const isAdmin = me?.role === 'admin' || me?.role === 'superadmin'
+  const isSuperadmin = me?.role === 'superadmin'
+  const isSatpam = me?.role === 'satpam'
+  const localCanAssignResponsibilities =
+    !!me && !!community && (isSuperadmin || (me.role === 'admin' && community.createdBy === me.id))
+  // Pada mode server, jadikan jawaban server sebagai petunjuk UI. Otorisasi
+  // write tetap diperiksa ulang endpoint agar cache/peramban tidak dipercaya.
+  const canAssignManagementResponsibilities = apiMode()
+    ? db.canAssignManagementResponsibilities
+    : localCanAssignResponsibilities
+  const canManageScope = useCallback(
+    (scope: ManagementScope) => {
+      if (!me || !community) return false
+      if (me.role === 'superadmin') return true
+      if (me.role !== 'admin') return false
+      const assigned = db.managementResponsibilities.find(
+        (responsibility) =>
+          responsibility.communityId === community.id && responsibility.scope === scope,
+      )
+      // Selaras dengan fallback backend untuk tenant yang belum menetapkan
+      // pemegang mandat eksplisit: pendiri memegangnya lebih dulu.
+      return assigned ? assigned.memberId === me.id : community.createdBy === me.id
+    },
+    [db.managementResponsibilities, me, community],
+  )
+
   // Member language wins over the device default once signed in.
   const lang: Lang = me?.language ?? langState
 
@@ -156,9 +186,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     syncError: lastSyncError(),
     locationWanted: isLocationWanted(),
     reload,
-    isAdmin: me?.role === 'admin' || me?.role === 'superadmin',
-    isSuperadmin: me?.role === 'superadmin',
-    isSatpam: me?.role === 'satpam',
+    isAdmin,
+    isSuperadmin,
+    isSatpam,
+    canManageScope,
+    canAssignManagementResponsibilities,
   }
 
   // Tampilkan layar tunggu singkat, bukan halaman kosong yang menyesatkan.

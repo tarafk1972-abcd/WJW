@@ -163,10 +163,62 @@ CREATE TABLE IF NOT EXISTS schedules (
   start_minute INTEGER NOT NULL,
   end_minute   INTEGER NOT NULL,
   days         TEXT NOT NULL DEFAULT '[]',
+  -- kosong berarti seluruh tim satpam; bila terisi hanya nama ini yang dijadwalkan.
+  assigned_satpam_ids TEXT NOT NULL DEFAULT '[]',
   grace_min    INTEGER NOT NULL DEFAULT 15,
   active       INTEGER NOT NULL DEFAULT 1,
   created_at   INTEGER NOT NULL
 );
+
+-- Tiga penanggung jawab operasional yang ditetapkan oleh pendiri lingkungan.
+-- `scope` dibatasi dan dipaksa lagi di API; ini bukan sekadar label UI.
+CREATE TABLE IF NOT EXISTS management_responsibilities (
+  community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+  scope        TEXT NOT NULL CHECK(scope IN ('map_patrol','dues','patrol_schedule')),
+  member_id    TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  assigned_by  TEXT NOT NULL REFERENCES members(id),
+  assigned_at  INTEGER NOT NULL,
+  PRIMARY KEY (community_id, scope)
+);
+CREATE INDEX IF NOT EXISTS idx_management_responsibilities_member
+  ON management_responsibilities(member_id);
+
+-- Konfigurasi iuran warga. Dipisahkan dari `invoices` SaaS: tagihan di sana
+-- adalah langganan platform WJW, bukan uang kas/iuran sebuah lingkungan.
+CREATE TABLE IF NOT EXISTS dues_settings (
+  community_id         TEXT PRIMARY KEY REFERENCES communities(id) ON DELETE CASCADE,
+  label                TEXT NOT NULL DEFAULT 'Iuran Pengelolaan Lingkungan',
+  amount               INTEGER NOT NULL DEFAULT 0,
+  due_day              INTEGER NOT NULL DEFAULT 10,
+  payment_instructions TEXT NOT NULL DEFAULT '',
+  updated_by           TEXT NOT NULL REFERENCES members(id),
+  updated_at           INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS dues_invoices (
+  id               TEXT PRIMARY KEY,
+  community_id     TEXT NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+  member_id        TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  period           TEXT NOT NULL, -- YYYY-MM
+  label            TEXT NOT NULL,
+  amount           INTEGER NOT NULL,
+  due_at           INTEGER NOT NULL,
+  -- unpaid → awaiting_verification → paid; overdue dihitung/ditandai server.
+  status           TEXT NOT NULL DEFAULT 'unpaid',
+  reference        TEXT NOT NULL UNIQUE,
+  payment_note     TEXT NOT NULL DEFAULT '',
+  verifier_note    TEXT NOT NULL DEFAULT '',
+  created_at       INTEGER NOT NULL,
+  generated_by     TEXT NOT NULL REFERENCES members(id),
+  claimed_at       INTEGER,
+  paid_at          INTEGER,
+  verified_by      TEXT REFERENCES members(id),
+  UNIQUE (community_id, member_id, period)
+);
+CREATE INDEX IF NOT EXISTS idx_dues_invoices_community_period
+  ON dues_invoices(community_id, period DESC);
+CREATE INDEX IF NOT EXISTS idx_dues_invoices_member
+  ON dues_invoices(member_id, status, due_at DESC);
 
 CREATE TABLE IF NOT EXISTS patrol_logs (
   id             TEXT PRIMARY KEY,

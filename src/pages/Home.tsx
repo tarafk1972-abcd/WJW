@@ -96,6 +96,13 @@ export default function Home() {
       bg: 'var(--warn-soft)',
       go: () => nav('/app/network'),
     },
+    {
+      icon: 'credit',
+      label: 'Iuran',
+      color: 'var(--brand)',
+      bg: 'var(--brand-soft)',
+      go: () => nav('/app/dues'),
+    },
   ]
 
   return (

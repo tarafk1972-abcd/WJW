@@ -56,8 +56,11 @@ export default function PatrolCheck() {
   )
 
   const sched = useMemo(
-    () => (community ? activeSchedule(db, community.id) : null),
-    [db, community],
+    () =>
+      community
+        ? activeSchedule(db, community.id, Date.now(), me?.role === 'satpam' ? me.id : undefined)
+        : null,
+    [db, community, me],
   )
 
   /** Titik terdekat dari posisi satpam sekarang. */

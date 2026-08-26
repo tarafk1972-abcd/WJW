@@ -6,6 +6,18 @@ export type MemberStatus = 'pending' | 'active' | 'rejected' | 'suspended'
 
 export type PlanStatus = 'trial' | 'active' | 'expired' | 'suspended'
 
+/** Mandat admin operasional; terpisah dari role admin umum di tenant. */
+export type ManagementScope = 'map_patrol' | 'dues' | 'patrol_schedule'
+
+export interface ManagementResponsibility {
+  communityId: string
+  scope: ManagementScope
+  memberId: string
+  assignedBy: string | null
+  assignedAt: number
+  defaulted: boolean
+}
+
 export type LatLng = { lat: number; lng: number }
 
 export interface Community {
@@ -289,6 +301,8 @@ export interface PatrolSchedule {
   endMinute: number
   /** Hari aktif 0=Minggu..6=Sabtu; kosong = setiap hari. */
   days: number[]
+  /** Kosong = seluruh tim; bila terisi, hanya satpam ini yang mendapat jadwal. */
+  assignedSatpamIds: string[]
   /** Toleransi keterlambatan (menit) sebelum ditandai "terlambat". */
   graceMin: number
   active: boolean
@@ -425,6 +439,9 @@ export interface DBShape {
   announcements: Announcement[]
   broadcasts: Broadcast[]
   contacts: TrustedContact[]
+  managementResponsibilities: ManagementResponsibility[]
+  /** Snapshot izin assignment dari server; UI hanya menggunakannya sebagai petunjuk. */
+  canAssignManagementResponsibilities: boolean
   checkpoints: Checkpoint[]
   schedules: PatrolSchedule[]
   patrolLogs: PatrolLog[]

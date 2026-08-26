@@ -11,13 +11,14 @@ import { CATEGORY_META } from '../lib/meta'
 import type { LatLng } from '../lib/types'
 
 export default function MapPage() {
-  const { db, me, community, t, lang, isAdmin } = useApp()
+  const { db, me, community, t, lang, isAdmin, canManageScope } = useApp()
   const toast = useToast()
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<LatLng[]>([])
   const [showReports, setShowReports] = useState(true)
   const [showPatrol, setShowPatrol] = useState(false)
   const [recenter, setRecenter] = useState(0)
+  const canManageMap = canManageScope('map_patrol')
 
   const reports = useMemo(
     () =>
@@ -34,53 +35,93 @@ export default function MapPage() {
         : [],
     [db.patrols, community],
   )
+  const checkpoints = useMemo(
+    () =>
+      community
+        ? db.checkpoints
+            .filter((checkpoint) => checkpoint.communityId === community.id && checkpoint.active)
+            .sort((a, b) => a.order - b.order)
+        : [],
+    [db.checkpoints, community],
+  )
+  const mapOwner = useMemo(() => {
+    if (!community) return null
+    const responsibility = db.managementResponsibilities.find(
+      (item) => item.communityId === community.id && item.scope === 'map_patrol',
+    )
+    const memberId = responsibility?.memberId ?? community.createdBy
+    return db.members.find((member) => member.id === memberId) ?? null
+  }, [db.managementResponsibilities, db.members, community])
 
   if (!me || !community) return null
 
-  const markers: MapMarker[] = showReports
-    ? reports.slice(0, 40).map((r) => {
-        const meta = CATEGORY_META[r.kind === 'sos' ? 'sos' : r.category]
-        const author = db.members.find((m) => m.id === r.authorId)
-        return {
-          id: r.id,
-          pos: r.at!,
-          emoji: meta.emoji,
-          color:
-            r.status === 'resolved'
-              ? '#2f5d47'
-              : r.kind === 'sos'
-                ? 'var(--danger)'
-                : 'var(--warn)',
-          popup: (
-            <div>
-              <b>{r.kind === 'sos' ? `🚨 ${t('sos')}` : t(meta.key)}</b>
-              <br />
-              {r.note && (
-                <>
-                  {r.note}
-                  <br />
-                </>
-              )}
-              <span style={{ opacity: 0.7 }}>
-                {author?.name} · {timeAgo(r.createdAt, lang)}
-              </span>
-            </div>
-          ),
-        }
-      })
-    : []
+  const markers: MapMarker[] = [
+    ...(showReports
+      ? reports.slice(0, 40).map((r) => {
+          const meta = CATEGORY_META[r.kind === 'sos' ? 'sos' : r.category]
+          const author = db.members.find((m) => m.id === r.authorId)
+          return {
+            id: r.id,
+            pos: r.at!,
+            emoji: meta.emoji,
+            color:
+              r.status === 'resolved'
+                ? '#2f5d47'
+                : r.kind === 'sos'
+                  ? 'var(--danger)'
+                  : 'var(--warn)',
+            popup: (
+              <div>
+                <b>{r.kind === 'sos' ? `🚨 ${t('sos')}` : t(meta.key)}</b>
+                <br />
+                {r.note && (
+                  <>
+                    {r.note}
+                    <br />
+                  </>
+                )}
+                <span style={{ opacity: 0.7 }}>
+                  {author?.name} · {timeAgo(r.createdAt, lang)}
+                </span>
+              </div>
+            ),
+          }
+        })
+      : []),
+    ...checkpoints.map((checkpoint, index) => ({
+      id: `checkpoint-${checkpoint.id}`,
+      pos: { lat: checkpoint.lat, lng: checkpoint.lng },
+      emoji: String(index + 1),
+      color: 'var(--brand)',
+      popup: (
+        <div>
+          <b>Titik pantau #{index + 1}</b>
+          <br />
+          {checkpoint.name} · radius {checkpoint.radiusM} m
+        </div>
+      ),
+    })),
+  ]
 
   const track = showPatrol && patrols[0] ? patrols[0].points.map((p) => ({ lat: p.lat, lng: p.lng })) : []
 
   const startEdit = () => {
+    if (!canManageMap) {
+      toast('Peta lingkungan dikelola oleh Admin 1 yang ditugaskan.', 'err')
+      return
+    }
     setDraft(community.area)
     setEditing(true)
   }
 
-  const commit = () => {
+  const commit = async () => {
     if (draft.length < 3) return toast(t('areaSizeWarn'), 'err')
-    saveArea(me.id, community.id, draft)
-    if (apiMode()) void mutate(() => adminApi.saveArea(draft))
+    if (apiMode()) {
+      const ok = await mutate(() => adminApi.saveArea(draft))
+      if (!ok) return toast('Peta belum tersimpan. Periksa penugasan Admin 1 atau koneksi.', 'err')
+    } else {
+      saveArea(me.id, community.id, draft)
+    }
     setEditing(false)
     toast(t('areaSaved'))
   }
@@ -106,11 +147,19 @@ export default function MapPage() {
               : t('noArea')}
           </div>
         </div>
-        {isAdmin && !editing && (
+        {isAdmin && canManageMap && !editing && (
           <button className="btn btn-sm btn-ghost" onClick={startEdit}>
             <Icon name="edit" size={14} /> {t('drawArea')}
           </button>
         )}
+      </div>
+
+      <div className="banner banner-info" style={{ marginBottom: 12 }}>
+        <Icon name="shield" size={17} />
+        <span>
+          <b>Admin 1 — Peta & titik pantau patroli</b>
+          {mapOwner ? `: ${mapOwner.name}` : ''} · {checkpoints.length} titik aktif
+        </span>
       </div>
 
       {editing && (
@@ -155,7 +204,7 @@ export default function MapPage() {
             <button className="btn btn-ghost" onClick={() => setEditing(false)}>
               {t('cancel')}
             </button>
-            <button className="btn btn-primary" onClick={commit}>
+            <button className="btn btn-primary" onClick={() => void commit()}>
               <Icon name="check" size={16} /> {t('saveArea')} ({draft.length})
             </button>
           </div>
@@ -191,7 +240,7 @@ export default function MapPage() {
               <Icon name="info" size={17} />
               <span>
                 {t('noArea')}
-                {isAdmin && (
+                {isAdmin && canManageMap && (
                   <>
                     {' '}
                     <a onClick={startEdit}>{t('drawArea')}</a>

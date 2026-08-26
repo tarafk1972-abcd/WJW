@@ -16,6 +16,12 @@ export type RealtimeEventType =
   | 'incident.message'
   | 'incident.evidence'
   | 'broadcast.updated'
+  | 'management.updated'
+  | 'community.map.updated'
+  | 'patrol.checkpoint.updated'
+  | 'patrol.schedule.updated'
+  | 'patrol.log.created'
+  | 'dues.updated'
 
 export interface RealtimeEvent {
   id: string

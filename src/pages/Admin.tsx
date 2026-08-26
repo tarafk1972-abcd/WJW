@@ -18,10 +18,20 @@ import { QrCode } from '../ui/QrCode'
 import { Sheet } from '../ui/Sheet'
 import { useToast } from '../ui/Toast'
 import { ASSIGNABLE_ROLES, roleChip, roleKey } from '../lib/meta'
-import type { Invite, Member, Role } from '../lib/types'
+import type { Invite, ManagementScope, Member, Role } from '../lib/types'
 
 export default function Admin() {
-  const { db, me, community, t, lang, isAdmin, plan, reload } = useApp()
+  const {
+    db,
+    me,
+    community,
+    t,
+    lang,
+    isAdmin,
+    plan,
+    reload,
+    canAssignManagementResponsibilities,
+  } = useApp()
   const nav = useNavigate()
   const toast = useToast()
   const [tab, setTab] = useState<'pending' | 'members' | 'invites'>('pending')
@@ -38,6 +48,9 @@ export default function Admin() {
   const [shareInvite, setShareInvite] = useState<Invite | null>(null)
   const [inviteDays, setInviteDays] = useState(7)
   const [inviteMax, setInviteMax] = useState<number | null>(null)
+  const [assignmentScope, setAssignmentScope] = useState<ManagementScope | null>(null)
+  const [assignmentMemberId, setAssignmentMemberId] = useState('')
+  const [assignmentBusy, setAssignmentBusy] = useState(false)
 
   const members = useMemo(
     () => (community ? db.members.filter((m) => m.communityId === community.id) : []),
@@ -45,6 +58,27 @@ export default function Admin() {
   )
   const pending = members.filter((m) => m.status === 'pending')
   const active = members.filter((m) => m.status === 'active')
+  const activeAdmins = active.filter((member) => member.role === 'admin')
+  const responsibilities = useMemo(() => {
+    if (!community) return []
+    const copy: { scope: ManagementScope; number: string; title: string; detail: string }[] = [
+      { scope: 'map_patrol', number: 'Admin 1', title: 'Peta & titik pantau', detail: 'Batas lingkungan dan titik pantau ronda' },
+      { scope: 'dues', number: 'Admin 2', title: 'Iuran pengelolaan', detail: 'Nominal, tagihan, dan verifikasi pembayaran' },
+      { scope: 'patrol_schedule', number: 'Admin 3', title: 'Jadwal patroli', detail: 'Shift dan penugasan satpam' },
+    ]
+    return copy.map((item) => {
+      const responsibility = db.managementResponsibilities.find(
+        (entry) => entry.communityId === community.id && entry.scope === item.scope,
+      )
+      const memberId = responsibility?.memberId ?? community.createdBy
+      return {
+        ...item,
+        memberId,
+        member: members.find((member) => member.id === memberId) ?? null,
+        defaulted: responsibility?.defaulted ?? !responsibility,
+      }
+    })
+  }, [community, db.managementResponsibilities, members])
   const invites = useMemo(
     () => (community ? db.invites.filter((i) => i.communityId === community.id) : []),
     [db.invites, community],
@@ -86,6 +120,33 @@ export default function Admin() {
     setTarget(null)
     setRejecting(false)
     setReason('')
+  }
+
+  const openAssignment = (scope: ManagementScope, memberId: string) => {
+    setAssignmentScope(scope)
+    setAssignmentMemberId(memberId)
+  }
+
+  const saveAssignment = async () => {
+    if (!assignmentScope || !assignmentMemberId) return
+    if (!apiMode()) {
+      toast('Penugasan Admin 1/2/3 memerlukan koneksi ke server.', 'err')
+      return
+    }
+    setAssignmentBusy(true)
+    try {
+      await adminApi.assignManagementResponsibility(assignmentScope, assignmentMemberId)
+      await reload()
+      setAssignmentScope(null)
+      toast('Penanggung jawab operasional diperbarui.')
+    } catch (error) {
+      const message = error instanceof ApiError && error.code === 'forbidden'
+        ? 'Hanya pendiri komunitas yang dapat mengubah penugasan ini.'
+        : 'Penugasan belum tersimpan. Silakan coba lagi.'
+      toast(message, 'err')
+    } finally {
+      setAssignmentBusy(false)
+    }
   }
 
   const makeInvite = async () => {
@@ -170,12 +231,45 @@ export default function Admin() {
         </div>
       </div>
 
+      <div className="section-title" style={{ marginTop: 14 }}>
+        Tanggung jawab operasional
+      </div>
+      <div className="col" style={{ gap: 8, marginBottom: 12 }}>
+        {responsibilities.map((responsibility) => (
+          <div key={responsibility.scope} className="item" style={{ alignItems: 'center' }}>
+            <div
+              className="item-icon"
+              style={{
+                background:
+                  responsibility.scope === 'dues' ? 'var(--brand-soft)' : 'var(--info-soft)',
+                color: responsibility.scope === 'dues' ? 'var(--brand)' : 'var(--info)',
+              }}
+            >
+              <Icon name={responsibility.scope === 'dues' ? 'credit' : responsibility.scope === 'map_patrol' ? 'map' : 'clock'} size={18} />
+            </div>
+            <div className="grow">
+              <div className="strong">{responsibility.number} · {responsibility.title}</div>
+              <div className="tiny">{responsibility.member?.name ?? 'Belum ada admin aktif'}</div>
+              <div className="tiny">{responsibility.detail}</div>
+            </div>
+            {canAssignManagementResponsibilities && (
+              <button
+                className="btn btn-sm btn-ghost"
+                onClick={() => openAssignment(responsibility.scope, responsibility.memberId)}
+              >
+                <Icon name="edit" size={13} /> Atur
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
       <div className="btn-row" style={{ margin: '10px 0 4px' }}>
         <button className="btn btn-sm btn-ghost grow" onClick={() => nav('/app/map')}>
           <Icon name="map" size={14} /> {t('areaEditor')}
         </button>
-        <button className="btn btn-sm btn-ghost grow" onClick={() => nav('/app/billing')}>
-          <Icon name="credit" size={14} /> {t('billing')}
+        <button className="btn btn-sm btn-ghost grow" onClick={() => nav('/app/dues')}>
+          <Icon name="credit" size={14} /> Iuran lingkungan
         </button>
       </div>
       <div className="btn-row" style={{ marginBottom: 14 }}>
@@ -489,6 +583,55 @@ export default function Admin() {
                 )}
               </>
             )}
+          </>
+        )}
+      </Sheet>
+
+      {/* penugasan Admin 1/2/3 — hanya pendiri/superadmin dapat menyimpan */}
+      <Sheet
+        open={!!assignmentScope}
+        onClose={() => !assignmentBusy && setAssignmentScope(null)}
+        title={
+          assignmentScope === 'map_patrol'
+            ? 'Admin 1 — Peta & titik pantau'
+            : assignmentScope === 'dues'
+              ? 'Admin 2 — Iuran pengelolaan'
+              : 'Admin 3 — Jadwal patroli'
+        }
+        subtitle="Pilih satu Admin aktif dari komunitas ini. Hak ubah modul dipaksa oleh server."
+      >
+        {activeAdmins.length === 0 ? (
+          <div className="banner banner-warn">
+            <Icon name="info" size={17} />
+            <span>Belum ada Admin aktif yang dapat ditugaskan.</span>
+          </div>
+        ) : (
+          <>
+            <label className="field">
+              <span>Penanggung jawab</span>
+              <select
+                className="select"
+                value={assignmentMemberId}
+                onChange={(event) => setAssignmentMemberId(event.target.value)}
+              >
+                {activeAdmins.map((admin) => (
+                  <option key={admin.id} value={admin.id}>
+                    {admin.name} · {admin.house}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="banner banner-info" style={{ marginBottom: 12 }}>
+              <Icon name="lock" size={16} />
+              <span>Admin lain tetap dapat melihat ringkasan, tetapi perubahan peta, iuran, atau jadwal ditolak server.</span>
+            </div>
+            <button
+              className="btn btn-primary"
+              disabled={assignmentBusy || !assignmentMemberId}
+              onClick={() => void saveAssignment()}
+            >
+              <Icon name="check" size={16} /> Simpan penugasan
+            </button>
           </>
         )}
       </Sheet>

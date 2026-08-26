@@ -23,9 +23,11 @@ RUN npm prune --omit=dev
 
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
+# Fly host memakai UTC; jadwal operasional WJW saat ini memakai WIB.
 ENV NODE_ENV=production \
     PORT=8080 \
-    WJW_DB=/data/wjw.sqlite
+    WJW_DB=/data/wjw.sqlite \
+    TZ=Asia/Jakarta
 
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
