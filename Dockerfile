@@ -3,9 +3,15 @@
 # dependencies + artefak ke image produksi.
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
-# Bila prebuilt native binary tidak tersedia, node-gyp memakai header Node di
-# image alih-alih mengunduhnya lagi dari jaringan build.
-ENV npm_config_nodedir=/usr/local
+# better-sqlite3 kadang tidak memiliki prebuilt binary untuk patch Node yang
+# sedang dipakai Depot. Siapkan toolchain agar node-gyp dapat membangunnya.
+# Header Node di image dipakai langsung agar tidak bergantung pada unduhan
+# header dari jaringan build.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
+ENV npm_config_nodedir=/usr/local \
+    PYTHON=/usr/bin/python3
 
 COPY package.json package-lock.json ./
 RUN npm ci
