@@ -102,8 +102,8 @@ warga dan satpam/admin aktif dalam tenant yang sama:
    SOS di command center.
 2. Ulangi, tahan penuh, lalu batalkan pada hitung mundur lima detik; kembali
    pastikan tidak ada SOS.
-3. Ulangi dan biarkan hitung mundur selesai. Pastikan UI baru berkata terkirim
-   setelah balasan server, laporan muncul di satpam tanpa refresh manual,
+3. Ulangi dan biarkan hitung mundur selesai. Pastikan UI baru berkata **SOS
+   dicatat server** setelah balasan server, laporan muncul di satpam tanpa refresh manual,
    dan push tiba pada perangkat yang telah subscribe.
 4. Satpam menekan **Saya menuju lokasi**, **Sudah di lokasi**, mengirim chat dan
    foto, lalu menyelesaikan insiden. Periksa timeline berurutan dan audit.
