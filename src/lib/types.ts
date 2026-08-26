@@ -57,6 +57,29 @@ export interface Member {
 /** 'sos' = panic button, 'incident' = normal report, 'tip' = (optionally anonymous) intel */
 export type ReportKind = 'sos' | 'incident' | 'tip'
 export type ReportStatus = 'open' | 'ack' | 'resolved'
+
+/** State machine kanonis insiden darurat. CANCELLED khusus alarm palsu. */
+export type IncidentStatus =
+  | 'NEW'
+  | 'ACKNOWLEDGED'
+  | 'RESPONDING'
+  | 'ON_SITE'
+  | 'RESOLVED'
+  | 'CLOSED'
+  | 'CANCELLED'
+
+export interface IncidentTimelineEntry {
+  id: string
+  incidentId: string
+  communityId: string
+  actorId: string | null
+  kind: string
+  fromStatus: IncidentStatus | null
+  toStatus: IncidentStatus | null
+  detail: string
+  createdAt: number
+}
+
 export type ReportCategory =
   | 'theft'
   | 'suspicious'
@@ -139,6 +162,7 @@ export interface Recipient {
   phone: string
   kind: ContactKind
   memberId: string | null
+  /** Waktu server menetapkan penerima; bukan bukti push sampai ke perangkat. */
   deliveredAt: number
   /** Set when that person acknowledges they are on the way. */
   acknowledgedAt: number | null
@@ -164,6 +188,8 @@ export interface Report {
   at: LatLng | null
   address: string
   status: ReportStatus
+  /** Lifecycle server-side yang immutable-audited untuk laporan SOS. */
+  incidentStatus?: IncidentStatus
   createdAt: number
   handledBy: string | null
   handledAt: number | null
@@ -190,6 +216,8 @@ export interface Report {
   snapshot: ProfileSnapshot | null
   /** Everyone the alert was delivered to. */
   recipients: Recipient[]
+  /** Append-only server timeline. May be withheld for non-participants. */
+  timeline?: IncidentTimelineEntry[]
   /** Set when the caller cancels a false alarm. */
   cancelledAt: number | null
 }

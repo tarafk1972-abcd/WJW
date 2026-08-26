@@ -57,11 +57,29 @@ sehingga waktu respons tidak membocorkan email mana yang terdaftar.
 | Wajib disetujui | Middleware `active` — anggota pending hanya melihat dirinya |
 | Batas peran | Warga tidak bisa menyetujui, mengubah area, atau membuat undangan |
 | Batas lingkungan | `sameCommunity()` mencegah admin RW A menyentuh RW B |
-| Privasi medis | Profil darurat hanya untuk pemilik, satpam, dan admin |
+| Privasi medis/SOS | Snapshot terenkripsi AES-256-GCM di produksi; detail SOS hanya untuk pelapor/penerima/satpam/admin tenant yang sama |
 | Privasi kontak | Kontak pribadi satu anggota tidak terlihat anggota lain |
 | Kode undangan | Tetap wajib approval admin — hanya mengusulkan peran |
 | Ronda | Jarak GPS diverifikasi **di server**, tidak bisa dipalsukan klien |
 | Superadmin | Sandi dari environment; bila kosong dibuat acak, bukan bawaan |
+
+## Lifecycle insiden SOS
+
+`POST /api/alerts` menerima kategori, titik GPS opsional, akurasi, dan
+`idempotencyKey`. Kunci yang sama dari pelapor yang sama selalu mengembalikan
+insiden pertama sehingga retry jaringan tidak menggandakan alarm.
+
+| Aksi | Endpoint | Status kanonis |
+| --- | --- | --- |
+| Alarm dibuat | `POST /api/alerts` | `NEW` |
+| Saya menuju lokasi | `POST /api/alerts/:id/respond` | `ACKNOWLEDGED → RESPONDING` |
+| Tiba | `POST /api/alerts/:id/status` | `ON_SITE` |
+| Selesai | `POST /api/alerts/:id/status` | `RESOLVED` |
+| Alarm palsu | `POST /api/alerts/:id/status` | `CANCELLED` |
+
+Setiap transition memasukkan baris immutable ke `incident_timeline`, audit,
+dan event SSE tenant. Endpoint lama `/ack` dan `/close` hanya alias kompatibilitas;
+klien baru memakai `/respond` dan `/status`.
 
 ## Bagaimana UI tersambung
 
@@ -69,11 +87,16 @@ Halaman **tidak** memanggil `fetch` langsung. Alurnya:
 
 1. Halaman membaca dari cache lokal (`DBShape`) — instan, tanpa menunggu jaringan.
 2. Setiap perubahan dikirim ke server lewat `src/lib/api.ts`.
-3. `src/lib/sync.ts` menarik ulang `/api/state` dan menyegarkan cache.
-4. Polling tiap 8 detik saat tab terlihat, ditambah saat tab kembali aktif.
+3. Server menerbitkan invalidasi kecil melalui `GET /api/events` (SSE),
+   terikat pada community dari token.
+4. `src/lib/realtime.ts` membuka SSE dengan `fetch` + header Authorization
+   (bukan token di URL), lalu `src/lib/sync.ts` menarik ulang `/api/state`
+   yang telah difilter RBAC.
+5. Refresh saat browser kembali online/terlihat hanya pelengkap pemulihan,
+   bukan mekanisme real-time utama.
 
 Keuntungannya: layar tetap responsif, tetapi **server yang menentukan hasil
-akhir** — termasuk menolak aksi yang tidak diizinkan.
+akhir** — termasuk menolak aksi yang tidak diizinkan dan menyaring data tenant.
 
 ### Masalah umum
 
@@ -106,12 +129,13 @@ menampilkan pesan "Server tidak aktif" alih-alih error umum.
 
 ### Mode luring
 
-Bila server tidak terjangkau, aplikasi tetap berjalan memakai penyimpanan
-lokal dan menampilkan pita peringatan. Tombol darurat tetap berfungsi.
-Login dan registrasi juga punya jalur cadangan lokal.
+Cache lokal boleh dipakai agar layar terakhir tetap dapat dibaca, tetapi **SOS
+tidak pernah dibuat lokal**. Bila server tidak terjangkau, layar menampilkan
+"Darurat belum terkirim" dan tidak mengaku bantuan telah dihubungi. Gunakan
+telepon/SMS/nomor darurat resmi sesuai SOP komunitas sebagai jalur cadangan.
 
-> Catatan: perubahan yang dibuat saat luring belum dikirim ulang otomatis
-> ketika koneksi pulih. Antrean penyelarasan adalah pekerjaan berikutnya.
+Tidak ada antrean SOS otomatis: mengirim ulang alarm tanpa tindakan sadar warga
+setelah koneksi kembali dapat menciptakan insiden yang sudah tidak relevan.
 
 ## Struktur
 
@@ -119,6 +143,9 @@ Login dan registrasi juga punya jalur cadangan lokal.
 server/
   schema.sql      skema SQLite
   db.ts           koneksi, hash sandi, sesi, tipe baris
+  crypto.ts       AES-256-GCM untuk snapshot/profil darurat
+  incidents.ts    state machine dan timeline immutable SOS
+  events.ts       broker invalidasi SSE per tenant
   geo.ts          jarak haversine, poligon, jadwal lintas tengah malam
   push.ts         Web Push + pembersihan langganan mati
   index.ts        seluruh endpoint API
@@ -134,9 +161,10 @@ public/sw.js      service worker notifikasi
 
 - Ganti `WJW_SUPERADMIN_PASSWORD` sebelum dipakai sungguhan.
 - Wajib HTTPS di produksi — push, kamera, mikrofon, dan GPS memerlukannya.
-- Cadangkan berkas `server/data/wjw.sqlite` secara berkala.
-- SQLite cukup untuk puluhan ribu pengguna. Bila perlu lebih besar,
-  pindah ke PostgreSQL cukup mengubah `server/db.ts`.
+- Untuk Fly.io, ikuti [FLY-IO.md](FLY-IO.md): database berada di `/data` volume
+  tunggal dan harus dibackup dengan SQLite backup API, bukan salin file live.
+- Phase 1 sengaja satu Machine karena SQLite dan broker SSE in-memory. Sebelum
+  scale-out, migrasikan ke PostgreSQL + broker event bersama.
 
 ## Yang masih perlu sebelum live
 

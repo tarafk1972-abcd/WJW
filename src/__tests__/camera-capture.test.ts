@@ -44,10 +44,11 @@ describe('tombol kamera pada halaman Laporan', () => {
 })
 
 describe('halaman darurat tetap memotret langsung', () => {
-  it('foto dan video dibuka lewat kamera', () => {
+  it('foto bukti dibuka lewat kamera', () => {
     const inputs = fileInputs('src/pages/Panic.tsx')
     const kamera = inputs.filter((i) => i.includes('capture="environment"'))
-    expect(kamera.length).toBe(2)
+    // Phase 1 menyimpan bukti foto, bukan video besar yang memperlambat SOS.
+    expect(kamera.length).toBe(1)
   })
 })
 

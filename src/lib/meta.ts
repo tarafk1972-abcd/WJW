@@ -1,6 +1,6 @@
 import type { IconName } from '../ui/Icon'
 import type { Key } from './i18n'
-import type { PanicType, ReportCategory, Role, Severity } from './types'
+import type { IncidentStatus, PanicType, ReportCategory, Role, Severity } from './types'
 
 /** Visual + i18n metadata for report categories (shared by list, map and detail views). */
 export const CATEGORY_META: Record<
@@ -125,6 +125,20 @@ export function statusKey(status: 'open' | 'ack' | 'resolved'): Key {
     : status === 'ack'
       ? 'statusAck'
       : 'statusOpen'
+}
+
+/** Status lifecycle yang lebih rinci untuk layar insiden dan command center. */
+export const INCIDENT_STATUS_META: Record<
+  IncidentStatus,
+  { label: string; chip: string }
+> = {
+  NEW: { label: 'Baru', chip: 'chip-danger' },
+  ACKNOWLEDGED: { label: 'Diterima', chip: 'chip-info' },
+  RESPONDING: { label: 'Menuju lokasi', chip: 'chip-info' },
+  ON_SITE: { label: 'Di lokasi', chip: 'chip-warn' },
+  RESOLVED: { label: 'Selesai', chip: 'chip-brand' },
+  CLOSED: { label: 'Ditutup', chip: 'chip-brand' },
+  CANCELLED: { label: 'Dibatalkan', chip: 'chip-warn' },
 }
 
 /**

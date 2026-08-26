@@ -88,10 +88,34 @@ CREATE TABLE IF NOT EXISTS reports (
   audio_seconds INTEGER NOT NULL DEFAULT 0,
   snapshot      TEXT,
   recipients    TEXT NOT NULL DEFAULT '[]',
-  cancelled_at  INTEGER
+  cancelled_at  INTEGER,
+  -- Status kanonis insiden; `status` di atas dipertahankan untuk kompatibilitas layar lama.
+  incident_status TEXT NOT NULL DEFAULT 'NEW',
+  -- Kunci idempotensi dari klien. Satu retry tidak boleh membuat dua darurat.
+  idempotency_key TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_reports_community ON reports(community_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reports_live ON reports(community_id, live);
+-- Index idempotensi dibuat dari db.ts setelah migrasi kolom untuk menjaga
+-- database lama yang tabel reports-nya sudah ada tetapi belum punya kolom ini.
+
+-- Timeline append-only untuk setiap perpindahan status dan tindakan penting.
+-- Tidak ada endpoint update/delete; satu event tidak boleh menimpa event lain.
+CREATE TABLE IF NOT EXISTS incident_timeline (
+  id           TEXT PRIMARY KEY,
+  incident_id  TEXT NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+  community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+  actor_id     TEXT,
+  kind         TEXT NOT NULL,
+  from_status  TEXT,
+  to_status    TEXT,
+  detail       TEXT NOT NULL DEFAULT '',
+  created_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_incident_timeline_incident
+  ON incident_timeline(incident_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_incident_timeline_community
+  ON incident_timeline(community_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS invites (
   id           TEXT PRIMARY KEY,

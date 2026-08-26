@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PanicGrid, HOLD_MS } from '../ui/PanicGrid'
+import { Countdown } from '../ui/Countdown'
 import { AppProvider } from '../lib/store'
 import { ToastProvider } from '../ui/Toast'
 import { invalidateCache } from '../lib/db'
@@ -94,6 +95,24 @@ describe('PanicGrid hold-to-activate', () => {
   })
 })
 
+describe('Countdown jendela pembatalan', () => {
+  it('tidak pernah mengirim setelah warga membatalkan dalam lima detik', async () => {
+    vi.useFakeTimers()
+    const onDone = vi.fn()
+    const onCancel = vi.fn()
+    render(wrap(<Countdown seconds={5} label="Darurat medis" onDone={onDone} onCancel={onCancel} />))
+
+    screen.getByRole('button', { name: /Batalkan/i }).dispatchEvent(
+      new MouseEvent('click', { bubbles: true }),
+    )
+    await vi.advanceTimersByTimeAsync(6000)
+
+    expect(onCancel).toHaveBeenCalledTimes(1)
+    expect(onDone).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+})
+
 describe('BigSOS one-button behaviour', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -109,7 +128,7 @@ describe('BigSOS one-button behaviour', () => {
     expect(onTrigger).not.toHaveBeenCalled()
   })
 
-  it('fires after a full 2-second hold', async () => {
+  it('fires after a full 1.5-second hold', async () => {
     const { BigSOS, SOS_HOLD_MS } = await import('../ui/BigSOS')
     vi.useFakeTimers()
     let now = 0

@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+# Build PWA dan API TypeScript secara terpisah, lalu kirim hanya runtime
+# dependencies + artefak ke image produksi.
+FROM node:22-bookworm-slim AS build
+WORKDIR /app
+# Bila prebuilt native binary tidak tersedia, node-gyp memakai header Node di
+# image alih-alih mengunduhnya lagi dari jaringan build.
+ENV npm_config_nodedir=/usr/local
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . ./
+RUN npm run build && npm run build:server
+# better-sqlite3 dibangun pada image Debian yang sama dengan runtime di bawah.
+RUN npm prune --omit=dev
+
+FROM node:22-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production \
+    PORT=8080 \
+    WJW_DB=/data/wjw.sqlite
+
+COPY --from=build /app/package.json ./
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+# build:server sudah menyalin schema.sql di samping db.js.
+COPY --from=build /app/build/server ./build/server
+
+# Proses berjalan sebagai root hanya agar volume Fly yang baru dipasang (milik
+# root) dapat dibuatkan SQLite. Aplikasi tidak menerima shell/unggah berkas.
+EXPOSE 8080
+
+# Tidak membutuhkan curl/wget tambahan; Node 22 mempunyai fetch bawaan.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:8080/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+
+CMD ["node", "build/server/index.js"]

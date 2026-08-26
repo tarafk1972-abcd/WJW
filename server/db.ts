@@ -1,12 +1,19 @@
 import bcrypt from 'bcryptjs'
 import Database from 'better-sqlite3'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  decryptSensitiveJson,
+  ensureSensitiveEncryptionConfigured,
+} from './crypto.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const ROOT = dirname(HERE)
+// tsx lokal menjalankan /app/server/db.ts, sementara image produksi memakai
+// /app/build/server/db.js. `.env` tetap dicari dari root proyek pada keduanya.
+const parent = dirname(HERE)
+const ROOT = existsSync(join(parent, 'package.json')) ? parent : dirname(parent)
 
 // Muat .env bila ada, tanpa dependensi tambahan. Nilai yang sudah ada di
 // environment tetap menang, agar bisa ditimpa saat menjalankan perintah.
@@ -22,6 +29,11 @@ try {
 } catch {
   // .env opsional — abaikan bila tidak ada
 }
+
+// Jangan mengizinkan deployment produksi menulis profil medis/snapshot
+// darurat tanpa enkripsi at-rest. Pengembangan dan tes lokal tetap boleh
+// tanpa kunci agar pemasangan awal mudah dijalankan.
+ensureSensitiveEncryptionConfigured()
 
 export const SUPERADMIN_EMAIL = 'tarafk1972@gmail.com'
 export const TRIAL_DAYS = 14
@@ -73,6 +85,24 @@ addColumn('members', 'home_accuracy', 'REAL')
 addColumn('members', 'home_set_at', 'INTEGER')
 /** 'register' | 'manual' — dari mana titik ini berasal. */
 addColumn('members', 'home_source', 'TEXT')
+
+// Evolusi Phase 1: laporan SOS lama tetap terbaca, tetapi semua laporan baru
+// memakai state machine insiden dan kunci idempotensi.
+addColumn('reports', 'incident_status', "TEXT NOT NULL DEFAULT 'NEW'")
+addColumn('reports', 'idempotency_key', 'TEXT')
+db.exec(
+  `UPDATE reports
+   SET incident_status = CASE status
+     WHEN 'ack' THEN 'RESPONDING'
+     WHEN 'resolved' THEN 'RESOLVED'
+     ELSE 'NEW'
+   END
+   WHERE incident_status IS NULL OR incident_status = ''`,
+)
+db.exec(
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_idempotency
+   ON reports(author_id, idempotency_key) WHERE idempotency_key IS NOT NULL`,
+)
 
 export function uid(prefix = ''): string {
   return prefix + randomBytes(9).toString('base64url')
@@ -155,8 +185,8 @@ export interface MemberRow {
   join_note: string
 }
 
-/** Bentuk anggota yang aman dikirim ke klien — tanpa hash sandi. */
-export function publicMember(m: MemberRow) {
+/** Field anggota umum — sengaja tanpa profil medis dan hash sandi. */
+function memberPublicFields(m: MemberRow) {
   return {
     id: m.id,
     communityId: m.community_id,
@@ -173,27 +203,39 @@ export function publicMember(m: MemberRow) {
     decidedBy: m.decided_by,
     rejectedReason: m.rejected_reason ?? undefined,
     invitedBy: m.invited_by,
-    emergency: m.emergency ? JSON.parse(m.emergency) : undefined,
     joinMethod: m.join_method ?? undefined,
     joinCode: m.join_code,
     joinNote: m.join_note,
   }
 }
 
+/** Bentuk anggota sendiri yang aman dikirim ke klien — tanpa hash sandi. */
+export function publicMember(m: MemberRow) {
+  return {
+    ...memberPublicFields(m),
+    emergency: m.emergency ? decryptSensitiveJson(m.emergency) ?? undefined : undefined,
+  }
+}
+
 /**
  * Anggota lain hanya boleh melihat data yang perlu — nomor telepon tetap
  * ditampilkan karena dipakai untuk menghubungi saat darurat, tetapi profil
- * medis hanya untuk pemiliknya, satpam dan admin.
+ * medis hanya untuk pemiliknya, satpam dan admin. Jangan bahkan mendekripsi
+ * profil saat viewer tidak berhak; satu record rusak tidak boleh mengganggu
+ * state warga lain.
  */
 export function visibleMember(m: MemberRow, viewer: MemberRow) {
-  const pub = publicMember(m)
+  const pub = memberPublicFields(m)
   const privileged =
     viewer.id === m.id ||
     viewer.role === 'admin' ||
     viewer.role === 'satpam' ||
     viewer.role === 'superadmin'
-  if (!privileged) delete (pub as { emergency?: unknown }).emergency
-  return pub
+  if (!privileged) return pub
+  return {
+    ...pub,
+    emergency: m.emergency ? decryptSensitiveJson(m.emergency) ?? undefined : undefined,
+  }
 }
 
 export function audit(

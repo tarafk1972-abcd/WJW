@@ -95,10 +95,12 @@ describe('UI ↔ server', () => {
     window.location.hash = '#/app'
     render(<App />)
 
-    const btn = await screen.findByRole('button', { name: 'DARURAT' }, { timeout: 5000 })
-    // tahan penuh 2 detik
+    const btn = await screen.findByRole('button', { name: 'Darurat medis' }, { timeout: 5000 })
+    // Pilih kategori, tahan 1,5 detik, lalu biarkan jendela pembatalan 5 detik selesai.
     btn.dispatchEvent(new Event('pointerdown', { bubbles: true }))
-    await new Promise((res) => setTimeout(res, 2300))
+    await new Promise((res) => setTimeout(res, 1700))
+    await screen.findByText('DARURAT AKAN DIKIRIM', {}, { timeout: 2500 })
+    await new Promise((res) => setTimeout(res, 5300))
 
     const db = await serverDb()
     await waitFor(

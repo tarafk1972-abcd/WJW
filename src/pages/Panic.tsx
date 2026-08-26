@@ -1,31 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { alertApi } from '../lib/api'
-import { getFix, recordVoice, VOICE_SECONDS, watchLocation } from '../lib/capture'
+import { getFix, watchLocation } from '../lib/capture'
 import { apiMode, mutate, syncState } from '../lib/sync'
-import {
-  acknowledgeAlert,
-  addAttachment,
-  alertAudience,
-  attachAudio,
-  cancelAlert,
-  pushLocation,
-  raiseAlert,
-  stopLive,
-  updateReport,
-} from '../lib/db'
+import { alertAudience } from '../lib/db'
 import { fmtDateTime, timeAgo } from '../lib/format'
-import { CATEGORY_META, PANIC_TYPES } from '../lib/meta'
+import { CATEGORY_META } from '../lib/meta'
 import { useApp } from '../lib/store'
-import { BigSOS } from '../ui/BigSOS'
+import { Countdown } from '../ui/Countdown'
 import { Icon, type IconName } from '../ui/Icon'
 import { MapView } from '../ui/MapView'
-import { Sheet } from '../ui/Sheet'
+import { PanicGrid } from '../ui/PanicGrid'
 import { useToast } from '../ui/Toast'
 import type { ContactKind, PanicType, Report } from '../lib/types'
 
 /** Batas lampiran: penyimpanan browser hanya ~5 MB total. */
 const MAX_MB = 2
+
+function emergencyRequestKey(): string {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID().replaceAll('-', '')
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 16)}`
+}
 
 export const KIND_META: Record<
   ContactKind,
@@ -45,18 +40,15 @@ export default function Panic() {
 
   const [activeId, setActiveId] = useState<string | null>(null)
   const [locating, setLocating] = useState(false)
-  const [recording, setRecording] = useState(false)
-  const [micFailed, setMicFailed] = useState(false)
-  const [typeOpen, setTypeOpen] = useState(false)
+  const [armed, setArmed] = useState<{ type: PanicType; key: string } | null>(null)
   const photoRef = useRef<HTMLInputElement>(null)
-  const videoRef = useRef<HTMLInputElement>(null)
   const unwatch = useRef<(() => void) | null>(null)
 
   /** My own alert that is still live. */
   const active: Report | null = useMemo(() => {
     if (!me) return null
     const byId = activeId ? db.reports.find((r) => r.id === activeId) : null
-    if (byId) return byId
+    if (byId?.live && !byId.cancelledAt) return byId
     return (
       db.reports.find(
         (r) => r.authorId === me.id && r.kind === 'sos' && r.live && !r.cancelledAt,
@@ -92,7 +84,9 @@ export default function Panic() {
     if (unwatch.current) return
     const id = active.id
     unwatch.current = watchLocation((p) => {
-      pushLocation(id, { ...p, at: Date.now() })
+      // Titik baru hanya tampil setelah endpoint server menerimanya dan SSE
+      // menyegarkan state. Jangan menulis jejak lokal yang bisa tampak sukses
+      // walau koneksi putus di tengah perjalanan.
       if (apiMode()) void alertApi.location(id, p.lat, p.lng, p.accuracy)
     })
     return () => {
@@ -101,48 +95,46 @@ export default function Panic() {
     }
   }, [active?.live, active?.id])
 
-  const fire = useCallback(async () => {
-    if (!me || !community) return
-    setLocating(true)
-    setMicFailed(false)
-
-    const fix = await getFix()
-    const at = fix ? { lat: fix.lat, lng: fix.lng } : null
-
-    let report: Report
-    if (apiMode()) {
-      // Server yang menentukan penerima, agar tidak bisa dipalsukan klien.
-      const r = await alertApi.raise('other', at, fix?.accuracy ?? null)
-      report = r.report as unknown as Report
-      await syncState()
-    } else {
-      report = raiseAlert({
-        member: me,
-        category: 'other',
-        at,
-        accuracy: fix?.accuracy ?? null,
-      })
-    }
-    setActiveId(report.id)
-    setLocating(false)
-    toast(t('sentTo', { n: report.recipients.length }), 'err')
-    if (navigator.vibrate) navigator.vibrate([200, 80, 200])
-
-    // 15s voice memo runs after the alert is already out
-    setRecording(true)
-    const cap = recordVoice(VOICE_SECONDS)
-    const res = await cap.done
-    setRecording(false)
-    if (res) {
-      try {
-        attachAudio(report.id, res.dataUrl, res.seconds)
-      } catch {
-        setMicFailed(true)
+  /**
+   * Hanya server yang boleh menjadi sumber kebenaran untuk darurat. Mode
+   * luring TIDAK membuat laporan lokal karena itu dapat memberi kesan salah
+   * bahwa bantuan sudah dihubungi.
+   */
+  const fire = useCallback(
+    async (type: PanicType, idempotencyKey: string) => {
+      if (!me || !community) return
+      if (!apiMode()) {
+        setArmed(null)
+        toast('Peringatan: koneksi ke server gagal. Darurat belum terkirim.', 'err')
+        return
       }
-    } else setMicFailed(true)
-  }, [me, community, t, toast])
 
-  const attach = async (file: File | undefined, kind: 'photo' | 'video') => {
+      setLocating(true)
+      try {
+        // Jangan menunggu GPS lama saat seseorang membutuhkan bantuan. Alert
+        // dikirim maksimal sekitar 1,5 detik kemudian; watchLocation akan
+        // menambahkan titik yang lebih baik setelah insiden aktif.
+        const fix = await getFix(1500)
+        const at = fix ? { lat: fix.lat, lng: fix.lng } : null
+        const result = await alertApi.raise(type, at, fix?.accuracy ?? null, idempotencyKey)
+        const report = result.report as unknown as Report
+        await syncState()
+        setActiveId(report.id)
+        setArmed(null)
+        toast(t('sentTo', { n: report.recipients.length }), 'err')
+        if (navigator.vibrate) navigator.vibrate([200, 80, 200])
+      } catch {
+        setArmed(null)
+        // Tidak ada toast sukses atau incident lokal pada jalur ini.
+        toast('Peringatan: koneksi ke server gagal. Darurat belum terkirim.', 'err')
+      } finally {
+        setLocating(false)
+      }
+    },
+    [me, community, t, toast],
+  )
+
+  const attach = async (file: File | undefined) => {
     if (!file || !active) return
     if (file.size > MAX_MB * 1024 * 1024) return toast(t('fileTooBig', { n: MAX_MB }), 'err')
     const dataUrl = await new Promise<string>((res, rej) => {
@@ -151,13 +143,12 @@ export default function Panic() {
       fr.onerror = rej
       fr.readAsDataURL(file)
     })
-    try {
-      addAttachment(active.id, dataUrl, kind)
-      toast(t('mediaAdded'))
-    } catch {
-      // penyimpanan penuh — peringatan tetap aman, hanya lampiran yang gagal
-      toast(t('storageFull'), 'err')
+    const ok = await mutate(() => alertApi.attach(active.id, dataUrl))
+    if (!ok) {
+      toast('Foto belum terkirim. Periksa koneksi lalu coba lagi.', 'err')
+      return
     }
+    toast(t('mediaAdded'))
   }
 
   if (!me || !community) return null
@@ -207,21 +198,6 @@ export default function Panic() {
           }
         />
         <StatusRow
-          icon="phone"
-          ok={!!active.audio}
-          pending={recording}
-          label={
-            recording
-              ? t('recordingVoice', { n: VOICE_SECONDS })
-              : active.audio
-                ? t('voiceRecorded', { n: active.audioSeconds })
-                : micFailed
-                  ? t('micDenied')
-                  : t('voiceSkipped')
-          }
-          right={recording ? <Waves /> : undefined}
-        />
-        <StatusRow
           icon="user"
           ok
           label={`${t('yourProfile')} · ${active.snapshot?.name ?? me.name}${
@@ -230,20 +206,7 @@ export default function Panic() {
         />
         <StatusRow icon="clock" ok label={fmtDateTime(active.createdAt, lang)} />
 
-        {active.audio && (
-          <audio
-            controls
-            src={active.audio}
-            style={{ width: '100%', marginTop: 10 }}
-          />
-        )}
-
-        {/* emergency type — optional, chosen after the alert is out */}
-        <button
-          className="list-link"
-          style={{ marginTop: 12 }}
-          onClick={() => setTypeOpen(true)}
-        >
+        <div className="list-link" style={{ marginTop: 12 }}>
           <Icon
             name={CATEGORY_META[active.category].icon}
             size={19}
@@ -253,10 +216,9 @@ export default function Panic() {
             <span className="strong" style={{ display: 'block' }}>
               {t(CATEGORY_META[active.category].key)}
             </span>
-            <span className="tiny">{t('chooseType')}</span>
+            <span className="tiny">Jenis darurat tercatat saat alarm dikirim.</span>
           </span>
-          <Icon name="chevronRight" size={16} color="var(--text-3)" />
-        </button>
+        </div>
 
         {/* media */}
         <div className="btn-row" style={{ marginTop: 10 }}>
@@ -266,33 +228,21 @@ export default function Panic() {
             accept="image/*"
             capture="environment"
             hidden
-            onChange={(e) => void attach(e.target.files?.[0], 'photo')}
-          />
-          <input
-            ref={videoRef}
-            type="file"
-            accept="video/*"
-            capture="environment"
-            hidden
-            onChange={(e) => void attach(e.target.files?.[0], 'video')}
+            onChange={(e) => {
+              void attach(e.target.files?.[0])
+              e.target.value = ''
+            }}
           />
           <button className="btn btn-ghost btn-sm grow" onClick={() => photoRef.current?.click()}>
             <Icon name="camera" size={14} /> {t('attachPhoto')}
-          </button>
-          <button className="btn btn-ghost btn-sm grow" onClick={() => videoRef.current?.click()}>
-            <Icon name="play" size={14} /> {t('attachVideo')}
           </button>
         </div>
 
         {active.attachments.length > 0 && (
           <div className="thumb-grid" style={{ marginTop: 10 }}>
-            {active.attachments.map((a) =>
-              a.kind === 'video' ? (
-                <video key={a.id} src={a.dataUrl} className="thumb" controls />
-              ) : (
-                <img key={a.id} src={a.dataUrl} alt="" className="thumb" />
-              ),
-            )}
+            {active.attachments.map((a) => (
+              <img key={a.id} src={a.dataUrl} alt="Bukti insiden" className="thumb" />
+            ))}
           </div>
         )}
 
@@ -352,23 +302,14 @@ export default function Panic() {
         )}
 
         <div className="btn-row" style={{ marginTop: 16 }}>
-          {active.live && (
-            <button
-              className="btn btn-ghost"
-              onClick={() => {
-                stopLive(active.id)
-                toast(t('liveStopped'))
-              }}
-            >
-              <Icon name="stop" size={15} /> {t('stopSharing')}
-            </button>
-          )}
           <button
             className="btn btn-primary"
-            onClick={() => {
-              updateReport(me.id, active.id, { status: 'resolved' })
-              stopLive(active.id)
-              if (apiMode()) void mutate(() => alertApi.close(active.id, false))
+            onClick={async () => {
+              const ok = await mutate(() => alertApi.close(active.id, false))
+              if (!ok) {
+                toast('Status belum diperbarui. Periksa koneksi lalu coba lagi.', 'err')
+                return
+              }
               setActiveId(null)
               toast(t('alertResolved'))
             }}
@@ -379,50 +320,25 @@ export default function Panic() {
         <button
           className="btn btn-ghost"
           style={{ marginTop: 8 }}
-          onClick={() => {
-            cancelAlert(active.id, me.id)
-            if (apiMode()) void mutate(() => alertApi.close(active.id, true))
+          onClick={async () => {
+            const ok = await mutate(() => alertApi.close(active.id, true))
+            if (!ok) {
+              toast('Alarm belum dibatalkan. Periksa koneksi lalu coba lagi.', 'err')
+              return
+            }
             setActiveId(null)
             toast(t('alertCancelled'))
           }}
         >
           <Icon name="x" size={15} /> {t('falseAlarm')}
         </button>
-
-        <Sheet open={typeOpen} onClose={() => setTypeOpen(false)} title={t('whatHappened')}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 9 }}>
-            {PANIC_TYPES.map((p: PanicType) => {
-              const m = CATEGORY_META[p]
-              return (
-                <button
-                  key={p}
-                  className="quick"
-                  onClick={() => {
-                    updateReport(me.id, active.id, { category: p, note: t(m.key) })
-                    setTypeOpen(false)
-                  }}
-                  style={
-                    active.category === p
-                      ? { borderColor: m.color, background: m.bg, color: m.color }
-                      : undefined
-                  }
-                >
-                  <div className="ic" style={{ background: m.bg, color: m.color }}>
-                    <Icon name={m.icon} size={18} />
-                  </div>
-                  {t(m.key)}
-                </button>
-              )
-            })}
-          </div>
-        </Sheet>
       </div>
     )
   }
 
-  /* ------------------------- IDLE (ONE SCREEN) ------------------------- */
+  /* ------------------------- IDLE: resident emergency home ------------------------- */
   return (
-    <div className="sos-screen">
+    <div className="page">
       {incoming.map((r) => {
         const who = db.members.find((m) => m.id === r.authorId)
         const mine = r.recipients.find((x) => x.memberId === me.id)
@@ -432,10 +348,10 @@ export default function Panic() {
               <span className="live-dot" />
               <div className="grow">
                 <div className="strong" style={{ fontSize: 13.5 }}>
-                  🆘 {who?.name} · {t(CATEGORY_META[r.category].key)}
+                  🔴 DARURAT AKTIF · {t(CATEGORY_META[r.category].key)}
                 </div>
                 <div className="tiny">
-                  {r.address} · {timeAgo(r.createdAt, lang)}
+                  {who?.name} {r.address ? `· ${r.address} ` : ''}· {timeAgo(r.createdAt, lang)}
                 </div>
               </div>
             </div>
@@ -444,14 +360,17 @@ export default function Panic() {
                 className="btn btn-sm btn-ghost grow"
                 onClick={() => nav(`/app/reports?id=${r.id}`)}
               >
-                {t('viewProfile')}
+                Lihat detail
               </button>
               {!mine?.acknowledgedAt && (
                 <button
                   className="btn btn-sm btn-danger grow"
-                  onClick={() => {
-                    acknowledgeAlert(r.id, me.id)
-                    if (apiMode()) void mutate(() => alertApi.ack(r.id))
+                  onClick={async () => {
+                    const ok = await mutate(() => alertApi.respond(r.id))
+                    if (!ok) {
+                      toast('Respons belum terkirim. Periksa koneksi lalu coba lagi.', 'err')
+                      return
+                    }
                     toast(t('acknowledged'))
                   }}
                 >
@@ -463,19 +382,37 @@ export default function Panic() {
         )
       })}
 
-      <div className="sos-stage">
-        <BigSOS onTrigger={() => void fire()} disabled={locating} />
-        <p className="sos-ready-note">
-          {locating ? t('gettingLocation') : t('networkHint')}
+      <div className="card" style={{ marginBottom: 14 }}>
+        <div className="row-between">
+          <div>
+            <div className="tiny strong">WARGA JAGA WARGA</div>
+            <h2 style={{ marginTop: 3, fontSize: 21, fontWeight: 900 }}>Butuh bantuan sekarang?</h2>
+          </div>
+          <span className="chip chip-danger">SOS</span>
+        </div>
+        <p className="muted" style={{ marginTop: 7 }}>
+          Pilih jenis darurat, lalu tekan dan tahan selama 1,5 detik.
         </p>
-        <button className="chip" onClick={() => nav('/app/network')}>
-          <Icon name="users" size={13} /> {t('willReceive')}:{' '}
-          <b style={{ color: 'var(--text)' }}>{audienceCount}</b>
-        </button>
       </div>
 
+      <PanicGrid
+        disabled={locating || !!armed}
+        onTrigger={(type) => setArmed({ type, key: emergencyRequestKey() })}
+        onCancel={() => toast(t('alertCancelled'))}
+      />
+
+      <p className="sos-ready-note" style={{ marginTop: 14 }}>
+        {locating
+          ? t('gettingLocation')
+          : 'Alarm hanya terkirim setelah hitung mundur selesai dan server mengonfirmasi penerimaan.'}
+      </p>
+      <button className="chip" onClick={() => nav('/app/network')}>
+        <Icon name="users" size={13} /> {t('willReceive')}:{' '}
+        <b style={{ color: 'var(--text)' }}>{audienceCount}</b>
+      </button>
+
       {audienceCount === 0 && (
-        <div className="banner banner-warn">
+        <div className="banner banner-warn" style={{ marginTop: 14 }}>
           <Icon name="info" size={17} />
           <span>
             {t('emptyNetworkWarn')}{' '}
@@ -484,10 +421,23 @@ export default function Panic() {
         </div>
       )}
 
-      <div className="disclaimer">
+      <div className="disclaimer" style={{ marginTop: 14 }}>
         <Icon name="info" size={15} />
         <span>{t('noPolice')}</span>
       </div>
+
+      {armed && (
+        <Countdown
+          label={t(CATEGORY_META[armed.type].key)}
+          sending={locating}
+          onDone={() => void fire(armed.type, armed.key)}
+          onCancel={() => {
+            if (locating) return
+            setArmed(null)
+            toast(t('alertCancelled'))
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -520,15 +470,5 @@ function StatusRow({
       {right}
       {!right && ok && <Icon name="check" size={15} color="var(--brand)" />}
     </div>
-  )
-}
-
-function Waves() {
-  return (
-    <span className="wave">
-      {[0, 1, 2, 3].map((i) => (
-        <i key={i} style={{ animationDelay: `${i * 0.12}s` }} />
-      ))}
-    </span>
   )
 }

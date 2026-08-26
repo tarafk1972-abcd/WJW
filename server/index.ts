@@ -3,6 +3,8 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import type { Context, Next } from 'hono'
 import { z } from 'zod'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { extname, join, resolve, sep } from 'node:path'
 import {
   DAY,
   TRIAL_DAYS,
@@ -22,6 +24,18 @@ import {
   visibleMember,
   type MemberRow,
 } from './db.js'
+import { decryptSensitiveJson, encryptSensitiveJson } from './crypto.js'
+import { publishCommunityEvent, subscribeCommunity, type RealtimeEvent } from './events.js'
+import {
+  addIncidentTimeline,
+  initialIncidentStatus,
+  isIncidentStatus,
+  timelineByIncident,
+  timelineForIncident,
+  transitionIncident,
+  type IncidentStatus,
+  type TimelineEntry,
+} from './incidents.js'
 import {
   FRESH_MS,
   nearbyMembers,
@@ -99,7 +113,40 @@ const ATTACH_MAX_COUNT = 12
 type Env = { Variables: { me: MemberRow } }
 const app = new Hono<Env>()
 
-app.use('/api/*', cors({ origin: (o) => o ?? '*', credentials: true }))
+// `process.cwd()` adalah root proyek pada npm local maupun WORKDIR /app di
+// image Fly. Hindari import.meta.url karena Vite mengubah URL modul menjadi
+// http:// saat tes UI mengimpor app.fetch().
+const ROOT = resolve(process.env.WJW_ROOT ?? process.cwd())
+const STATIC_ROOT = resolve(process.env.WJW_WEB_ROOT ?? join(ROOT, 'dist'))
+
+/*
+ * API produksi berjalan satu origin dengan PWA, jadi CORS tidak diperlukan.
+ * Bila operator sengaja memisahkan web dan API, origin eksplisit dapat diisi
+ * lewat WJW_CORS_ORIGINS (dipisah koma). Jangan pernah memantulkan origin
+ * sembarang pada endpoint yang menerima Bearer token.
+ */
+const corsOrigins = (process.env.WJW_CORS_ORIGINS ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean)
+if (corsOrigins.length > 0) {
+  app.use('/api/*', cors({ origin: corsOrigins, credentials: false }))
+}
+
+/* Header browser-level untuk mengurangi dampak XSS, MIME sniffing dan iframe. */
+app.use('*', async (c, next) => {
+  await next()
+  c.header('X-Content-Type-Options', 'nosniff')
+  c.header('Referrer-Policy', 'no-referrer')
+  c.header('X-Frame-Options', 'DENY')
+  c.header('Permissions-Policy', 'geolocation=(self), microphone=(self), camera=(self)')
+  c.header(
+    'Content-Security-Policy',
+    "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; " +
+      "img-src 'self' data: blob: https://*.tile.openstreetmap.org; media-src 'self' data: blob:; " +
+      "connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self' blob:",
+  )
+})
 
 /* ---------------- util ---------------- */
 
@@ -162,7 +209,33 @@ function mapCommunity(r: Record<string, unknown>) {
   }
 }
 
-function mapReport(r: Record<string, unknown>) {
+/**
+ * Cek apakah viewer boleh melihat detail insiden SOS.
+ *
+ * Semua anggota boleh tahu ada darurat aktif, tetapi lokasi presisi, profil
+ * medis, media, chat, dan daftar penerima hanya untuk pelapor serta orang
+ * yang benar-benar diberi wewenang menangani insiden. Ini penting karena
+ * /api/state dibaca ulang oleh banyak layar sekaligus.
+ */
+function canViewIncidentDetails(me: MemberRow | undefined, r: Record<string, unknown>): boolean {
+  if (!me || r.kind !== 'sos') return !me
+  if (me.role === 'superadmin' || me.role === 'admin' || me.role === 'satpam') return true
+  if (r.author_id === me.id) return true
+  const recipients = (J(r.recipients as string) ?? []) as { memberId?: string | null }[]
+  return recipients.some((recipient) => recipient.memberId === me.id)
+}
+
+function mapReport(
+  r: Record<string, unknown>,
+  viewer?: MemberRow,
+  timeline: TimelineEntry[] = [],
+) {
+  const isSos = r.kind === 'sos'
+  const canSeeDetails = canViewIncidentDetails(viewer, r)
+  const incidentStatus = isIncidentStatus(r.incident_status)
+    ? r.incident_status
+    : initialIncidentStatus(r.status)
+
   return {
     id: r.id,
     communityId: r.community_id,
@@ -170,25 +243,34 @@ function mapReport(r: Record<string, unknown>) {
     kind: r.kind,
     category: r.category,
     note: r.note,
-    at: r.at_lat === null ? null : { lat: r.at_lat, lng: r.at_lng },
-    address: r.address,
+    // Jangan mengirim titik GPS atau nomor rumah spesifik ke warga yang
+    // bukan peserta insiden. Mereka tetap bisa melihat status darurat umum.
+    at: !isSos || canSeeDetails ? (r.at_lat === null ? null : { lat: r.at_lat, lng: r.at_lng }) : null,
+    address: !isSos || canSeeDetails ? r.address : '',
     status: r.status,
+    incidentStatus,
     createdAt: r.created_at,
-    handledBy: r.handled_by,
-    handledAt: r.handled_at,
+    handledBy: !isSos || canSeeDetails ? r.handled_by : null,
+    handledAt: !isSos || canSeeDetails ? r.handled_at : null,
     resolvedNote: r.resolved_note ?? undefined,
     insideArea: r.inside_area === null ? null : !!r.inside_area,
     anonymous: !!r.anonymous,
-    attachments: J(r.attachments as string) ?? [],
-    messages: J(r.messages as string) ?? [],
-    responders: J(r.responders as string) ?? [],
-    track: J(r.track as string) ?? [],
+    attachments: !isSos || canSeeDetails ? J(r.attachments as string) ?? [] : [],
+    messages: !isSos || canSeeDetails ? J(r.messages as string) ?? [] : [],
+    responders: !isSos || canSeeDetails ? J(r.responders as string) ?? [] : [],
+    track: !isSos || canSeeDetails ? J(r.track as string) ?? [] : [],
     live: !!r.live,
     liveEndedAt: r.live_ended_at,
-    audio: r.audio,
-    audioSeconds: r.audio_seconds,
-    snapshot: J(r.snapshot as string),
-    recipients: J(r.recipients as string) ?? [],
+    audio: !isSos || canSeeDetails ? r.audio : null,
+    audioSeconds: !isSos || canSeeDetails ? r.audio_seconds : 0,
+    // Snapshot disimpan terenkripsi di database dan dibuka hanya setelah
+    // pemeriksaan otorisasi ini.
+    snapshot:
+      !isSos || canSeeDetails
+        ? decryptSensitiveJson<Record<string, unknown>>(r.snapshot as string)
+        : null,
+    recipients: !isSos || canSeeDetails ? J(r.recipients as string) ?? [] : [],
+    timeline: !isSos || canSeeDetails ? timeline : [],
     cancelledAt: r.cancelled_at,
   }
 }
@@ -243,11 +325,84 @@ function mapLog(r: Record<string, unknown>) {
 
 /* ================= kesehatan ================= */
 
-app.get('/api/health', (c) =>
-  c.json({ ok: true, push: pushEnabled, time: now() }),
-)
+/** Health check Fly: proses dan koneksi SQLite harus benar-benar siap. */
+app.get('/api/health', (c) => {
+  try {
+    db.prepare('SELECT 1').get()
+    return c.json({ ok: true, push: pushEnabled, time: now() })
+  } catch {
+    return c.json({ ok: false, error: 'database_unavailable' }, 503)
+  }
+})
 
 app.get('/api/push/key', (c) => c.json({ key: vapidPublicKey() }))
+
+/**
+ * Server-Sent Events untuk perubahan tenant secara real-time.
+ *
+ * Browser membuka stream lewat fetch agar Authorization Bearer tetap berada
+ * di header (EventSource bawaan browser tidak bisa menambah header dan akan
+ * memaksa token masuk ke query string/log). Event hanya sinyal invalidasi;
+ * klien mengambil ulang state yang sudah difilter RBAC, bukan menerima data
+ * insiden sensitif di stream ini.
+ */
+app.get('/api/events', auth, active, (c) => {
+  const me = c.get('me')
+  if (!me.community_id) return bad(c, 'errNoCommunity', 403)
+
+  const encoder = new TextEncoder()
+  let unsubscribe: (() => void) | undefined
+  let heartbeat: ReturnType<typeof setInterval> | undefined
+  let closed = false
+  let cleanup = () => {}
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const send = (event: string, payload: unknown) => {
+        if (closed) return
+        try {
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`),
+          )
+        } catch {
+          // Koneksi bisa putus di antara pemeriksaan dan enqueue.
+          cleanup()
+        }
+      }
+      cleanup = () => {
+        if (closed) return
+        closed = true
+        unsubscribe?.()
+        if (heartbeat) clearInterval(heartbeat)
+      }
+
+      unsubscribe = subscribeCommunity(me.community_id!, (event: RealtimeEvent) => {
+        send('state', event)
+      })
+      // Pesan awal membuat klien tahu koneksi SSE benar-benar hidup.
+      send('ready', { at: now() })
+      heartbeat = setInterval(() => send('ping', { at: now() }), 25_000)
+      heartbeat.unref?.()
+      // Pada beberapa adapter Node, stream cancel baru tiba setelah socket
+      // ditutup; signal request memberi jalur cleanup tambahan agar listener
+      // tenant tidak bocor bila tab/browser mendadak hilang.
+      c.req.raw.signal.addEventListener('abort', cleanup, { once: true })
+
+    },
+    // `cancel()` dipanggil saat fetch AbortController klien menghentikan
+    // stream. Kedua jalur memakai closure cleanup yang sama.
+    cancel() {
+      cleanup()
+    },
+  })
+
+  return c.body(stream, 200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  })
+})
 
 /**
  * Gambar QRIS yang diunggah superadmin.
@@ -599,12 +754,17 @@ app.post('/api/auth/login', async (c) => {
     password?: string
     deviceId?: string
   }
-  const q = (body.identifier ?? '').trim().toLowerCase().replace(/\s|-/g, '')
-  if (!q || !body.password) return bad(c, 'errLogin', 401)
+  const identifier = (body.identifier ?? '').trim().toLowerCase()
+  // Tanda hubung sah pada bagian lokal email (`nama-warga@...`), jadi jangan
+  // normalisasi email seperti nomor telepon. Nomor tetap boleh diketik dengan
+  // spasi atau tanda hubung agar nyaman di ponsel.
+  const emailQuery = identifier.replace(/\s/g, '')
+  const phoneQuery = identifier.replace(/\s|-/g, '')
+  if (!emailQuery || !body.password) return bad(c, 'errLogin', 401)
 
   const row = db
     .prepare('SELECT * FROM members WHERE lower(email)=? OR phone=?')
-    .get(q, q) as MemberRow | undefined
+    .get(emailQuery, phoneQuery) as MemberRow | undefined
 
   // Selalu bandingkan hash agar waktu respons tidak membocorkan
   // apakah email terdaftar atau tidak.
@@ -676,11 +836,14 @@ app.get('/api/state', auth, (c) => {
     db.prepare('SELECT * FROM members WHERE community_id=?').all(cid) as MemberRow[]
   ).map((m) => visibleMember(m, me))
 
+  // Timeline dibaca per tenant sekali lalu digabungkan ke setiap laporan;
+  // hindari query N+1 ketika dashboard memuat banyak insiden.
+  const timelines = timelineByIncident(cid)
   const reports = (
     one<Record<string, unknown>>(
       'SELECT * FROM reports WHERE community_id=? ORDER BY created_at DESC LIMIT 200',
     )
-  ).map(mapReport)
+  ).map((report) => mapReport(report, me, timelines.get(String(report.id)) ?? []))
 
   /*
    * Apakah aplikasi perlu menanyakan lokasi sekarang?
@@ -848,11 +1011,16 @@ app.post('/api/members/:id/role', auth, active, async (c) => {
 app.put('/api/me/profile', auth, async (c) => {
   const me = c.get('me')
   const b = (await c.req.json()) as { emergency?: unknown; language?: string }
-  if (b.emergency !== undefined)
+  if (b.emergency !== undefined) {
+    if (!b.emergency || typeof b.emergency !== 'object') return bad(c, 'errRequired')
+    // Data medis/kontak disimpan AES-256-GCM saat WJW_DATA_ENCRYPTION_KEY
+    // tersedia (wajib pada produksi); jangan pernah audit isi field ini.
     db.prepare('UPDATE members SET emergency=? WHERE id=?').run(
-      JSON.stringify(b.emergency),
+      encryptSensitiveJson(b.emergency),
       me.id,
     )
+    audit(me.community_id, me.id, 'emergency_profile.update', '')
+  }
   if (b.language && ['id', 'en', 'su'].includes(b.language))
     db.prepare('UPDATE members SET language=? WHERE id=?').run(b.language, me.id)
   return c.json({ ok: true })
@@ -1177,13 +1345,39 @@ app.get('/api/alerts/audience', auth, active, (c) => {
   })
 })
 
+const alertSchema = z.object({
+  category: z.enum(['theft', 'fight', 'medical', 'fire', 'flood', 'other']),
+  at: z
+    .object({
+      lat: z.number().finite().min(-90).max(90),
+      lng: z.number().finite().min(-180).max(180),
+    })
+    .nullable()
+    .optional(),
+  accuracy: z.number().finite().min(0).max(100_000).nullable().optional(),
+  // Stabil selama retry satu tombol, tetapi bukan ID yang dipakai sebagai
+  // authorization. Server tetap menentukan author dan tenant dari token.
+  idempotencyKey: z.string().min(8).max(128).regex(/^[A-Za-z0-9_-]+$/).optional(),
+})
+
 app.post('/api/alerts', auth, active, async (c) => {
   const me = c.get('me')
   if (!me.community_id) return bad(c, 'errNoCommunity')
-  const b = (await c.req.json().catch(() => ({}))) as {
-    category?: string
-    at?: LatLng | null
-    accuracy?: number | null
+  const parsed = alertSchema.safeParse(await c.req.json().catch(() => ({})))
+  if (!parsed.success) return bad(c, 'errRequired')
+  const b = parsed.data
+
+  // Retry dari browser/proxy tidak boleh menggandakan satu keadaan darurat.
+  if (b.idempotencyKey) {
+    const existing = db
+      .prepare('SELECT * FROM reports WHERE author_id=? AND idempotency_key=?')
+      .get(me.id, b.idempotencyKey) as Record<string, unknown> | undefined
+    if (existing) {
+      return c.json({
+        report: mapReport(existing, me, timelineForIncident(String(existing.id))),
+        reused: true,
+      })
+    }
   }
 
   const com = db
@@ -1195,40 +1389,76 @@ app.post('/api/alerts', auth, active, async (c) => {
 
   const audience = alertAudience(me, at, b.accuracy ?? null)
   const id = uid('r_')
-  const t = now()
-  const snapshot = {
-    name: me.name,
-    phone: me.phone,
-    house: me.house,
-    ...(me.emergency ? JSON.parse(me.emergency) : {}),
+  const createdAt = now()
+
+  // Snapshot medis harus tetap mencerminkan saat tombol ditekan, bukan
+  // profil yang mungkin diubah setelah insiden selesai. Bila profil lama
+  // rusak, darurat tetap dikirim — jangan jadikan data nonkritis sebagai
+  // alasan menahan alarm — tetapi jangan mengaku data medisnya kosong.
+  let emergency = {}
+  try {
+    emergency = decryptSensitiveJson<Record<string, unknown>>(me.emergency) ?? {}
+  } catch {
+    audit(me.community_id, me.id, 'emergency_profile.unreadable', '')
+  }
+  const snapshot = { name: me.name, phone: me.phone, house: me.house, ...emergency }
+
+  try {
+    db.prepare(
+      `INSERT INTO reports
+       (id,community_id,author_id,kind,category,note,at_lat,at_lng,address,status,
+        created_at,inside_area,attachments,messages,responders,track,live,
+        audio_seconds,snapshot,recipients,incident_status,idempotency_key)
+       VALUES (?,?,?,'sos',?,'',?,?,?,'open',?,?,'[]','[]','[]',?,1,0,?,?,'NEW',?)`,
+    ).run(
+      id,
+      me.community_id,
+      me.id,
+      b.category,
+      at?.lat ?? null,
+      at?.lng ?? null,
+      me.house,
+      createdAt,
+      inside === null ? null : inside ? 1 : 0,
+      JSON.stringify(
+        at ? [{ lat: at.lat, lng: at.lng, at: createdAt, accuracy: b.accuracy ?? null }] : [],
+      ),
+      encryptSensitiveJson(snapshot),
+      // Nama field deliveredAt dipertahankan untuk kompatibilitas klien lama,
+      // tetapi nilainya berarti penerima DITETAPKAN server. Hasil Web Push
+      // dicatat terpisah di audit alert.push_dispatch dan bukan delivery proof.
+      JSON.stringify(
+        audience.map((a) => ({ ...a, deliveredAt: createdAt, acknowledgedAt: null })),
+      ),
+      b.idempotencyKey ?? null,
+    )
+  } catch (error) {
+    // Indeks unik adalah pengaman terakhir jika dua retry tiba pada saat yang
+    // sama. Kembalikan insiden pertama, bukan menciptakan insiden kedua.
+    if (b.idempotencyKey) {
+      const existing = db
+        .prepare('SELECT * FROM reports WHERE author_id=? AND idempotency_key=?')
+        .get(me.id, b.idempotencyKey) as Record<string, unknown> | undefined
+      if (existing)
+        return c.json({
+          report: mapReport(existing, me, timelineForIncident(String(existing.id))),
+          reused: true,
+        })
+    }
+    throw error
   }
 
-  db.prepare(
-    `INSERT INTO reports
-     (id,community_id,author_id,kind,category,note,at_lat,at_lng,address,status,
-      created_at,inside_area,attachments,messages,responders,track,live,
-      audio_seconds,snapshot,recipients)
-     VALUES (?,?,?,'sos',?,'',?,?,?,'open',?,?,'[]','[]','[]',?,1,0,?,?)`,
-  ).run(
-    id,
-    me.community_id,
-    me.id,
-    b.category ?? 'other',
-    at?.lat ?? null,
-    at?.lng ?? null,
-    me.house,
-    t,
-    inside === null ? null : inside ? 1 : 0,
-    JSON.stringify(
-      at ? [{ lat: at.lat, lng: at.lng, at: t, accuracy: b.accuracy ?? null }] : [],
-    ),
-    JSON.stringify(snapshot),
-    JSON.stringify(
-      audience.map((a) => ({ ...a, deliveredAt: t, acknowledgedAt: null })),
-    ),
-  )
-
+  addIncidentTimeline({
+    incidentId: id,
+    communityId: me.community_id,
+    actorId: me.id,
+    kind: 'incident.created',
+    toStatus: 'NEW',
+    detail: b.category,
+    at: createdAt,
+  })
   audit(me.community_id, me.id, 'alert.raise', `${b.category} → ${audience.length}`)
+  publishCommunityEvent(me.community_id, 'incident.created', id)
 
   // Notifikasi push mendesak ke semua penerima yang punya akun.
   // Tetangga terdekat diberi tahu jaraknya: itu yang menentukan apakah
@@ -1236,16 +1466,18 @@ app.post('/api/alerts', auth, active, async (c) => {
   const dekat = audience.filter((a) => a.memberId && a.meters !== undefined)
   const jauh = audience.filter((a) => a.memberId && a.meters === undefined)
 
-  void pushToMembers(
-    jauh.map((a) => a.memberId!),
-    {
-      title: `🆘 DARURAT — ${me.name}`,
-      body: `${me.house}. Buka aplikasi untuk melihat lokasi.`,
-      url: `#/app/reports?id=${id}`,
-      tag: `sos-${id}`,
-      urgent: true,
-    },
-  )
+  const dispatches = [
+    pushToMembers(
+      jauh.map((a) => a.memberId!),
+      {
+        title: `🆘 DARURAT — ${me.name}`,
+        body: `${me.house}. Buka aplikasi untuk melihat lokasi.`,
+        url: `#/app/reports?id=${id}`,
+        tag: `sos-${id}`,
+        urgent: true,
+      },
+    ),
+  ]
 
   for (const a of dekat) {
     // Jangan mengaku tahu lebih banyak daripada yang sebenarnya: bila
@@ -1254,20 +1486,51 @@ app.post('/api/alerts', auth, active, async (c) => {
       a.basis === 'live'
         ? `🆘 DARURAT ${a.meters} m dari Anda`
         : `🆘 DARURAT ${a.meters} m dari rumah Anda`
-    void pushToMembers([a.memberId!], {
-      title: judul,
-      body: `${me.name} · ${me.house}. Anda termasuk yang paling dekat.`,
-      url: `#/app/reports?id=${id}`,
-      tag: `sos-${id}`,
-      urgent: true,
-    })
+    dispatches.push(
+      pushToMembers([a.memberId!], {
+        title: judul,
+        body: `${me.name} · ${me.house}. Anda termasuk yang paling dekat.`,
+        url: `#/app/reports?id=${id}`,
+        tag: `sos-${id}`,
+        urgent: true,
+      }),
+    )
   }
+
+  // Catat hasil transport secara asinkron. `accepted` hanya berarti layanan
+  // Web Push menerima request; aplikasi tidak pernah menyamakan ini dengan
+  // perangkat/manusia yang sudah menerima atau membaca alarm.
+  void Promise.all(dispatches)
+    .then((results) => {
+      const total = results.reduce(
+        (sum, result) => ({
+          targets: sum.targets + result.targets,
+          subscriptions: sum.subscriptions + result.subscriptions,
+          accepted: sum.accepted + result.sent,
+          failed: sum.failed + result.failed,
+          enabled: sum.enabled || result.enabled,
+        }),
+        { targets: 0, subscriptions: 0, accepted: 0, failed: 0, enabled: false },
+      )
+      audit(
+        me.community_id,
+        me.id,
+        'alert.push_dispatch',
+        `recipients=${audience.length}; member_targets=${total.targets}; subscriptions=${total.subscriptions}; accepted_by_push_service=${total.accepted}; failed=${total.failed}; enabled=${total.enabled}`,
+      )
+      publishCommunityEvent(me.community_id, 'incident.updated', id)
+    })
+    .catch(() => {
+      // Alarm sudah tersimpan; catat kegagalan accounting tanpa pernah
+      // mengubah status SOS menjadi gagal/terkirim palsu.
+      audit(me.community_id, me.id, 'alert.push_dispatch_error', `recipients=${audience.length}`)
+    })
 
   const row = db.prepare('SELECT * FROM reports WHERE id=?').get(id) as Record<
     string,
     unknown
   >
-  return c.json({ report: mapReport(row) }, 201)
+  return c.json({ report: mapReport(row, me, timelineForIncident(id)) }, 201)
 })
 
 /** Pemilik peringatan mengirim titik lokasi terbaru. */
@@ -1276,11 +1539,24 @@ app.post('/api/alerts/:id/location', auth, active, async (c) => {
   const r = db.prepare('SELECT * FROM reports WHERE id=?').get(c.req.param('id')) as
     | Record<string, unknown>
     | undefined
-  if (!r) return bad(c, 'not_found', 404)
+  if (!r || r.kind !== 'sos') return bad(c, 'not_found', 404)
   if (r.author_id !== me.id) return bad(c, 'forbidden', 403)
   if (!r.live) return c.json({ ok: true, ignored: true })
 
-  const b = (await c.req.json()) as { lat: number; lng: number; accuracy?: number }
+  const b = (await c.req.json().catch(() => ({}))) as { lat?: number; lng?: number; accuracy?: number }
+  if (
+    !Number.isFinite(b.lat) ||
+    !Number.isFinite(b.lng) ||
+    (b.lat as number) < -90 ||
+    (b.lat as number) > 90 ||
+    (b.lng as number) < -180 ||
+    (b.lng as number) > 180 ||
+    (b.accuracy !== undefined && (!Number.isFinite(b.accuracy) || b.accuracy < 0 || b.accuracy > 100_000))
+  )
+    return bad(c, 'errRequired')
+  const lat = b.lat as number
+  const lng = b.lng as number
+  const accuracy = b.accuracy ?? null
   const track = (J(r.track as string) ?? []) as {
     lat: number
     lng: number
@@ -1288,51 +1564,158 @@ app.post('/api/alerts/:id/location', auth, active, async (c) => {
     accuracy: number | null
   }[]
   const last = track[track.length - 1]
-  if (!last || last.lat !== b.lat || last.lng !== b.lng) {
-    track.push({ lat: b.lat, lng: b.lng, at: now(), accuracy: b.accuracy ?? null })
+  if (!last || last.lat !== lat || last.lng !== lng) {
+    track.push({ lat, lng, at: now(), accuracy })
     if (track.length > 500) track.shift()
     db.prepare('UPDATE reports SET track=?, at_lat=?, at_lng=? WHERE id=?').run(
       JSON.stringify(track),
-      b.lat,
-      b.lng,
+      lat,
+      lng,
       r.id,
     )
+    publishCommunityEvent(r.community_id as string, 'incident.updated', String(r.id))
   }
   return c.json({ ok: true })
 })
 
-app.post('/api/alerts/:id/ack', auth, active, (c) => {
+/**
+ * Peserta menerima dan langsung mulai menuju lokasi. Endpoint lama /ack
+ * dipertahankan sebagai alias agar aplikasi versi sebelumnya tidak putus.
+ */
+function respondToAlert(c: Context<Env>, r: Record<string, unknown>) {
   const me = c.get('me')
-  const r = db.prepare('SELECT * FROM reports WHERE id=?').get(c.req.param('id')) as
-    | Record<string, unknown>
-    | undefined
-  if (!r || !sameCommunity(me, r.community_id as string))
-    return bad(c, 'forbidden', 403)
+  if (!sameCommunity(me, r.community_id as string)) return bad(c, 'forbidden', 403)
 
   const recipients = (J(r.recipients as string) ?? []) as {
     memberId: string | null
     acknowledgedAt: number | null
   }[]
   const rec = recipients.find((x) => x.memberId === me.id)
-  if (rec && !rec.acknowledgedAt) rec.acknowledgedAt = now()
+  const privileged = requireAdmin(c) || me.role === 'satpam'
+  if (!rec && !privileged) return bad(c, 'forbidden', 403)
 
   const responders: string[] = J(r.responders as string) ?? []
+  const at = now()
+  if (rec && !rec.acknowledgedAt) rec.acknowledgedAt = at
   if (!responders.includes(me.id)) responders.push(me.id)
 
   db.prepare(
-    `UPDATE reports SET recipients=?, responders=?,
-     status = CASE WHEN status='open' THEN 'ack' ELSE status END,
-     handled_by = COALESCE(handled_by, ?), handled_at = COALESCE(handled_at, ?)
-     WHERE id=?`,
-  ).run(JSON.stringify(recipients), JSON.stringify(responders), me.id, now(), r.id)
+    `UPDATE reports SET recipients=?, responders=?, handled_by=COALESCE(handled_by, ?),
+     handled_at=COALESCE(handled_at, ?) WHERE id=? AND community_id=?`,
+  ).run(JSON.stringify(recipients), JSON.stringify(responders), me.id, at, r.id, r.community_id)
 
+  let current = isIncidentStatus(r.incident_status)
+    ? r.incident_status
+    : initialIncidentStatus(r.status)
+  try {
+    // "Saya menuju lokasi" mencatat dua langkah yang berbeda dalam timeline:
+    // penerimaan dan keberangkatan. Status akhir yang terlihat adalah
+    // RESPONDING, tanpa menunggu tindakan tambahan dari satpam.
+    if (current === 'NEW') {
+      transitionIncident({
+        incidentId: String(r.id),
+        communityId: String(r.community_id),
+        actorId: me.id,
+        from: current,
+        to: 'ACKNOWLEDGED',
+        kind: 'incident.acknowledged',
+      })
+      current = 'ACKNOWLEDGED'
+    }
+    if (current === 'ACKNOWLEDGED') {
+      transitionIncident({
+        incidentId: String(r.id),
+        communityId: String(r.community_id),
+        actorId: me.id,
+        from: current,
+        to: 'RESPONDING',
+        kind: 'incident.responding',
+      })
+    }
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.startsWith('invalid_transition')) throw error
+  }
+
+  audit(r.community_id as string, me.id, 'alert.respond', String(r.id))
+  publishCommunityEvent(r.community_id as string, 'incident.updated', String(r.id))
   void pushToMembers([r.author_id as string], {
     title: 'Bantuan menuju lokasi',
     body: `${me.name} sedang menuju lokasi Anda.`,
-    url: `#/app`,
+    url: '#/app',
     tag: `ack-${r.id}`,
   })
   return c.json({ ok: true })
+}
+
+app.post('/api/alerts/:id/respond', auth, active, (c) => {
+  const r = db.prepare('SELECT * FROM reports WHERE id=?').get(c.req.param('id')) as
+    | Record<string, unknown>
+    | undefined
+  if (!r || r.kind !== 'sos') return bad(c, 'not_found', 404)
+  return respondToAlert(c, r)
+})
+
+app.post('/api/alerts/:id/ack', auth, active, (c) => {
+  const r = db.prepare('SELECT * FROM reports WHERE id=?').get(c.req.param('id')) as
+    | Record<string, unknown>
+    | undefined
+  if (!r || r.kind !== 'sos') return bad(c, 'not_found', 404)
+  return respondToAlert(c, r)
+})
+
+/**
+ * Ubah status lifecycle secara eksplisit (mis. satpam tiba di lokasi).
+ */
+app.post('/api/alerts/:id/status', auth, active, async (c) => {
+  const me = c.get('me')
+  const r = db.prepare('SELECT * FROM reports WHERE id=?').get(c.req.param('id')) as
+    | Record<string, unknown>
+    | undefined
+  if (!r || r.kind !== 'sos' || !sameCommunity(me, r.community_id as string))
+    return bad(c, 'forbidden', 403)
+
+  const body = (await c.req.json().catch(() => ({}))) as { status?: unknown }
+  if (!isIncidentStatus(body.status)) return bad(c, 'errRequired')
+  const target = body.status
+  const current = isIncidentStatus(r.incident_status)
+    ? r.incident_status
+    : initialIncidentStatus(r.status)
+  const isOwner = r.author_id === me.id
+  const recipients = (J(r.recipients as string) ?? []) as { memberId: string | null }[]
+  const isParticipant = recipients.some((recipient) => recipient.memberId === me.id)
+  const privileged = requireAdmin(c) || me.role === 'satpam'
+
+  // Pelapor dapat membatalkan alarm palsu atau menandai dirinya aman, tetapi
+  // tidak bisa mengaku sudah tiba di lokasi. CLOSED adalah penutupan admin.
+  if (
+    (target === 'CANCELLED' && !isOwner && !privileged) ||
+    (target === 'CLOSED' && !requireAdmin(c)) ||
+    (target !== 'CANCELLED' && target !== 'CLOSED' && !isOwner && !isParticipant && !privileged) ||
+    (isOwner && ['ACKNOWLEDGED', 'RESPONDING', 'ON_SITE'].includes(target))
+  ) {
+    return bad(c, 'forbidden', 403)
+  }
+
+  try {
+    transitionIncident({
+      incidentId: String(r.id),
+      communityId: String(r.community_id),
+      actorId: me.id,
+      from: current,
+      to: target,
+      kind: target === 'CANCELLED' ? 'incident.cancelled' : 'incident.status_changed',
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('invalid_transition'))
+      return bad(c, 'invalid_transition', 409)
+    if (error instanceof Error && error.message === 'incident_changed')
+      return bad(c, 'incident_changed', 409)
+    throw error
+  }
+
+  audit(r.community_id as string, me.id, 'alert.status', `${current} → ${target}`)
+  publishCommunityEvent(r.community_id as string, 'incident.updated', String(r.id))
+  return c.json({ ok: true, status: target })
 })
 
 /**
@@ -1351,7 +1734,7 @@ app.post('/api/alerts/:id/messages', auth, active, async (c) => {
   const r = db.prepare('SELECT * FROM reports WHERE id=?').get(c.req.param('id')) as
     | Record<string, unknown>
     | undefined
-  if (!r) return bad(c, 'not_found', 404)
+  if (!r || r.kind !== 'sos') return bad(c, 'not_found', 404)
   if (!sameCommunity(me, r.community_id as string)) return bad(c, 'forbidden', 403)
 
   const isOwner = r.author_id === me.id
@@ -1390,6 +1773,8 @@ app.post('/api/alerts/:id/messages', auth, active, async (c) => {
       tag: `im-${r.id}`,
     })
 
+  audit(r.community_id as string, me.id, 'alert.message', String(r.id))
+  publishCommunityEvent(r.community_id as string, 'incident.message', String(r.id))
   return c.json({ message: msg }, 201)
 })
 
@@ -1409,7 +1794,7 @@ app.post('/api/alerts/:id/attachments', auth, active, async (c) => {
   const r = db.prepare('SELECT * FROM reports WHERE id=?').get(c.req.param('id')) as
     | Record<string, unknown>
     | undefined
-  if (!r) return bad(c, 'not_found', 404)
+  if (!r || r.kind !== 'sos') return bad(c, 'not_found', 404)
   if (!sameCommunity(me, r.community_id as string)) return bad(c, 'forbidden', 403)
 
   const isOwner = r.author_id === me.id
@@ -1436,7 +1821,7 @@ app.post('/api/alerts/:id/attachments', auth, active, async (c) => {
 
   const att = {
     id: uid('at_'),
-    kind: b.kind === 'video' ? 'video' : 'photo',
+    kind: 'photo',
     dataUrl,
     at: now(),
     bytes,
@@ -1448,26 +1833,45 @@ app.post('/api/alerts/:id/attachments', auth, active, async (c) => {
     r.id,
   )
   audit(r.community_id as string, me.id, 'alert.attach', String(bytes))
+  publishCommunityEvent(r.community_id as string, 'incident.evidence', String(r.id))
   return c.json({ attachment: att }, 201)
 })
 
+/** Alias kompatibilitas untuk aplikasi lama: false alarm → CANCELLED, lainnya → RESOLVED. */
 app.post('/api/alerts/:id/close', auth, active, async (c) => {
   const me = c.get('me')
   const r = db.prepare('SELECT * FROM reports WHERE id=?').get(c.req.param('id')) as
     | Record<string, unknown>
     | undefined
-  if (!r) return bad(c, 'not_found', 404)
-  const isOwner = r.author_id === me.id
-  if (!isOwner && !requireAdmin(c) && me.role !== 'satpam')
+  if (!r || r.kind !== 'sos' || !sameCommunity(me, r.community_id as string))
     return bad(c, 'forbidden', 403)
 
-  const b = (await c.req.json().catch(() => ({}))) as { cancelled?: boolean }
-  db.prepare(
-    `UPDATE reports SET status='resolved', live=0, live_ended_at=?, cancelled_at=?
-     WHERE id=?`,
-  ).run(now(), b.cancelled ? now() : null, r.id)
-  audit(r.community_id as string, me.id, b.cancelled ? 'alert.cancel' : 'alert.close', '')
-  return c.json({ ok: true })
+  const body = (await c.req.json().catch(() => ({}))) as { cancelled?: boolean }
+  const target: IncidentStatus = body.cancelled ? 'CANCELLED' : 'RESOLVED'
+  const isOwner = r.author_id === me.id
+  if (!isOwner && !requireAdmin(c) && me.role !== 'satpam') return bad(c, 'forbidden', 403)
+
+  const current = isIncidentStatus(r.incident_status)
+    ? r.incident_status
+    : initialIncidentStatus(r.status)
+  try {
+    transitionIncident({
+      incidentId: String(r.id),
+      communityId: String(r.community_id),
+      actorId: me.id,
+      from: current,
+      to: target,
+      kind: target === 'CANCELLED' ? 'incident.cancelled' : 'incident.resolved',
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('invalid_transition'))
+      return bad(c, 'invalid_transition', 409)
+    throw error
+  }
+
+  audit(r.community_id as string, me.id, target === 'CANCELLED' ? 'alert.cancel' : 'alert.close', '')
+  publishCommunityEvent(r.community_id as string, 'incident.updated', String(r.id))
+  return c.json({ ok: true, status: target })
 })
 
 /* ================= titik ronda & jadwal ================= */
@@ -1746,6 +2150,8 @@ app.post('/api/broadcasts', auth, active, async (c) => {
   const all = db
     .prepare("SELECT id FROM members WHERE community_id=? AND status='active' AND id<>?")
     .all(me.community_id, me.id) as { id: string }[]
+  audit(me.community_id, me.id, 'broadcast.create', id)
+  publishCommunityEvent(me.community_id, 'broadcast.updated', id)
   void pushToMembers(
     all.map((m) => m.id),
     {
@@ -1786,6 +2192,9 @@ app.post('/api/broadcasts/:id/respond', auth, active, async (c) => {
     JSON.stringify(responses),
     bc.id,
   )
+
+  audit(me.community_id, me.id, 'broadcast.safety_response', entry.status)
+  publishCommunityEvent(me.community_id, 'broadcast.updated', String(bc.id))
 
   if (entry.status === 'need_help') {
     const admins = db
@@ -2115,6 +2524,67 @@ app.post('/api/billing/:id/resend', auth, active, async (c) => {
     memberId: me.id,
   })
   return c.json(r)
+})
+
+/* ================= PWA static host ================= */
+
+const MIME: Record<string, string> = {
+  '.css': 'text/css; charset=utf-8',
+  '.html': 'text/html; charset=utf-8',
+  '.ico': 'image/x-icon',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
+  '.webp': 'image/webp',
+  '.woff2': 'font/woff2',
+}
+
+/** Sajikan build Vite pada origin yang sama dengan API di Fly.io. */
+app.get('*', (c) => {
+  if (c.req.path === '/api' || c.req.path.startsWith('/api/'))
+    return c.json({ error: 'not_found' }, 404)
+
+  let pathname: string
+  try {
+    pathname = decodeURIComponent(c.req.path)
+  } catch {
+    return c.text('Not found', 404)
+  }
+  if (pathname.includes('\0')) return c.text('Not found', 404)
+
+  const requested = pathname.replace(/^\/+/, '')
+  const candidate = resolve(STATIC_ROOT, requested || 'index.html')
+  const insideStaticRoot = candidate === STATIC_ROOT || candidate.startsWith(`${STATIC_ROOT}${sep}`)
+  if (!insideStaticRoot) return c.text('Not found', 404)
+
+  let file = candidate
+  let fallback = false
+  try {
+    if (!existsSync(file) || !statSync(file).isFile()) {
+      // Berkas ber-ekstensi yang hilang harus 404 (bukan index.html), supaya
+      // service worker/browser tidak menyimpan HTML sebagai JavaScript/CSS.
+      if (extname(requested)) return c.text('Not found', 404)
+      file = join(STATIC_ROOT, 'index.html')
+      fallback = true
+    }
+    if (!existsSync(file) || !statSync(file).isFile()) {
+      return c.text('WJW API berjalan. Build web belum tersedia.', 503)
+    }
+    const type = MIME[extname(file)] ?? 'application/octet-stream'
+    const immutableAsset = requested.startsWith('assets/') && !fallback
+    return c.body(readFileSync(file), 200, {
+      'Content-Type': type,
+      'Cache-Control': immutableAsset
+        ? 'public, max-age=31536000, immutable'
+        : 'no-cache, no-store, must-revalidate',
+    })
+  } catch {
+    return c.text('Not found', 404)
+  }
 })
 
 /* ================= start ================= */

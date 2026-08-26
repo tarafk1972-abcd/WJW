@@ -33,29 +33,32 @@ Ganti akun: **Pengaturan → Keluar**, lalu **Masuk** dengan akun lain.
 Inti aplikasi. Lakukan sebagai **Dewi (warga)**.
 
 1. Keluar, masuk sebagai `dewi@warga.id`.
-2. Di tab **DARURAT** (layar utama), **tekan dan tahan** tombol merah besar.
+2. Di tab **DARURAT** (layar utama), pilih kategori lalu **tekan dan tahan**.
    - Coba dulu **tekan sebentar lalu lepas** → tidak terjadi apa-apa.
      Ini pengaman alarm palsu.
-   - Sekarang **tahan penuh 2 detik** sampai cincin putih memutar penuh.
-3. Izinkan lokasi bila diminta. Peringatan langsung terkirim.
-4. Perhatikan layar peringatan aktif:
-   - Lokasi GPS terkunci + akurasi
-   - "Lokasi langsung aktif" — titik terus bertambah
-   - "Merekam suara 15 dtk…" berjalan otomatis
-   - Profil & waktu kejadian tercatat
-   - Daftar **penerima** beserta status "Terkirim"
-5. Coba **Foto** / **Video**, dan pilih **jenis darurat**.
+   - Sekarang **tahan penuh 1,5 detik** sampai cincin progres penuh.
+3. Muncul hitung mundur **5 detik**. Coba tekan **Batalkan** terlebih dahulu:
+   tidak boleh ada SOS di akun Satpam.
+4. Ulangi dan biarkan hitung mundur selesai. Izinkan lokasi bila diminta.
+   Layar hanya menyatakan SOS dicatat setelah server mengonfirmasi penerimaan.
+5. Perhatikan layar peringatan aktif:
+   - Lokasi GPS/akurasi bila tersedia
+   - "Lokasi langsung aktif" selama insiden masih berjalan
+   - Profil snapshot & waktu kejadian tercatat
+   - Daftar **penerima yang ditetapkan**, dengan status menunggu respons
+6. Coba lampirkan **Foto** bukti.
 
 ### Melihat sisi penerima
 
-6. Keluar, masuk sebagai `joko@warga.id` (Satpam).
-7. Di layar utama muncul spanduk merah berdenyut → tekan
+7. Keluar, masuk sebagai `joko@warga.id` (Satpam).
+8. Di layar utama muncul spanduk merah berdenyut → tekan
    **"Saya menuju lokasi"**.
-8. Buka insidennya: ada peta lokasi, **profil darurat** Dewi (golongan
-   darah, alergi), dan kolom percakapan. Kirim pesan.
-9. Kembali ke akun Dewi → status penerima berubah jadi **"Menuju lokasi"**,
-   dan pesan Joko muncul.
-10. Tutup dengan **"Saya sudah aman"** atau **"Alarm palsu — batalkan"**.
+9. Buka insidennya: ada peta lokasi, **profil snapshot** Dewi (golongan
+   darah, alergi), timeline, dan kolom percakapan. Kirim pesan/foto,
+   lalu tandai **Sudah di lokasi** dan selesaikan insiden.
+10. Kembali ke akun Dewi → responder dan pembaruan status muncul tanpa
+    refresh manual. Untuk alarm palsu yang sudah terkirim, gunakan
+    **"Alarm palsu — batalkan"**.
 
 ---
 
@@ -158,10 +161,9 @@ Karena data disimpan per-browser, Anda bisa meniru dua orang berbeda:
 - **Jendela biasa** = Budi (Admin)
 - **Jendela penyamaran / browser lain** = Dewi (Warga)
 
-Keduanya punya data terpisah, jadi cocok untuk melihat kedua sisi.
-
-> Catatan: data belum tersinkron antar perangkat sungguhan — itu perlu
-> backend. Untuk sekarang, simulasi cukup dilakukan lewat ganti akun.
+Untuk data contoh lokal, keduanya memang punya data terpisah. Untuk simulasi
+real-time yang benar, gunakan dua akun aktif pada server yang sama di dua HP
+atau dua browser; SSE akan menyegarkan state setelah SOS/status/chat berubah.
 
 ---
 
@@ -176,13 +178,10 @@ mengembalikan aplikasi ke keadaan baru.
 
 | Fitur | Syarat |
 | --- | --- |
-| Lokasi GPS | Izinkan saat diminta |
-| Rekaman suara 15 dtk | Izinkan mikrofon |
-| Pindai QR | Izinkan kamera |
+| Lokasi GPS | Izinkan saat diminta; SOS tetap dapat dicatat tanpa titik GPS |
+| Foto bukti / pindai QR | Izinkan kamera bila ingin memakai kamera langsung |
 
-Kamera & mikrofon **hanya diizinkan browser di `localhost` atau HTTPS**.
-Bila membuka lewat alamat IP jaringan (mis. `192.168.x.x`), fitur ini
-diblokir browser — tombol panik, GPS, dan sisanya tetap berfungsi.
-
-Aplikasi dirancang agar **izin yang ditolak tidak pernah membatalkan
-pengiriman peringatan**.
+GPS, kamera, push notification, dan instalasi PWA membutuhkan `https://` atau
+`localhost`. Alamat IP HTTP biasa (mis. `192.168.x.x`) dapat diblokir browser.
+Izin lokasi/kamera yang ditolak tidak membatalkan pengiriman SOS, tetapi SOS
+sendiri tetap wajib memperoleh konfirmasi dari server.

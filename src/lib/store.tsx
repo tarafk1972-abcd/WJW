@@ -22,7 +22,7 @@ import {
   apiMode,
   isLocationWanted,
   lastSyncError,
-  startPolling,
+  startRealtimeSync,
   syncState,
 } from './sync'
 import { DEFAULT_LANG, translate, type Key } from './i18n'
@@ -76,10 +76,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setBooted(true)
       refresh()
     })
-    const stop = startPolling()
+    // SSE memberi tahu dalam hitungan detik saat ada insiden/pesan/status
+    // baru. State tetap ditarik dari API agar otorisasi server selalu berlaku.
+    const stop = startRealtimeSync(refresh)
+    const onOnline = () => void syncState().then(refresh)
+    window.addEventListener('online', onOnline)
     return () => {
       alive = false
       stop()
+      window.removeEventListener('online', onOnline)
     }
   }, [refresh])
 

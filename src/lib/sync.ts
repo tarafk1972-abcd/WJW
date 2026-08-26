@@ -9,6 +9,7 @@
  * menentukan hasil akhir — termasuk penolakan izin.
  */
 import { api, ApiError, getToken } from './api'
+import { startRealtime } from './realtime'
 import { loadDB, saveDB } from './db'
 import type { DBShape } from './types'
 
@@ -98,8 +99,9 @@ export function syncState(): Promise<void> {
       lastError = null
     } catch (e) {
       lastError = e instanceof ApiError ? e.code : 'errOffline'
-      // Gagal sinkron tidak boleh menjatuhkan aplikasi — UI tetap memakai
-      // cache terakhir agar tombol darurat tetap bisa dipakai.
+      // Gagal sinkron tidak boleh menjatuhkan aplikasi — UI boleh membaca
+      // cache terakhir. Jalur SOS sendiri tetap wajib menunggu konfirmasi API
+      // dan akan berkata belum terkirim bila koneksi gagal.
     } finally {
       syncing = null
     }
@@ -126,7 +128,24 @@ export async function mutate(fn: () => Promise<unknown>): Promise<boolean> {
   }
 }
 
-/** Mulai polling berkala; kembalikan fungsi penghenti. */
+/**
+ * Jalur real-time utama. Server hanya mengirim sinyal kecil, lalu klien
+ * mengambil state lewat endpoint yang menerapkan tenant isolation/RBAC.
+ * Tidak ada polling berkala sebagai mekanisme utama.
+ */
+export function startRealtimeSync(onUpdate?: () => void): () => void {
+  if (!apiMode()) return () => {}
+  return startRealtime({
+    onSignal: () => {
+      void syncState().then(onUpdate)
+    },
+  })
+}
+
+/**
+ * Fallback lama untuk integrasi lokal yang belum mendukung streaming.
+ * AppProvider produksi tidak memakainya; SSE di atas adalah jalur utama.
+ */
 export function startPolling(ms = 8000): () => void {
   if (!apiMode()) return () => {}
   void syncState()

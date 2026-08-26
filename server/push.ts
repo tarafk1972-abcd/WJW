@@ -45,22 +45,44 @@ export interface PushPayload {
   urgent?: boolean
 }
 
+/** Accounting upaya dispatch Web Push; bukan konfirmasi penerimaan manusia. */
+export interface PushDispatchResult {
+  /** Jumlah anggota target unik, bukan bukti perangkat menerimanya. */
+  targets: number
+  /** Jumlah subscription browser yang ditemukan. */
+  subscriptions: number
+  /** Diterima oleh layanan Web Push, bukan dibuka/dilihat perangkat. */
+  sent: number
+  /** Penolakan/error dari layanan Web Push. */
+  failed: number
+  enabled: boolean
+}
+
 /**
  * Kirim notifikasi ke sekumpulan anggota.
  * Langganan yang sudah tidak valid (404/410) dibersihkan otomatis.
  * Tidak pernah melempar error — kegagalan push tidak boleh menggagalkan
- * penyimpanan peringatan darurat.
+ * penyimpanan peringatan darurat. Hasilnya adalah accounting dispatch
+ * transport, BUKAN bukti bahwa ponsel atau manusia telah menerima alarm.
  */
 export async function pushToMembers(
   memberIds: string[],
   payload: PushPayload,
-): Promise<{ sent: number; failed: number }> {
-  if (!pushEnabled || memberIds.length === 0) return { sent: 0, failed: 0 }
+): Promise<PushDispatchResult> {
+  const targets = [...new Set(memberIds.filter(Boolean))]
+  const empty: PushDispatchResult = {
+    targets: targets.length,
+    subscriptions: 0,
+    sent: 0,
+    failed: 0,
+    enabled: pushEnabled,
+  }
+  if (!pushEnabled || targets.length === 0) return empty
 
-  const marks = memberIds.map(() => '?').join(',')
+  const marks = targets.map(() => '?').join(',')
   const subs = db
     .prepare(`SELECT * FROM push_subscriptions WHERE member_id IN (${marks})`)
-    .all(...memberIds) as {
+    .all(...targets) as {
     endpoint: string
     p256dh: string
     auth: string
@@ -86,5 +108,5 @@ export async function pushToMembers(
       }
     }),
   )
-  return { sent, failed }
+  return { targets: targets.length, subscriptions: subs.length, sent, failed, enabled: true }
 }

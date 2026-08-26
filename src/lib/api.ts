@@ -129,22 +129,33 @@ export const stateApi = {
 }
 
 export const alertApi = {
-  raise: (category: string, at: { lat: number; lng: number } | null, accuracy?: number | null) =>
-    api.post<{ report: Record<string, unknown> }>('/alerts', { category, at, accuracy }),
+  raise: (
+    category: string,
+    at: { lat: number; lng: number } | null,
+    accuracy?: number | null,
+    idempotencyKey?: string,
+  ) =>
+    api.post<{ report: Record<string, unknown>; reused?: boolean }>('/alerts', {
+      category,
+      at,
+      accuracy,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    }),
   location: (id: string, lat: number, lng: number, accuracy?: number | null) =>
     api.post(`/alerts/${id}/location`, { lat, lng, accuracy }),
+  /** Menerima insiden dan mencatat responder sedang menuju lokasi. */
+  respond: (id: string) => api.post(`/alerts/${id}/respond`),
+  // Alias untuk klien versi sebelumnya.
   ack: (id: string) => api.post(`/alerts/${id}/ack`),
+  status: (id: string, status: string) => api.post(`/alerts/${id}/status`, { status }),
   close: (id: string, cancelled = false) => api.post(`/alerts/${id}/close`, { cancelled }),
   audience: () => api.get<{ audience: unknown[] }>('/alerts/audience'),
   /** Kirim pesan pada utas insiden, agar terlihat peserta lain. */
   message: (id: string, body: string) =>
     api.post<{ message: Record<string, unknown> }>(`/alerts/${id}/messages`, { body }),
   /** Lampirkan foto bukti agar terlihat penolong dan pengurus. */
-  attach: (id: string, dataUrl: string, kind: 'photo' | 'video' = 'photo') =>
-    api.post<{ attachment: Record<string, unknown> }>(`/alerts/${id}/attachments`, {
-      dataUrl,
-      kind,
-    }),
+  attach: (id: string, dataUrl: string) =>
+    api.post<{ attachment: Record<string, unknown> }>(`/alerts/${id}/attachments`, { dataUrl, kind: 'photo' }),
 }
 
 export const patrolApi = {

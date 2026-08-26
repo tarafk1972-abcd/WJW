@@ -298,10 +298,10 @@ box(s, 6.66, 3.20, 2.72, 1.00, "Fitur harian",
 
 # lane 4
 box(s, 9.70, 2.00, 2.72, 0.72, "Tombol DARURAT",
-    "Tahan 2 detik", fill=SURFACE, border=DANGER)
+    "Tahan 1,5 dtk + batal 5 dtk", fill=SURFACE, border=DANGER)
 down_arrow(s, 10.96, 2.80, 0.32, color=TEXT3)
 box(s, 9.70, 3.20, 2.72, 1.00, "Kirim peringatan",
-    "GPS · profil · suara 15s\nfoto/video · waktu\n→ jaringan bantuan",
+    "GPS · profil snapshot\nfoto · waktu · SSE\n→ responder berwenang",
     fill=SURFACE, border=DANGER)
 
 for x in (3.34, 6.38, 9.42):
@@ -492,7 +492,7 @@ r.font.color.rgb = WHITE
 p2 = tf.add_paragraph()
 p2.alignment = PP_ALIGN.CENTER
 r2 = p2.add_run()
-r2.text = "tahan 2 detik"
+r2.text = "tahan 1,5 dtk"
 r2.font.name = FONT
 r2.font.size = Pt(9)
 r2.font.color.rgb = RGBColor(0xFF, 0xD0, 0xD6)
@@ -565,9 +565,9 @@ box(s, 0.62, 4.20, 5.78, 1.28, "", fill=RGBColor(0x2A, 0x14, 0x18),
 textbox(s, 0.88, 4.38, 5.2, 0.26, "PENGAMAN ALARM PALSU", size=10,
         color=DANGER, bold=True)
 guards = [
-    "Wajib ditahan 2 detik — sentuhan tak sengaja tidak mengirim",
+    "Wajib ditahan 1,5 detik — sentuhan tak sengaja tidak mengirim",
     "Lepas jari sebelum penuh → batal total",
-    "Setelah terkirim: “Alarm palsu — batalkan” & “Saya sudah aman”",
+    "Setelah tahan: jendela batal 5 detik sebelum dikirim",
 ]
 gy = 4.70
 for t in guards:
