@@ -3,8 +3,8 @@
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'wjw-e675pw'
-primary_region = 'iad'
+app = 'warga-jaga-warga-wjw'
+primary_region = 'sin'
 
 [build]
 
