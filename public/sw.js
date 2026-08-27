@@ -7,8 +7,14 @@
  *      sekaligus memenuhi syarat Chrome untuk "Instal aplikasi".
  */
 
-/** Naikkan bila daftar berkas di bawah berubah. */
-const CACHE = 'wjw-shell-v2'
+/**
+ * Naikkan bila cangkang aplikasi berubah.
+ *
+ * v3 sengaja memensiunkan cache v2 yang pernah menyimpan cangkang APK
+ * dengan layer CARTO. Saat APK baru dibuka, worker ini langsung mengambil
+ * alih dan menghapus salinan lama sebelum layar peta dipakai.
+ */
+const CACHE = 'wjw-shell-v3'
 
 /** Berkas yang membuat aplikasi bisa terbuka tanpa jaringan. */
 const SHELL = ['./', './index.html', './manifest.webmanifest', './favicon.svg']
