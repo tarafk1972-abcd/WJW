@@ -163,6 +163,12 @@ const id = {
   showMembers: 'Tampilkan anggota',
   showPatrol: 'Tampilkan patroli',
   centerMap: 'Ke tengah area',
+  myLocation: 'Lokasi saya',
+  locatingMyLocation: 'Mencari lokasi…',
+  locationPermissionDenied: 'Izin lokasi ditolak. Izinkan lokasi di browser lalu coba lagi.',
+  locationCurrentlyUnavailable: 'Lokasi belum tersedia. Coba lagi di tempat dengan sinyal GPS lebih baik.',
+  locationRequestTimeout: 'Lokasi belum didapat. Coba lagi.',
+  locationRequestFailed: 'Lokasi tidak dapat digunakan saat ini. Coba lagi.',
   areaSizeWarn: 'Butuh minimal 3 titik untuk membentuk area.',
 
   // guests
@@ -883,6 +889,12 @@ const en: Dict = {
   showMembers: 'Show members',
   showPatrol: 'Show patrol',
   centerMap: 'Center on area',
+  myLocation: 'My location',
+  locatingMyLocation: 'Finding location…',
+  locationPermissionDenied: 'Location permission was denied. Allow it in your browser, then try again.',
+  locationCurrentlyUnavailable: 'Location is not available yet. Try again where GPS reception is better.',
+  locationRequestTimeout: 'Location took too long. Please try again.',
+  locationRequestFailed: 'Location cannot be used right now. Please try again.',
   areaSizeWarn: 'At least 3 points are needed to form an area.',
 
   guests: 'Guest book',

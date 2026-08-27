@@ -102,6 +102,21 @@ Syaratnya:
 - harus **HTTPS** — Android menolak HTTP biasa;
 - notifikasi push dan GPS juga hanya bekerja di atas HTTPS.
 
+### Izinkan origin APK di API
+
+Wadah Capacitor Android memuat aplikasi dari origin lokal yang aman,
+`https://localhost`, lalu memanggil API HTTPS publik. Jadi API perlu
+mengizinkan **hanya** origin tersebut melalui CORS:
+
+```bash
+WJW_CORS_ORIGINS=https://localhost,capacitor://localhost
+```
+
+Konfigurasi `fly.toml` WJW sudah menyetel nilai ini untuk deployment Fly.
+Bila memakai server sendiri, tambahkan nilai yang sama ke `.env` lalu
+restart server. Jangan gunakan `*`: API memakai token Bearer dan tidak
+boleh mengizinkan situs sembarang membaca responsnya.
+
 Bila Anda belum punya server publik, APK-nya akan terpasang tetapi tidak
 bisa masuk maupun memuat data. Siapkan servernya lebih dulu.
 

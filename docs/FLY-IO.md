@@ -64,11 +64,12 @@ fly secrets set --app warga-jaga-warga-wjw \
   MAIL_FROM='Warga Jaga Warga <noreply@domain.id>'
 ```
 
-`NODE_ENV=production`, `PORT=8080`, `WJW_DB=/data/wjw.sqlite`, dan
-`TZ=Asia/Jakarta` (agar jadwal ronda tidak dibaca sebagai UTC host) sudah ada di
-`fly.toml`. Server **menolak boot produksi** bila
-`WJW_DATA_ENCRYPTION_KEY` kosong; itu disengaja agar profil medis dan snapshot
-SOS tidak tertulis plaintext.
+`NODE_ENV=production`, `PORT=8080`, `WJW_DB=/data/wjw.sqlite`,
+`WJW_CORS_ORIGINS=https://localhost,capacitor://localhost` (agar APK Capacitor
+boleh menghubungi API Fly dari origin lokalnya), dan `TZ=Asia/Jakarta` (agar
+jadwal ronda tidak dibaca sebagai UTC host) sudah ada di `fly.toml`. Server
+**menolak boot produksi** bila `WJW_DATA_ENCRYPTION_KEY` kosong; itu disengaja
+agar profil medis dan snapshot SOS tidak tertulis plaintext.
 
 ## 3. Deploy dan verifikasi
 

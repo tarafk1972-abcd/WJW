@@ -180,6 +180,8 @@ export default function MapPage() {
         onMapClick={editing ? (p) => setDraft((d) => [...d, p]) : undefined}
         fitArea={!editing && community.area.length >= 2}
         recenterKey={recenter}
+        showMyLocation
+        language={lang}
       />
 
       {editing ? (

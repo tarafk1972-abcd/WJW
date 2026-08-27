@@ -138,9 +138,10 @@ const STATIC_ROOT = resolve(process.env.WJW_WEB_ROOT ?? join(ROOT, 'dist'))
 
 /*
  * API produksi berjalan satu origin dengan PWA, jadi CORS tidak diperlukan.
- * Bila operator sengaja memisahkan web dan API, origin eksplisit dapat diisi
- * lewat WJW_CORS_ORIGINS (dipisah koma). Jangan pernah memantulkan origin
- * sembarang pada endpoint yang menerima Bearer token.
+ * Bila operator sengaja memisahkan web dan API — atau APK Capacitor memanggil
+ * API Fly dari https://localhost — origin eksplisit dapat diisi lewat
+ * WJW_CORS_ORIGINS (dipisah koma). Jangan pernah memantulkan origin sembarang
+ * pada endpoint yang menerima Bearer token.
  */
 const corsOrigins = (process.env.WJW_CORS_ORIGINS ?? '')
   .split(',')
@@ -154,7 +155,10 @@ if (corsOrigins.length > 0) {
 app.use('*', async (c, next) => {
   await next()
   c.header('X-Content-Type-Options', 'nosniff')
-  c.header('Referrer-Policy', 'no-referrer')
+  // OSM meminta Referer yang valid untuk tile web. Mode strict ini hanya
+  // mengirim origin (bukan path/query) ke domain lain, jadi tetap menjaga
+  // privasi URL sambil mematuhi kebijakan tile OpenStreetMap.
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin')
   c.header('X-Frame-Options', 'DENY')
   c.header('Permissions-Policy', 'geolocation=(self), microphone=(self), camera=(self)')
   c.header(

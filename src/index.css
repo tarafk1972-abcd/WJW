@@ -718,10 +718,79 @@ p {
 /* ---------- map ---------- */
 
 .map-box {
+  position: relative;
   height: 340px;
   border-radius: var(--radius);
   overflow: hidden;
   border: 1px solid var(--line);
+}
+
+/* The map may request GPS only when this explicit control is pressed. */
+.map-location-ui {
+  position: absolute;
+  z-index: 1001;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.map-location-control {
+  pointer-events: auto;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 750;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.36);
+  cursor: pointer;
+}
+
+.map-location-control:hover:not(:disabled) {
+  border-color: var(--brand);
+  background: var(--surface-2);
+}
+
+.map-location-control:focus-visible {
+  outline: 3px solid rgba(46, 194, 126, 0.45);
+  outline-offset: 2px;
+}
+
+.map-location-control:disabled {
+  cursor: wait;
+  opacity: 0.78;
+}
+
+.map-location-control:disabled svg {
+  animation: map-location-spin 1s linear infinite;
+}
+
+.map-location-error {
+  pointer-events: auto;
+  max-width: min(254px, calc(100vw - 44px));
+  padding: 8px 10px;
+  border: 1px solid rgba(238, 100, 100, 0.5);
+  border-radius: 10px;
+  background: rgba(42, 20, 28, 0.96);
+  color: #ffd3d3;
+  font-size: 11.5px;
+  line-height: 1.35;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35);
+}
+
+@keyframes map-location-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .map-box.tall {

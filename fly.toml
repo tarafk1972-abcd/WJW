@@ -12,6 +12,9 @@ kill_timeout = "30s"
   NODE_ENV = "production"
   PORT = "8080"
   WJW_DB = "/data/wjw.sqlite"
+  # APK Capacitor dimuat dari https://localhost, lalu memanggil API Fly
+  # secara lintas-origin. Daftar eksplisit ini tidak membuka origin sembarang.
+  WJW_CORS_ORIGINS = "https://localhost,capacitor://localhost"
   # Jadwal ronda di tenant Indonesia memakai WIB secara konsisten, bukan UTC
   # dari host Fly. Konfigurasi zona per-tenant dapat ditambahkan saat ekspansi.
   TZ = "Asia/Jakarta"
