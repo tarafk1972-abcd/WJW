@@ -97,6 +97,12 @@ async function join(communityId: string, role?: string, adminToken?: string) {
 }
 
 describe('autentikasi', () => {
+  it('menutup aplikasi publik dari embedding/clickjacking secara default', async () => {
+    const res = await app.fetch(new Request(BASE + '/api/health'))
+    expect(res.headers.get('X-Frame-Options')).toBe('DENY')
+    expect(res.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'")
+  })
+
   it('menolak payload API yang terlalu besar sebelum diproses', async () => {
     const huge = 'x'.repeat(2 * 1024 * 1024)
     const response = await call('POST', '/api/auth/login', { identifier: huge, password: 'x' })

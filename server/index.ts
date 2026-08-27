@@ -206,7 +206,13 @@ app.use(
   }),
 )
 
-/* Header browser-level untuk mengurangi dampak XSS, MIME sniffing dan iframe. */
+/*
+ * Header browser-level untuk mengurangi dampak XSS, MIME sniffing dan iframe.
+ * Arena menampilkan preview dalam iframe lintas-origin. Mode itu harus
+ * diaktifkan eksplisit hanya pada proses sandbox agar deployment publik tetap
+ * anti-clickjacking secara default.
+ */
+const allowEmbeddedPreview = process.env.WJW_ALLOW_EMBEDDED_PREVIEW === '1'
 app.use('*', async (c, next) => {
   await next()
   c.header('X-Content-Type-Options', 'nosniff')
@@ -214,7 +220,7 @@ app.use('*', async (c, next) => {
   // mengirim origin (bukan path/query) ke domain lain, jadi tetap menjaga
   // privasi URL sambil mematuhi kebijakan tile OpenStreetMap.
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin')
-  c.header('X-Frame-Options', 'DENY')
+  if (!allowEmbeddedPreview) c.header('X-Frame-Options', 'DENY')
   c.header('Permissions-Policy', 'geolocation=(self), microphone=(self), camera=(self)')
   // /api/state dapat berisi koordinasi SOS, daftar tamu, atau riwayat privat.
   // Jangan biarkan browser/proxy menyimpan respons Bearer ini di disk. Endpoint
@@ -223,9 +229,11 @@ app.use('*', async (c, next) => {
     c.header('Cache-Control', 'private, no-store')
   c.header(
     'Content-Security-Policy',
-    "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; " +
-      "img-src 'self' data: blob: https://*.tile.openstreetmap.org; media-src 'self' data: blob:; " +
-      "connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self' blob:",
+    "default-src 'self'; base-uri 'self'; " +
+      (allowEmbeddedPreview ? '' : "frame-ancestors 'none'; ") +
+      "form-action 'self'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; " +
+      "media-src 'self' data: blob:; connect-src 'self'; style-src 'self' 'unsafe-inline'; " +
+      "script-src 'self'; worker-src 'self' blob:",
   )
 })
 
