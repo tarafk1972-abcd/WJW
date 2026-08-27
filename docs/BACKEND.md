@@ -57,11 +57,19 @@ sehingga waktu respons tidak membocorkan email mana yang terdaftar.
 | Wajib disetujui | Middleware `active` — anggota pending hanya melihat dirinya |
 | Batas peran | Warga tidak bisa menyetujui, mengubah area, atau membuat undangan |
 | Batas lingkungan | `sameCommunity()` mencegah admin RW A menyentuh RW B |
-| Privasi medis/SOS | Snapshot terenkripsi AES-256-GCM di produksi; detail SOS hanya untuk pelapor/penerima/satpam/admin tenant yang sama |
-| Privasi kontak | Kontak pribadi satu anggota tidak terlihat anggota lain |
+| Privasi medis/SOS | Dengan `WJW_DATA_ENCRYPTION_KEY`, snapshot serta blob SOS (foto/audio bukti, track, pesan, responders, penerima) terenkripsi AES-256-GCM dan plaintext lama yang valid dimigrasikan saat boot; detail SOS hanya untuk pelapor/penerima/satpam/admin tenant yang sama. Ini belum berarti seluruh kolom koordinat relasional terenkripsi. |
+| Privasi kontak | Kontak pribadi satu anggota tidak terlihat anggota lain; cache warga hanya menerima nomor admin/satpam untuk koordinasi darurat |
+| Buku tamu | Hanya admin/satpam; nomor KTP tidak dikirim ke cache/browser dan nilai baru dienkripsi saat disimpan |
+| Laporan anonimus non-SOS | Hanya pelapor dan admin tenant yang menerima record/identitas; warga lain maupun satpam tidak menerima catatan atau lampiran yang dapat mengungkap pelapor |
 | Kode undangan | Tetap wajib approval admin — hanya mengusulkan peran |
 | Ronda | Jarak GPS diverifikasi **di server**, tidak bisa dipalsukan klien |
 | Superadmin | Sandi dari environment; bila kosong dibuat acak, bukan bawaan |
+| Kependudukan/KK | Alamat dinormalisasi; `households` menjamin tepat satu kepala keluarga per alamat dan iuran baru hanya boleh ditagihkan ke kepala aktif |
+| Surat digital | Status `APPROVED` dan nomor surat diterbitkan atomik; endpoint PDF menolak semua status selain `APPROVED` |
+| Aduan | Server memaksa `SUBMITTED → REVIEWING → IN_PROGRESS → RESOLVED → CLOSED`; catatan admin menjadi entri kronologis immutable |
+| Voting & donasi | Server membatasi 2–10 opsi, satu suara per warga, tenggat/penutupan otomatis, serta nominal donasi; identitas vote anonim tidak dikirim ke klien |
+| WJW Assistant | Query berizin hanya pada data tenant; riwayat pertanyaan/jawaban dienkripsi AES-256-GCM di produksi dan audit tidak menyimpan isi teks |
+| Subdomain tenant | Dengan `WJW_BASE_DOMAIN`, token/login warga dipasangkan ke `<slug>.<domain>`; token tenant lain dan token Superadmin di subdomain ditolak |
 
 ## Lifecycle insiden SOS
 
@@ -83,9 +91,12 @@ klien baru memakai `/respond` dan `/status`.
 
 ## Bagaimana UI tersambung
 
-Halaman **tidak** memanggil `fetch` langsung. Alurnya:
+Semua halaman memakai klien bertipe di `src/lib/api.ts` (tidak membuat URL
+`localhost` sendiri). Halaman darurat memakai cache lokal agar responsif;
+modul administrasi yang datanya privat memuat DTO berizin langsung dari API.
+Alurnya:
 
-1. Halaman membaca dari cache lokal (`DBShape`) — instan, tanpa menunggu jaringan.
+1. Halaman membaca cache lokal atau DTO API yang sudah bertipe.
 2. Setiap perubahan dikirim ke server lewat `src/lib/api.ts`.
 3. Server menerbitkan invalidasi kecil melalui `GET /api/events` (SSE),
    terikat pada community dari token.
@@ -137,6 +148,75 @@ telepon/SMS/nomor darurat resmi sesuai SOP komunitas sebagai jalur cadangan.
 Tidak ada antrean SOS otomatis: mengirim ulang alarm tanpa tindakan sadar warga
 setelah koneksi kembali dapat menciptakan insiden yang sudah tidak relevan.
 
+## Community OS: API dan aturan operasional
+
+Fase administrasi dan partisipasi **tidak** menggunakan tabel `reports`.
+`reports` tetap khusus insiden/SOS agar aduan rutin tidak terlihat sebagai
+keadaan darurat dan data medis tetap pada batas yang lebih ketat.
+
+| Kebutuhan | Endpoint utama | Penegakan server |
+| --- | --- | --- |
+| Kependudukan / KK | `GET /api/population`, `PUT /api/population/households/:id/head` | Satu `address_key` tenant = satu kepala; anggota tidak dapat keluar ke KK tenant lain |
+| Iuran komunitas | `GET /api/dues`, `POST /api/dues/invoices/generate` | Hanya Admin 2 dan ID kepala keluarga aktif; terpisah dari `/api/billing` WJW |
+| Surat | `POST /api/hub/items`, `POST /api/hub/letters/:id/decision`, `GET /api/hub/letters/:id/pdf` | Pemohon/admin saja; PDF `private, no-store`, hanya sesudah `APPROVED` |
+| Aduan | `POST /api/hub/items`, `PATCH /api/hub/items/:id` | Pelapor dan pengurus; urutan state linear dan catatan tindak lanjut tersimpan sebagai komentar berjejak waktu |
+| Pengumuman | `POST /api/announcements` | Target `all`, `rw`, `rt`, atau `block` dihitung dari data KK di server; SSE memicu refresh segera |
+| Buku tamu | `POST /api/guests`, `POST /api/guests/:id/checkout` | Hanya admin/satpam; nomor identitas tak pernah dikirim kembali ke cache dan tersimpan terenkripsi di produksi |
+| Voting / donasi / program | `/api/hub/items` dan `/actions` | Tenggat ditutup tiap menit di server (juga pada read/write); vote unik/immutable per warga; daftar peserta arisan/rukun transparan |
+| Assistant | `POST /api/assistant`, `GET /api/assistant/history` | Tidak memanggil provider eksternal; hanya merangkum iuran, surat, tamu, ronda, voting, dan aduan sesuai peran |
+| Superadmin | `GET /api/superadmin/overview`, `POST /api/superadmin/tenants`, `PUT /api/superadmin/tenants/:id/subscription` | Tenant + admin dibuat atomik, 14 hari trial, paket `FREE/COMMUNITY/PROFESSIONAL/ENTERPRISE`, suspend tanpa menghapus data |
+
+### Surat PDF
+
+PDF berisi kop lingkungan, nomor urut per tenant, jenis/keperluan surat,
+data pemohon, catatan keputusan, tanggal persetujuan dan blok persetujuan
+pengurus. Blok itu adalah persetujuan digital internal WJW; bila RT/RW
+membutuhkan tanda tangan elektronik tersertifikasi, gunakan proses/sertifikat
+yang diwajibkan instansi setempat—aplikasi tidak boleh mengklaim sertifikat
+yang tidak dimilikinya.
+
+### Kebijakan tier WJW
+
+Status/tier langganan **tidak pernah** mengunci jalur SOS. Keselamatan warga
+tetap lebih penting daripada penagihan. Semua tenant baru menerima trial 14
+hari dan server hanya menerima salah satu tier berikut:
+
+| Tier | Kebijakan rilis ini |
+| --- | --- |
+| `FREE` | SOS, data warga inti, surat/aduan, pengumuman, voting, donasi, arisan, dan Assistant sesuai hak peran |
+| `COMMUNITY` | Kemampuan inti yang sama, untuk kontrak pengelolaan komunitas |
+| `PROFESSIONAL` | Kemampuan inti yang sama, untuk kontrak operasional profesional |
+| `ENTERPRISE` | Kemampuan inti serta permintaan custom domain/white-label setelah DNS/TLS operator selesai |
+
+Ini disengaja: tidak ada pengurangan keselamatan atau pemisahan data karena
+paket. Server memvalidasi nama tier pada provisioning/perubahan subscription,
+dan menolak konfigurasi **baru** custom-domain atau white-label dari tier selain
+`ENTERPRISE` (`tier_required`). Aktivasi pembayaran platform tetap hanya lewat
+verifikasi manual Superadmin; mengubah tier bukan bukti pembayaran.
+
+### Tenant subdomain di Fly.io
+
+1. Siapkan domain apex, contoh `wargajagawarga.app`, pada Fly.io.
+2. Tambahkan DNS wildcard `*.wargajagawarga.app` sesuai arahan Fly dan
+   pastikan sertifikat/TLS wildcard atau domain tiap tenant telah aktif.
+3. Set `WJW_BASE_DOMAIN=wargajagawarga.app` sebagai secret/runtime env.
+4. Buat tenant dari Konsol Superadmin dan gunakan slug yang diberikan;
+   warga masuk di `https://<slug>.wargajagawarga.app`.
+5. Gunakan apex untuk Konsol Superadmin. Jangan menaruh token di query URL.
+
+Tanpa wildcard DNS/TLS dan `WJW_BASE_DOMAIN`, host Fly default tetap dapat
+melayani aplikasi, tetapi mekanisme isolasi login berbasis subdomain tidak
+aktif. Jangan mengiklankan subdomain tenant sebagai aktif sebelum langkah
+tersebut selesai.
+
+### Langganan WJW bukan iuran warga
+
+`dues_invoices` adalah iuran/pengelolaan lingkungan dan hanya Admin 2 yang
+menerbitkan atau memverifikasinya. Tabel `invoices` adalah langganan tenant
+kepada platform WJW. Klaim QRIS hanya memindahkan invoice platform ke
+`awaiting_verification`; **hanya Superadmin** yang dapat menandai lunas.
+Tidak ada webhook atau aktivasi pembayaran otomatis.
+
 ## Struktur
 
 ```
@@ -172,4 +252,4 @@ public/sw.js      service worker notifikasi
 2. Cadangan SMS/WhatsApp bila internet mati
 3. Batas kirim (rate limit) untuk mencegah penyalahgunaan
 4. Kebijakan privasi (UU PDP No. 27/2022 — lokasi & data kesehatan)
-5. Pembayaran sungguhan (Midtrans/Xendit)
+5. SOP pencocokan mutasi QRIS manual oleh Superadmin (jangan aktifkan verifikasi otomatis tanpa keputusan produk/keamanan baru)

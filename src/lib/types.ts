@@ -35,6 +35,11 @@ export interface Community {
   language: Lang
   plan: PlanStatus
   planName: 'trial' | 'monthly' | 'yearly'
+  /** Paket SaaS WJW, terpisah dari periode invoice serta iuran warga. */
+  subscriptionTier?: 'FREE' | 'COMMUNITY' | 'PROFESSIONAL' | 'ENTERPRISE'
+  subscriptionStatus?: PlanStatus
+  /** Slug wildcard tenant, mis. rw05 pada rw05.wjw.example.id. */
+  subdomain?: string
   trialEndsAt: number
   paidUntil: number | null
   suspendedReason?: string
@@ -346,11 +351,14 @@ export interface Guest {
   purpose: string
   host: string
   plate: string
-  idCard: string
+  /** Hanya dipakai saat input lokal lama; tidak pernah disinkronkan ke cache browser. */
+  idCard?: string
   checkIn: number
   checkOut: number | null
   recordedBy: string
 }
+
+export type AnnouncementTarget = 'all' | 'rw' | 'rt' | 'block'
 
 export interface Announcement {
   id: string
@@ -358,6 +366,11 @@ export interface Announcement {
   authorId: string
   title: string
   body: string
+  /** Keamanan, Keuangan, Kegiatan, Umum, dll. */
+  category: string
+  /** Audiens dihitung server dari data KK RT/RW/blok. */
+  targetScope: AnnouncementTarget
+  targetValue: string
   pinned: boolean
   createdAt: number
 }

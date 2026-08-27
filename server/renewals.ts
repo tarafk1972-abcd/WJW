@@ -127,7 +127,7 @@ export async function runRenewalCheck(
   const rows = db
     .prepare(
       `SELECT id, name, plan, plan_name, trial_ends_at, paid_until
-       FROM communities WHERE plan <> 'suspended'`,
+       FROM communities WHERE plan <> 'suspended' AND subscription_status <> 'suspended'`,
     )
     .all() as CommunityDue[]
 

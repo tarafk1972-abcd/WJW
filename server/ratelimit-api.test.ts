@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { BATAS, hitRateLimit, resetRateLimits } from './ratelimit'
 
-let app: { fetch: (req: Request) => Promise<Response> }
+let app: { fetch: (req: Request) => Response | Promise<Response> }
 
 beforeAll(async () => {
   process.env.WJW_DB = join(mkdtempSync(join(tmpdir(), 'wjw-rl-')), 't.sqlite')

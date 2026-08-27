@@ -1,6 +1,6 @@
 # Kesiapan Produksi — Warga Jaga Warga
 
-Penilaian jujur per 26 Agustus 2026.
+Penilaian jujur per 28 Agustus 2026.
 
 ## Kesimpulan singkat
 
@@ -39,9 +39,11 @@ Ketiganya dulu menjadi alasan utama aplikasi ini belum boleh dipakai.
 | Pembaruan antar-HP mengandalkan polling | SSE terautentikasi per tenant; klien mengambil ulang state RBAC-filtered |
 
 Yang juga sudah tersambung ke server: status peringatan, utas pesan
-insiden, foto bukti, letak rumah warga, dan gambar QRIS. Snapshot SOS/profil
-medis dienkripsi AES-256-GCM saat `NODE_ENV=production`; startup produksi gagal
-bila secret kuncinya tidak ada.
+insiden, foto bukti, letak rumah warga, dan gambar QRIS. Saat
+`WJW_DATA_ENCRYPTION_KEY` tersedia, snapshot/profil medis dan blob SOS sensitif
+(foto/audio bukti, jejak lokasi, pesan, responders, serta daftar penerima)
+dienkripsi AES-256-GCM; record SOS JSON lama yang valid dimigrasikan saat boot.
+Startup produksi gagal bila secret kuncinya tidak ada.
 
 ---
 
@@ -69,7 +71,26 @@ Aplikasi menyimpan data lokasi dan kesehatan (golongan darah, alergi,
 riwayat penyakit). Perlu kebijakan privasi tertulis dan persetujuan yang
 tercatat — bukan sekadar tombol di Pengaturan.
 
-### 4. Pembatasan laju — sudah ada, tetapi sederhana
+### 4. Enkripsi at-rest belum mencakup seluruh lokasi operasional
+
+Enkripsi aplikasi kini menutup blob SOS yang paling kaya isi: snapshot,
+foto/audio bukti, track, pesan, responders, dan daftar penerima. Namun ini
+**bukan enkripsi penuh basis data**. Kolom relasional yang masih plaintext
+mencakup setidaknya `reports.at_lat/at_lng`, `members.last_lat/last_lng`,
+`members.home_lat/home_lng`, alamat rumah, dan koordinat log ronda. Kolom ini
+masih diperlukan oleh implementasi saat ini untuk memilih warga terdekat atau
+operasi lapangan cepat.
+
+Keputusan saat ini adalah **tidak** mengenkripsi kolom itu secara tambal-sulam:
+melakukannya tanpa indeks kandidat spasial yang aman akan memaksa server
+mendekripsi semua warga tenant setiap ada SOS, mengorbankan hitungan detik yang
+justru dibutuhkan pada darurat dan tidak memenuhi target skala. Sebelum mengaku
+perlindungan at-rest menyeluruh, diperlukan migrasi privasi tersendiri yang
+mencakup blob koordinat presisi terenkripsi, indeks sel kasar/tenant-scoped atau
+PostGIS untuk memilih kandidat tanpa membuka semua titik, TTL posisi terbaru,
+retensi/penghapusan bukti, migrasi dual-read teruji, dan prosedur rotasi kunci.
+
+### 5. Pembatasan laju — sudah ada, tetapi sederhana
 
 Login dan pendaftaran kini dibatasi per alamat IP (`server/ratelimit.ts`).
 Batasnya sengaja longgar, karena satu RW berbagi satu alamat publik:
@@ -86,7 +107,7 @@ Yang perlu diketahui tentang batas ini:
 
 Bisa disetel lewat `.env`: `WJW_RATE_LOGIN_MAX`, `WJW_RATE_REGISTER_MAX`.
 
-### 5. Perubahan luring rutin bukan antrean terjamin
+### 6. Perubahan luring rutin bukan antrean terjamin
 
 Cache layar dapat bertahan di perangkat, tetapi perubahan rutin belum memiliki
 outbox/transaksi sinkronisasi penuh. Khusus SOS, ini sengaja **bukan** antrean:

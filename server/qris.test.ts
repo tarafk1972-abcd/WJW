@@ -239,7 +239,7 @@ describe('device_id saat superadmin masuk', () => {
       communityName: `RW Perangkat ${seq}`,
       deviceId: 'hp-bersama',
     })
-    const wargaId = reg.body.member.id as unknown as string
+    const wargaId = (reg.body as unknown as { member: { id: string } }).member.id
 
     // Superadmin memeriksa sesuatu dari HP yang sama.
     await call('POST', '/api/auth/login', {

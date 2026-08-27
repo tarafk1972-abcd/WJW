@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { addGuest, checkoutGuest } from '../lib/db'
+import { guestApi } from '../lib/api'
+import { apiMode, syncState } from '../lib/sync'
 import { fmtDateTime, fmtTime } from '../lib/format'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'
@@ -19,6 +21,7 @@ export default function Guests() {
   const [host, setHost] = useState('')
   const [plate, setPlate] = useState('')
   const [idCard, setIdCard] = useState('')
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     if (params.get('new')) {
@@ -38,24 +41,60 @@ export default function Guests() {
   if (!me || !community) return null
   const canWrite = isAdmin || isSatpam
 
-  const submit = () => {
-    if (!name.trim()) return
-    addGuest({
-      communityId: community.id,
-      name: name.trim(),
-      purpose: purpose.trim(),
-      host: host.trim(),
-      plate: plate.trim().toUpperCase(),
-      idCard: idCard.trim(),
-      recordedBy: me.id,
-    })
-    setName('')
-    setPurpose('')
-    setHost('')
-    setPlate('')
-    setIdCard('')
-    setOpen(false)
-    toast(t('checkIn'))
+  const submit = async () => {
+    if (!name.trim() || saving) return
+    setSaving(true)
+    try {
+      if (apiMode()) {
+        await guestApi.create({
+          name: name.trim(),
+          purpose: purpose.trim(),
+          host: host.trim(),
+          plate: plate.trim().toUpperCase(),
+          idCard: idCard.trim(),
+        })
+        await syncState()
+      } else {
+        addGuest({
+          communityId: community.id,
+          name: name.trim(),
+          purpose: purpose.trim(),
+          host: host.trim(),
+          plate: plate.trim().toUpperCase(),
+          idCard: idCard.trim(),
+          recordedBy: me.id,
+        })
+      }
+      setName('')
+      setPurpose('')
+      setHost('')
+      setPlate('')
+      setIdCard('')
+      setOpen(false)
+      toast(t('checkIn'))
+    } catch {
+      toast('Buku tamu belum dapat disimpan ke server.', 'err')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const checkout = async (guestId: string) => {
+    if (saving) return
+    setSaving(true)
+    try {
+      if (apiMode()) {
+        await guestApi.checkout(guestId)
+        await syncState()
+      } else {
+        checkoutGuest(me.id, guestId)
+      }
+      toast(t('checkOut'))
+    } catch {
+      toast('Checkout tamu belum dapat disimpan ke server.', 'err')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -112,10 +151,8 @@ export default function Guests() {
             {canWrite && !g.checkOut && (
               <button
                 className="btn btn-sm btn-ghost"
-                onClick={() => {
-                  checkoutGuest(me.id, g.id)
-                  toast(t('checkOut'))
-                }}
+                disabled={saving}
+                onClick={() => void checkout(g.id)}
               >
                 {t('doCheckOut')}
               </button>
@@ -152,10 +189,16 @@ export default function Guests() {
         </label>
         <label className="field">
           <span>{t('idCard')}</span>
-          <input className="input" value={idCard} onChange={(e) => setIdCard(e.target.value)} />
+          <input
+            className="input"
+            value={idCard}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => setIdCard(e.target.value)}
+          />
         </label>
-        <button className="btn btn-primary" onClick={submit}>
-          <Icon name="check" size={16} /> {t('checkIn')}
+        <button className="btn btn-primary" disabled={saving} onClick={() => void submit()}>
+          <Icon name="check" size={16} /> {saving ? 'Menyimpan…' : t('checkIn')}
         </button>
       </Sheet>
     </div>

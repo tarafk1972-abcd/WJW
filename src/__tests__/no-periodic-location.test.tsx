@@ -6,12 +6,12 @@
  * ada di mana. Tes ini menjalankan aplikasi sungguhan terhadap server
  * sungguhan dan menghitung berapa kali posisi benar-benar terkirim.
  */
-import { render, waitFor } from '@testing-library/react'
+import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join as pathJoin } from 'node:path'
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
 import { setToken } from '../lib/api'
 import { invalidateCache, setSession } from '../lib/db'
@@ -59,12 +59,17 @@ beforeAll(async () => {
 })
 
 beforeEach(() => {
+  // Jangan membiarkan HashRouter render sebelumnya menerima hash/token baru
+  // di luar act(); ini juga memutus SSE/effect sebelum test berikutnya.
+  cleanup()
   localStorage.clear()
   invalidateCache()
   setToken(null)
   resetPresenceState()
   posCalls = 0
 })
+
+afterEach(() => cleanup())
 
 async function daftar(mode: 'create' | 'join', communityId?: string) {
   seq += 1
@@ -96,8 +101,13 @@ describe('tanpa darurat', () => {
     window.location.hash = '#/app'
     render(<App />)
 
+    // Tunggu boot/sinkron pertama selesai sebelum membiarkan waktu berjalan;
+    // semua update React selama jeda harus berada dalam act().
+    await waitFor(() => expect(document.body.textContent).toContain('Butuh bantuan sekarang?'))
     // Polling berjalan tiap 8 detik; biarkan beberapa siklus lewat.
-    await new Promise((r) => setTimeout(r, 3000))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 3000))
+    })
     expect(posCalls).toBe(0)
   }, 25000)
 })
@@ -127,7 +137,9 @@ describe('saat ada darurat', () => {
 
     // Beberapa siklus polling berikutnya tidak boleh menambah kiriman:
     // itulah bedanya "sekali saat darurat" dengan "berkala".
-    await new Promise((r) => setTimeout(r, 3000))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 3000))
+    })
     expect(posCalls).toBe(1)
   }, 30000)
 })

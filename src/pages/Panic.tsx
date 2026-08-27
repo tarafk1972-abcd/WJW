@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { alertApi } from '../lib/api'
+import { alertApi, ApiError } from '../lib/api'
 import { getFix, watchLocation } from '../lib/capture'
 import { apiMode, mutate, syncState } from '../lib/sync'
 import { alertAudience } from '../lib/db'
@@ -39,6 +39,13 @@ export default function Panic() {
   const toast = useToast()
 
   const [activeId, setActiveId] = useState<string | null>(null)
+  // Respons POST SOS adalah bukti penerimaan server. Simpan sementara di
+  // memori bila sinkronisasi snapshot putus tepat sesudah respons, agar warga
+  // langsung melihat status aktif alih-alih tergoda mengirim alarm kedua.
+  const [confirmedAlert, setConfirmedAlert] = useState<Report | null>(null)
+  // Bila koneksi putus setelah request dikirim, ulangi dengan kunci yang sama
+  // sehingga server tidak pernah membuat dua SOS untuk satu tindakan warga.
+  const [retryAlert, setRetryAlert] = useState<{ type: PanicType; key: string } | null>(null)
   const [locating, setLocating] = useState(false)
   const [armed, setArmed] = useState<{ type: PanicType; key: string } | null>(null)
   const photoRef = useRef<HTMLInputElement>(null)
@@ -48,13 +55,20 @@ export default function Panic() {
   const active: Report | null = useMemo(() => {
     if (!me) return null
     const byId = activeId ? db.reports.find((r) => r.id === activeId) : null
-    if (byId?.live && !byId.cancelledAt) return byId
-    return (
-      db.reports.find(
-        (r) => r.authorId === me.id && r.kind === 'sos' && r.live && !r.cancelledAt,
-      ) ?? null
+    // Begitu snapshot kanonis mengenal ID ini, ia selalu mengalahkan respons
+    // sementara—even when server sudah menutup insidennya.
+    if (byId) return byId.live && !byId.cancelledAt ? byId : null
+    const fromSnapshot = db.reports.find(
+      (r) => r.authorId === me.id && r.kind === 'sos' && r.live && !r.cancelledAt,
     )
-  }, [db.reports, me, activeId])
+    if (fromSnapshot) return fromSnapshot
+    return confirmedAlert?.live && !confirmedAlert.cancelledAt ? confirmedAlert : null
+  }, [db.reports, me, activeId, confirmedAlert])
+
+  useEffect(() => {
+    if (confirmedAlert && db.reports.some((report) => report.id === confirmedAlert.id))
+      setConfirmedAlert(null)
+  }, [confirmedAlert, db.reports])
 
   /** Alerts from other people that I am a recipient of. */
   const incoming = useMemo(() => {
@@ -105,6 +119,7 @@ export default function Panic() {
       if (!me || !community) return
       if (!apiMode()) {
         setArmed(null)
+        setRetryAlert(null)
         toast('Peringatan: koneksi ke server gagal. Darurat belum terkirim.', 'err')
         return
       }
@@ -118,15 +133,39 @@ export default function Panic() {
         const at = fix ? { lat: fix.lat, lng: fix.lng } : null
         const result = await alertApi.raise(type, at, fix?.accuracy ?? null, idempotencyKey)
         const report = result.report as unknown as Report
-        await syncState()
+        // Respons ini adalah konfirmasi kanonis dari server. Tahan di memori
+        // sebelum state reload agar layar aktif tetap muncul bila koneksi putus
+        // tepat sesudah POST berhasil.
+        setConfirmedAlert(report)
+        setRetryAlert(null)
         setActiveId(report.id)
         setArmed(null)
-        toast(t('sentTo', { n: report.recipients.length }), 'err')
+        // Segarkan cache di belakang layar; jangan tahan konfirmasi yang sudah
+        // diterima warga sampai GET /state selesai atau timeout. Bila refresh
+        // gagal, `confirmedAlert` di atas tetap menjadi tampilan sementara.
+        void syncState().catch(() => undefined)
+        // Balasan server sudah diterima; gunakan konfirmasi eksplisit (bukan
+        // gaya galat) agar warga tidak mengira SOS gagal saat sebenarnya
+        // responder sedang diberi tahu.
+        toast(t('sentTo', { n: report.recipients.length }), 'ok')
         if (navigator.vibrate) navigator.vibrate([200, 80, 200])
-      } catch {
+      } catch (error) {
         setArmed(null)
-        // Tidak ada toast sukses atau incident lokal pada jalur ini.
-        toast('Peringatan: koneksi ke server gagal. Darurat belum terkirim.', 'err')
+        // Hanya kegagalan tanpa respons final (atau 5xx setelah server mulai
+        // bekerja) yang delivery-ambiguous. Respons 4xx sudah merupakan
+        // konfirmasi eksplisit bahwa server menolak request, jadi jangan
+        // menyesatkan warga dengan banner "belum mengonfirmasi"/retry SOS.
+        const deliveryAmbiguous =
+          !(error instanceof ApiError) || error.status === 0 || error.status >= 500
+        if (!deliveryAmbiguous) {
+          setRetryAlert(null)
+          toast(t('errUnknown'), 'err')
+          return
+        }
+        // Respons bisa hilang setelah server menyimpan request. Simpan kunci
+        // untuk retry idempoten dan jangan membuat/menampilkan alarm lokal.
+        setRetryAlert({ type, key: idempotencyKey })
+        toast(t('sosUnconfirmed'), 'err')
       } finally {
         setLocating(false)
       }
@@ -394,6 +433,26 @@ export default function Panic() {
           Pilih jenis darurat, lalu tekan dan tahan selama 1,5 detik.
         </p>
       </div>
+
+      {retryAlert && (
+        <div className="banner banner-warn" style={{ marginBottom: 14, display: 'block' }}>
+          <div className="row" style={{ alignItems: 'flex-start', gap: 8 }}>
+            <Icon name="info" size={17} />
+            <div className="grow">
+              <div className="strong">{t('sosUnconfirmed')}</div>
+              <div className="tiny" style={{ marginTop: 4 }}>{t('retrySosHint')}</div>
+            </div>
+          </div>
+          <button
+            className="btn btn-danger"
+            style={{ marginTop: 10 }}
+            disabled={locating || !!armed}
+            onClick={() => void fire(retryAlert.type, retryAlert.key)}
+          >
+            <Icon name="send" size={16} /> {t('retrySos')} · {t(CATEGORY_META[retryAlert.type].key)}
+          </button>
+        </div>
+      )}
 
       <PanicGrid
         disabled={locating || !!armed}

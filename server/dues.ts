@@ -1,4 +1,5 @@
 import { db, now, uid } from './db.js'
+import { listBillableHouseholdHeads } from './population.js'
 
 export const DUES_STATUSES = ['unpaid', 'awaiting_verification', 'paid', 'overdue'] as const
 export type DuesStatus = (typeof DUES_STATUSES)[number]
@@ -244,14 +245,12 @@ export function generateDuesInvoices(input: {
   const ids = [...new Set(input.memberIds)].slice(0, 500)
   if (!ids.length) throw new Error('no_members')
 
-  const marks = ids.map(() => '?').join(',')
-  const residents = db
-    .prepare(
-      `SELECT id FROM members
-       WHERE community_id=? AND status='active' AND role IN ('warga','satpam','admin') AND id IN (${marks})`,
-    )
-    .all(input.communityId, ...ids) as { id: string }[]
-  if (residents.length !== ids.length) throw new Error('invalid_member')
+  // Satu alamat/KK memiliki satu penerima iuran. Jangan biarkan admin
+  // menerbitkan dua tagihan hanya karena ayah dan anak sama-sama punya akun.
+  const billable = listBillableHouseholdHeads(input.communityId)
+  const byId = new Map(billable.map((member) => [member.id, member]))
+  const residents = ids.map((id) => byId.get(id)).filter(Boolean) as { id: string }[]
+  if (residents.length !== ids.length) throw new Error('invalid_household_head')
 
   let created = 0
   let existing = 0

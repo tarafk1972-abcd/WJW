@@ -2,7 +2,7 @@
  * Membuktikan UI benar-benar menulis ke API, bukan hanya localStorage.
  * Server dijalankan sungguhan di port acak; fetch relatif diarahkan ke sana.
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -97,10 +97,14 @@ describe('UI ↔ server', () => {
 
     const btn = await screen.findByRole('button', { name: 'Darurat medis' }, { timeout: 5000 })
     // Pilih kategori, tahan 1,5 detik, lalu biarkan jendela pembatalan 5 detik selesai.
-    btn.dispatchEvent(new Event('pointerdown', { bubbles: true }))
-    await new Promise((res) => setTimeout(res, 1700))
+    await act(async () => {
+      btn.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+      await new Promise((res) => setTimeout(res, 1700))
+    })
     await screen.findByText('DARURAT AKAN DIKIRIM', {}, { timeout: 2500 })
-    await new Promise((res) => setTimeout(res, 5300))
+    await act(async () => {
+      await new Promise((res) => setTimeout(res, 5300))
+    })
 
     const db = await serverDb()
     await waitFor(

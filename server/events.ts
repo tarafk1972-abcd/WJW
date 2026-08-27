@@ -22,6 +22,11 @@ export type RealtimeEventType =
   | 'patrol.schedule.updated'
   | 'patrol.log.created'
   | 'dues.updated'
+  | 'guest.updated'
+  /** Perubahan Community Hub; payload tetap hanya invalidasi tenant. */
+  | 'community.hub.updated'
+  | 'community.branding.updated'
+  | 'population.updated'
 
 export interface RealtimeEvent {
   id: string

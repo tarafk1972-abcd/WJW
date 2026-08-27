@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { deleteAnnouncement } from '../lib/db'
-import { alertApi } from '../lib/api'
+import { alertApi, announcementApi } from '../lib/api'
 import { getFix } from '../lib/capture'
 import { apiMode, syncState } from '../lib/sync'
 import { timeAgo } from '../lib/format'
@@ -102,6 +102,27 @@ export default function Home() {
       color: 'var(--brand)',
       bg: 'var(--brand-soft)',
       go: () => nav('/app/dues'),
+    },
+    {
+      icon: 'users',
+      label: 'Kelola warga',
+      color: 'var(--purple)',
+      bg: 'rgba(163,113,247,.14)',
+      go: () => nav('/app/community'),
+    },
+    {
+      icon: 'heart',
+      label: 'Gotong royong',
+      color: 'var(--danger)',
+      bg: 'var(--danger-soft)',
+      go: () => nav('/app/engagement'),
+    },
+    {
+      icon: 'headset',
+      label: 'WJW Assistant',
+      color: 'var(--info)',
+      bg: 'var(--info-soft)',
+      go: () => nav('/app/assistant'),
     },
   ]
 
@@ -242,7 +263,7 @@ export default function Home() {
       <div className="section-title">
         {t('announcements')}
         {isAdmin && (
-          <button className="btn btn-sm btn-ghost" onClick={() => nav('/app/admin?post=1')}>
+          <button className="btn btn-sm btn-ghost" onClick={() => nav('/app/community')}>
             <Icon name="plus" size={13} /> {t('newAnnouncement')}
           </button>
         )}
@@ -281,7 +302,16 @@ export default function Home() {
                 <button
                   className="icon-btn"
                   style={{ width: 30, height: 30 }}
-                  onClick={() => deleteAnnouncement(a.id)}
+                  onClick={() => {
+                    if (!apiMode()) {
+                      deleteAnnouncement(a.id)
+                      return
+                    }
+                    void announcementApi
+                      .remove(a.id)
+                      .then(() => syncState())
+                      .catch(() => toast('Pengumuman belum dapat dihapus dari server.', 'err'))
+                  }}
                 >
                   <Icon name="trash" size={14} />
                 </button>

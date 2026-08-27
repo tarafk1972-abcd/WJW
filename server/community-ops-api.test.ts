@@ -208,6 +208,8 @@ describe('iuran pengelolaan oleh Admin 2', () => {
   it('mengisolasi rincian tagihan, melacak claim/verifikasi, dan menolak tenant/admin tanpa mandat', async () => {
     const owner = await founder()
     const duesAdmin = await joinMember(owner.communityId, owner.token, 'admin')
+    const mapAdmin = await joinMember(owner.communityId, owner.token, 'admin')
+    const scheduleAdmin = await joinMember(owner.communityId, owner.token, 'admin')
     const otherAdmin = await joinMember(owner.communityId, owner.token, 'admin')
     const residentA = await joinMember(owner.communityId, owner.token, 'warga')
     const residentB = await joinMember(owner.communityId, owner.token, 'warga')
@@ -218,6 +220,22 @@ describe('iuran pengelolaan oleh Admin 2', () => {
         'PUT',
         '/api/management-responsibilities/dues',
         { memberId: duesAdmin.id },
+        owner.token,
+      )).status,
+    ).toBe(200)
+    expect(
+      (await call(
+        'PUT',
+        '/api/management-responsibilities/map_patrol',
+        { memberId: mapAdmin.id },
+        owner.token,
+      )).status,
+    ).toBe(200)
+    expect(
+      (await call(
+        'PUT',
+        '/api/management-responsibilities/patrol_schedule',
+        { memberId: scheduleAdmin.id },
         owner.token,
       )).status,
     ).toBe(200)
@@ -254,6 +272,16 @@ describe('iuran pengelolaan oleh Admin 2', () => {
     )
     expect(generated.status).toBe(201)
     expect(generated.body.created).toBe(2)
+    // Hak Admin 1/Admin 3 tidak boleh menjadi pintu samping ke total iuran
+    // lewat jawaban natural-language Assistant.
+    for (const token of [mapAdmin.token, scheduleAdmin.token, otherAdmin.token]) {
+      const answer = await call('POST', '/api/assistant', { question: 'Berapa total iuran lingkungan?' }, token)
+      expect(answer.body.source).toBe('none')
+      expect(answer.body.answer).toBe('Saya tidak menemukan informasi tersebut di sistem.')
+    }
+    const duesAnswer = await call('POST', '/api/assistant', { question: 'Berapa total iuran lingkungan?' }, duesAdmin.token)
+    expect(duesAnswer).toMatchObject({ status: 200, body: { source: 'dues' } })
+    expect(duesAnswer.body.answer).toMatch(/Rp\s?300\.000/)
 
     const residentState = await call('GET', '/api/dues', undefined, residentA.token)
     expect(residentState.status).toBe(200)

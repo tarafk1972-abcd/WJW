@@ -7,7 +7,13 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { authApi, getToken } from './api'
+import {
+  AUTH_CHANGED_EVENT,
+  SESSION_EXPIRED_EVENT,
+  authApi,
+  getToken,
+  setToken,
+} from './api'
 import {
   communityById,
   getSessionId,
@@ -15,7 +21,7 @@ import {
   loadDB,
   memberById,
   planState,
-  setSession,
+  resetDB,
   storeLang,
 } from './db'
 import {
@@ -67,13 +73,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Sinkronisasi pertama harus selesai sebelum UI memutuskan pengguna
   // belum login — kalau tidak, layar akan salah mengalihkan ke halaman depan.
+  const [token, setTokenState] = useState<string | null>(() => getToken())
   const [booted, setBooted] = useState(() => !getToken())
 
+  // `storage` hanya datang dari tab lain. API dispatch event ini di tab yang
+  // sama agar login/daftar langsung memulai SSE tanpa reload halaman.
   useEffect(() => {
-    if (!apiMode()) {
+    const updateToken = () => setTokenState(getToken())
+    const expire = () => {
+      // Token invalid tidak boleh meninggalkan state SOS/tamu pada perangkat
+      // bersama. Bahasa perangkat tetap dipertahankan oleh resetDB.
+      resetDB()
+      updateToken()
+      refresh()
+    }
+    window.addEventListener(AUTH_CHANGED_EVENT, updateToken)
+    window.addEventListener(SESSION_EXPIRED_EVENT, expire)
+    window.addEventListener('storage', updateToken)
+    return () => {
+      window.removeEventListener(AUTH_CHANGED_EVENT, updateToken)
+      window.removeEventListener(SESSION_EXPIRED_EVENT, expire)
+      window.removeEventListener('storage', updateToken)
+    }
+  }, [refresh])
+
+  useEffect(() => {
+    if (!token) {
       setBooted(true)
       return
     }
+    setBooted(false)
     let alive = true
     void syncState().then(() => {
       if (!alive) return
@@ -90,7 +119,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       stop()
       window.removeEventListener('online', onOnline)
     }
-  }, [refresh])
+  }, [refresh, token])
 
   const reload = useCallback(async () => {
     await syncState()
@@ -167,8 +196,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   const signOut = useCallback(() => {
-    if (apiMode()) void authApi.logout()
-    setSession(null)
+    // Mulai revoke sesi saat token masih tersedia, lalu hapus token/cache
+    // segera. Dengan begitu layar perangkat bersama tidak menahan data SOS,
+    // tamu, maupun daftar warga sambil request logout berjalan.
+    if (getToken()) void authApi.logout()
+    setToken(null)
+    resetDB()
     refresh()
   }, [refresh])
 

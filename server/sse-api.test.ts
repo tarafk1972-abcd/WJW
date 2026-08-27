@@ -43,8 +43,9 @@ describe('SSE /api/events', () => {
       mode: 'create',
       communityName: 'RW SSE',
     })
-    const token = registered.body.token as string
-    const communityId = registered.body.member.communityId as string
+    const registeredBody = registered.body as { token: string; member: { communityId: string } }
+    const token = registeredBody.token
+    const communityId = registeredBody.member.communityId
     const controller = new AbortController()
     const response = await app.fetch(
       new Request('http://test/api/events', {

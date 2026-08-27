@@ -37,8 +37,8 @@ yang terpecah.
 ## 2. Secret wajib
 
 Buat kunci enkripsi baru **sekali** dan simpan di password manager organisasi.
-Kunci yang hilang atau diganti tanpa prosedur rotasi membuat snapshot medis lama
-tidak dapat dibaca.
+Kunci yang hilang atau diganti tanpa prosedur rotasi membuat snapshot medis dan
+blob SOS terenkripsi lama tidak dapat dibaca.
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
@@ -69,7 +69,9 @@ fly secrets set --app warga-jaga-warga-wjw \
 boleh menghubungi API Fly dari origin lokalnya), dan `TZ=Asia/Jakarta` (agar
 jadwal ronda tidak dibaca sebagai UTC host) sudah ada di `fly.toml`. Server
 **menolak boot produksi** bila `WJW_DATA_ENCRYPTION_KEY` kosong; itu disengaja
-agar profil medis dan snapshot SOS tidak tertulis plaintext.
+agar profil medis, snapshot, foto/audio bukti, jejak, pesan, responder, dan
+penerima SOS tidak tertulis plaintext. Saat boot dengan kunci, record SOS JSON
+lama yang valid dimigrasikan sekali ke format terenkripsi.
 
 ## 3. Deploy dan verifikasi
 
@@ -91,6 +93,22 @@ ulang bila konfigurasi berubah:
 fly secrets set --app warga-jaga-warga-wjw \
   WJW_APP_URL='https://warga.contoh.id'
 ```
+
+### Tenant subdomain (SaaS)
+
+Untuk mengaktifkan isolasi login tenant, daftarkan domain apex dan wildcard
+DNS/TLS di Fly terlebih dahulu, lalu set **nama domain tanpa protocol**:
+
+```bash
+fly secrets set --app warga-jaga-warga-wjw \
+  WJW_BASE_DOMAIN='warga.contoh.id' \
+  WJW_APP_URL='https://warga.contoh.id'
+```
+
+Setiap tenant yang dibuat lewat Konsol Superadmin memiliki slug, sehingga akun
+warga hanya login di `https://<slug>.warga.contoh.id`. Konsol Superadmin tetap
+pada apex. Jangan set nilai ini sampai wildcard DNS serta TLS benar-benar
+melayani subdomain; host Fly default bukan pengganti wildcard tenant.
 
 Gunakan HTTPS Fly atau sertifikat domain kustom. GPS, kamera, Web Push, dan
 instalasi PWA tidak boleh divalidasi dari HTTP biasa.
@@ -154,6 +172,10 @@ produksi.
 - Rotasi `WJW_DATA_ENCRYPTION_KEY` adalah proyek migrasi data, bukan perintah
   `fly secrets set` biasa. Simpan versi/kunci lama sampai semua record
   didekripsi dan dienkripsi ulang.
+- AES-GCM aplikasi melindungi blob SOS sensitif, bukan seluruh SQLite: lokasi
+  relasional untuk pemilihan warga terdekat dan operasi ronda masih plaintext.
+  Jangan menyatakan enkripsi at-rest menyeluruh sebelum migrasi lokasi,
+  retensi, dan indeks spasial aman dirancang (lihat `KESIAPAN-PRODUKSI.md`).
 - Web Push adalah *best effort*, bukan bukti penerima sudah melihat/menerima
   bantuan. Audit `alert.push_dispatch` hanya mencatat request yang diterima
   layanan Web Push, subscription, dan kegagalan transport; bukti manusia

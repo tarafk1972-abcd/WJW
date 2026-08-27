@@ -1935,3 +1935,34 @@ p {
   border-color: rgba(46, 194, 126, 0.35);
   background: var(--brand-soft);
 }
+
+/* Phase 3–5: formulir ringkas dan indikator progres nyaman untuk layar HP. */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 9px;
+}
+.form-grid > label { min-width: 0; }
+.progress {
+  height: 8px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: var(--bg-2);
+  border: 1px solid var(--line-soft);
+}
+.progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  min-width: 0;
+  background: linear-gradient(90deg, var(--brand), #14b8a6);
+  transition: width .28s ease;
+}
+.item-selected {
+  border-color: var(--brand) !important;
+  background: var(--brand-soft) !important;
+}
+@media (max-width: 360px) {
+  .form-grid { grid-template-columns: 1fr; }
+}

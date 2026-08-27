@@ -1,4 +1,4 @@
-import { API_BASE, getToken, setToken } from './api'
+import { API_BASE, expireSession, getToken } from './api'
 
 export interface RealtimeSignal {
   id?: string
@@ -110,10 +110,9 @@ export function startRealtime(options: RealtimeOptions): () => void {
         signal: controller.signal,
       })
       if (response.status === 401) {
-        // Token kadaluarsa: biarkan AppProvider mengarahkan ke login, jangan
-        // loop retry tanpa henti dengan kredensial yang sudah tidak valid.
-        setToken(null)
-        window.dispatchEvent(new Event('wjw:session-expired'))
+        // Token kadaluarsa: AppProvider membuang cache lalu mengarahkan ke
+        // login; jangan loop retry dengan kredensial yang sudah tidak valid.
+        expireSession()
         return
       }
       if (!response.ok || !response.body) throw new Error('realtime_unavailable')

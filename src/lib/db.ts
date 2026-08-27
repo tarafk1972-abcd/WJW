@@ -129,6 +129,13 @@ function migrate(db: DBShape) {
   for (const schedule of db.schedules) {
     if (!Array.isArray(schedule.assignedSatpamIds)) schedule.assignedSatpamIds = []
   }
+  // Pengumuman lokal sebelum audiens bertarget selalu berarti "Umum untuk
+  // semua". Jangan biarkan objek lama merusak layar setelah pembaruan.
+  for (const announcement of db.announcements) {
+    if (!announcement.category) announcement.category = 'Umum'
+    if (!announcement.targetScope) announcement.targetScope = 'all'
+    if (typeof announcement.targetValue !== 'string') announcement.targetValue = ''
+  }
 }
 
 /** Terlempar saat penyimpanan penuh dan tidak bisa dikosongkan lagi. */
@@ -1392,10 +1399,18 @@ export function endPatrol(patrolId: string) {
 }
 
 export function addAnnouncement(
-  a: Omit<Announcement, 'id' | 'createdAt'>,
+  a: Omit<Announcement, 'id' | 'createdAt' | 'category' | 'targetScope' | 'targetValue'> &
+    Partial<Pick<Announcement, 'category' | 'targetScope' | 'targetValue'>>,
 ): Announcement {
   const db = loadDB()
-  const ann: Announcement = { ...a, id: uid('n_'), createdAt: Date.now() }
+  const ann: Announcement = {
+    ...a,
+    category: a.category ?? 'Umum',
+    targetScope: a.targetScope ?? 'all',
+    targetValue: a.targetValue ?? '',
+    id: uid('n_'),
+    createdAt: Date.now(),
+  }
   db.announcements.unshift(ann)
   audit(db, a.communityId, a.authorId, 'announcement', a.title)
   saveDB(db)

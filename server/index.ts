@@ -1,5 +1,6 @@
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import { cors } from 'hono/cors'
 import type { Context, Next } from 'hono'
 import { z } from 'zod'
@@ -43,6 +44,36 @@ import {
   saveDuesSettings,
   verifyDuesInvoice,
 } from './dues.js'
+import {
+  HUB_KINDS,
+  HubError,
+  actOnHubItem,
+  addHubComment,
+  approvedLetterPdfData,
+  communityHubOverview,
+  createHubItem,
+  decideLetter,
+  drawArisan,
+  getCommunityBranding,
+  hubAnalytics,
+  saveCommunityBranding,
+  refreshExpiredHubItems,
+  setHubItemStatus,
+  verifyCommunityDomain,
+} from './community-hub.js'
+import { answerAssistant, assistantHistory } from './assistant.js'
+import {
+  PopulationError,
+  ensureHouseholdForMember,
+  ensurePopulationHouseholds,
+  listBillableHouseholdHeads,
+  memberMatchesAudience,
+  populationOverview,
+  setHouseholdHead,
+  updateHouseholdArea,
+  updatePopulationMember,
+} from './population.js'
+import { createLetterPdf } from './letter-pdf.js'
 import {
   addIncidentTimeline,
   initialIncidentStatus,
@@ -106,7 +137,18 @@ import {
 
 ensureSuperadmin()
 fixUnnamedCommunities()
+// Migrasi idempoten: komunitas lama langsung mendapatkan struktur KK tanpa
+// meminta warga memasukkan ulang data saat aplikasi diperbarui.
+ensurePopulationHouseholds()
 setInterval(purgeSessions, 6 * 60 * 60 * 1000).unref?.()
+// Penutupan polling/tenggat tidak bergantung pada layar admin sedang terbuka.
+setInterval(() => {
+  const communities = db.prepare('SELECT id FROM communities').all() as { id: string }[]
+  for (const community of communities) {
+    for (const itemId of refreshExpiredHubItems(community.id))
+      publishCommunityEvent(community.id, 'community.hub.updated', itemId)
+  }
+}, 60_000).unref?.()
 
 /**
  * Kelonggaran maksimum untuk ketidakpastian GPS saat menandai ronda.
@@ -151,6 +193,19 @@ if (corsOrigins.length > 0) {
   app.use('/api/*', cors({ origin: corsOrigins, credentials: false }))
 }
 
+// Semua API menerima JSON kecil, kecuali bukti foto (maks. 600 KB) dan QRIS
+// superadmin (maks. 1 MB sebelum base64). Batas 2 MiB ini memberi ruang untuk
+// encoding JSON, tetapi menghentikan request chunked/content-length palsu
+// sebelum parser JSON menghabiskan memori proses tunggal untuk tenant lain.
+const MAX_API_BODY_BYTES = 2 * 1024 * 1024
+app.use(
+  '/api/*',
+  bodyLimit({
+    maxSize: MAX_API_BODY_BYTES,
+    onError: (c) => c.json({ error: 'payload_too_large' }, 413),
+  }),
+)
+
 /* Header browser-level untuk mengurangi dampak XSS, MIME sniffing dan iframe. */
 app.use('*', async (c, next) => {
   await next()
@@ -161,6 +216,11 @@ app.use('*', async (c, next) => {
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin')
   c.header('X-Frame-Options', 'DENY')
   c.header('Permissions-Policy', 'geolocation=(self), microphone=(self), camera=(self)')
+  // /api/state dapat berisi koordinasi SOS, daftar tamu, atau riwayat privat.
+  // Jangan biarkan browser/proxy menyimpan respons Bearer ini di disk. Endpoint
+  // yang punya aturan cache khusus (SSE, PDF) mempertahankan headernya sendiri.
+  if (c.req.path.startsWith('/api/') && !c.res.headers.get('Cache-Control'))
+    c.header('Cache-Control', 'private, no-store')
   c.header(
     'Content-Security-Policy',
     "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; " +
@@ -173,15 +233,99 @@ app.use('*', async (c, next) => {
 
 const J = (s: string) => JSON.parse(s || 'null')
 
+/**
+ * JSON insiden SOS disimpan AES-GCM di produksi. Data versi lama tanpa prefix
+ * tetap dibaca oleh decryptSensitiveJson agar migrasi tidak memutus insiden
+ * historis; record korup justru dikosongkan (fail closed), bukan dilempar ke
+ * seluruh respons /api/state.
+ */
+function secureArray<T>(stored: unknown): T[] {
+  if (typeof stored !== 'string' || !stored) return []
+  try {
+    const value = decryptSensitiveJson<unknown>(stored)
+    return Array.isArray(value) ? (value as T[]) : []
+  } catch {
+    return []
+  }
+}
+
+function secureObject(stored: unknown): Record<string, unknown> | null {
+  if (typeof stored !== 'string' || !stored) return null
+  try {
+    const value = decryptSensitiveJson<unknown>(stored)
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null
+  } catch {
+    return null
+  }
+}
+
+/** Audio legacy berupa data URL (bukan JSON); bungkus saat migrasi baru. */
+function secureAudio(stored: unknown): string | null {
+  if (typeof stored !== 'string' || !stored) return null
+  // Kompatibilitas rows lama sebelum migrasi: jangan mencoba JSON.parse atas
+  // data URL. Saat kunci tersedia, db.ts akan membungkusnya saat boot.
+  if (!stored.startsWith('enc:v1:')) return stored
+  try {
+    const value = decryptSensitiveJson<unknown>(stored)
+    return typeof value === 'string' ? value : null
+  } catch {
+    return null
+  }
+}
+
 function bearer(c: Context): string | null {
   const h = c.req.header('Authorization') ?? ''
   return h.startsWith('Bearer ') ? h.slice(7) : null
 }
 
-/** Wajib login. */
+type TenantHost = { id: string; name: string; subdomain: string } | null | undefined
+
+/**
+ * Tenant subdomain is opt-in through WJW_BASE_DOMAIN (for example
+ * `wjw.example.id`). The Fly preview/default hostname continues to work as
+ * the apex while operators configure wildcard DNS. We use the actual request
+ * URL/Host, not a client-supplied tenant header.
+ *
+ * undefined: no tenant subdomain in this deployment/request
+ * null: host claims a tenant subdomain but no tenant owns it
+ */
+function tenantHost(c: Context): TenantHost {
+  const base = (process.env.WJW_BASE_DOMAIN ?? '').trim().toLowerCase().replace(/^\.+|\.+$/g, '')
+  if (!base) return undefined
+  let host = ''
+  try {
+    host = new URL(c.req.url).hostname.toLowerCase()
+  } catch {
+    return undefined
+  }
+  if (host === base || !host.endsWith(`.${base}`)) return undefined
+  const subdomain = host.slice(0, -(base.length + 1))
+  // One label only: `rw05.wjw.example.id`, never an arbitrary nested host.
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(subdomain)) return null
+  return (db
+    .prepare('SELECT id,name,subdomain FROM communities WHERE lower(subdomain)=?')
+    .get(subdomain) as { id: string; name: string; subdomain: string } | undefined) ?? null
+}
+
+/** Wajib login dan—bila memakai subdomain—harus milik tenant host tersebut. */
 async function auth(c: Context<Env>, next: Next) {
   const me = memberFromToken(bearer(c))
   if (!me) return c.json({ error: 'unauthorized' }, 401)
+  const tenant = tenantHost(c)
+  if (tenant === null) return c.json({ error: 'tenant_not_found' }, 404)
+  // Konsol superadmin hanya di apex. Dengan demikian token operasional tidak
+  // bisa dipakai pada subdomain warga untuk melompati batas tenant.
+  if (tenant && (me.role === 'superadmin' || me.community_id !== tenant.id))
+    return c.json({ error: 'tenant_forbidden' }, 403)
+  if (me.role !== 'superadmin' && me.community_id && c.req.path !== '/api/auth/logout') {
+    const subscription = db
+      .prepare('SELECT plan,subscription_status FROM communities WHERE id=?')
+      .get(me.community_id) as { plan: string; subscription_status?: string } | undefined
+    if (subscription?.plan === 'suspended' || subscription?.subscription_status === 'suspended')
+      return c.json({ error: 'tenant_suspended' }, 403)
+  }
   c.set('me', me)
   await next()
 }
@@ -190,6 +334,15 @@ async function auth(c: Context<Env>, next: Next) {
 async function active(c: Context<Env>, next: Next) {
   const me = c.get('me')
   if (me.status !== 'active') return c.json({ error: 'not_active' }, 403)
+  // Superadmin tetap dapat mengelola tenant yang disuspensi dari konsol;
+  // akun tenant sendiri tidak dapat mengakses data/operasi selama suspend.
+  if (me.role !== 'superadmin' && me.community_id) {
+    const community = db
+      .prepare('SELECT plan,subscription_status FROM communities WHERE id=?')
+      .get(me.community_id) as { plan: string; subscription_status?: string } | undefined
+    if (community?.plan === 'suspended' || community?.subscription_status === 'suspended')
+      return c.json({ error: 'tenant_suspended' }, 403)
+  }
   await next()
 }
 
@@ -222,8 +375,13 @@ function mapCommunity(r: Record<string, unknown>) {
     areaUpdatedBy: r.area_updated_by,
     center: J(r.center as string),
     language: r.language,
-    plan: r.plan,
+    // Tetap kompatibel dengan UI lama yang membaca `plan`, sambil menyediakan
+    // status SaaS eksplisit. Suspensi tidak menimpa periode tagihan asli.
+    plan: r.subscription_status === 'suspended' ? 'suspended' : r.plan,
     planName: r.plan_name,
+    subscriptionTier: r.subscription_tier ?? 'FREE',
+    subscriptionStatus: subscriptionStatus(r),
+    subdomain: r.subdomain ?? '',
     trialEndsAt: r.trial_ends_at,
     paidUntil: r.paid_until,
     suspendedReason: r.suspended_reason ?? undefined,
@@ -239,11 +397,29 @@ function mapCommunity(r: Record<string, unknown>) {
  * /api/state dibaca ulang oleh banyak layar sekaligus.
  */
 function canViewIncidentDetails(me: MemberRow | undefined, r: Record<string, unknown>): boolean {
-  if (!me || r.kind !== 'sos') return !me
-  if (me.role === 'superadmin' || me.role === 'admin' || me.role === 'satpam') return true
+  if (!me || r.kind !== 'sos') return false
   if (r.author_id === me.id) return true
-  const recipients = (J(r.recipients as string) ?? []) as { memberId?: string | null }[]
+  // Daftar penerima dibekukan ketika SOS dikirim. Jadi petugas yang baru
+  // ditambahkan kemudian tidak otomatis bisa membuka lokasi, bukti, atau
+  // profil medis insiden lama hanya karena perannya admin/satpam.
+  const recipients = secureArray<{ memberId?: string | null }>(r.recipients)
   return recipients.some((recipient) => recipient.memberId === me.id)
+}
+
+/**
+ * Laporan anonimus non-SOS adalah kanal terbatas: hanya pelapor dan admin
+ * tenant yang boleh membacanya. Satpam dan warga lain tidak menerima record
+ * sama sekali — termasuk foto/catatan yang dapat mengungkap identitas lewat
+ * konteks. Ini sengaja tidak berlaku pada SOS karena keselamatan tidak boleh
+ * disembunyikan oleh mode anonimus.
+ */
+function canReadReport(me: MemberRow, r: Record<string, unknown>): boolean {
+  if (r.kind === 'sos' || !r.anonymous) return true
+  return r.author_id === me.id || me.role === 'admin'
+}
+
+function canRevealAnonymousReportAuthor(viewer: MemberRow | undefined, r: Record<string, unknown>) {
+  return !r.anonymous || r.kind === 'sos' || !!viewer && (r.author_id === viewer.id || viewer.role === 'admin')
 }
 
 function mapReport(
@@ -253,6 +429,7 @@ function mapReport(
 ) {
   const isSos = r.kind === 'sos'
   const canSeeDetails = canViewIncidentDetails(viewer, r)
+  const revealAuthor = canRevealAnonymousReportAuthor(viewer, r)
   const incidentStatus = isIncidentStatus(r.incident_status)
     ? r.incident_status
     : initialIncidentStatus(r.status)
@@ -260,7 +437,10 @@ function mapReport(
   return {
     id: r.id,
     communityId: r.community_id,
-    authorId: r.author_id,
+    // Tidak ada ID pengganti/pseudonim yang dapat dikorelasikan di cache
+    // warga. Pelapor dan admin tetap menerima ID asli agar layar miliknya
+    // dan alur penanganan berfungsi.
+    ...(revealAuthor ? { authorId: r.author_id } : {}),
     kind: r.kind,
     category: r.category,
     note: r.note,
@@ -276,21 +456,30 @@ function mapReport(
     resolvedNote: r.resolved_note ?? undefined,
     insideArea: r.inside_area === null ? null : !!r.inside_area,
     anonymous: !!r.anonymous,
-    attachments: !isSos || canSeeDetails ? J(r.attachments as string) ?? [] : [],
-    messages: !isSos || canSeeDetails ? J(r.messages as string) ?? [] : [],
-    responders: !isSos || canSeeDetails ? J(r.responders as string) ?? [] : [],
-    track: !isSos || canSeeDetails ? J(r.track as string) ?? [] : [],
+    // Semua blob SOS di bawah disimpan terenkripsi. Jangan dekripsi satu pun
+    // sampai viewer lolos pemeriksaan penerima insiden di atas.
+    attachments: isSos
+      ? canSeeDetails ? secureArray(r.attachments) : []
+      : J(r.attachments as string) ?? [],
+    messages: isSos
+      ? canSeeDetails ? secureArray(r.messages) : []
+      : J(r.messages as string) ?? [],
+    responders: isSos
+      ? canSeeDetails ? secureArray(r.responders) : []
+      : J(r.responders as string) ?? [],
+    track: isSos
+      ? canSeeDetails ? secureArray(r.track) : []
+      : J(r.track as string) ?? [],
     live: !!r.live,
     liveEndedAt: r.live_ended_at,
-    audio: !isSos || canSeeDetails ? r.audio : null,
+    audio: isSos ? (canSeeDetails ? secureAudio(r.audio) : null) : r.audio,
     audioSeconds: !isSos || canSeeDetails ? r.audio_seconds : 0,
     // Snapshot disimpan terenkripsi di database dan dibuka hanya setelah
     // pemeriksaan otorisasi ini.
-    snapshot:
-      !isSos || canSeeDetails
-        ? decryptSensitiveJson<Record<string, unknown>>(r.snapshot as string)
-        : null,
-    recipients: !isSos || canSeeDetails ? J(r.recipients as string) ?? [] : [],
+    snapshot: isSos && canSeeDetails ? secureObject(r.snapshot) : null,
+    recipients: isSos
+      ? canSeeDetails ? secureArray(r.recipients) : []
+      : J(r.recipients as string) ?? [],
     timeline: !isSos || canSeeDetails ? timeline : [],
     cancelledAt: r.cancelled_at,
   }
@@ -343,6 +532,34 @@ function mapLog(r: Record<string, unknown>) {
     status: r.status,
     note: r.note,
   }
+}
+
+function mapAnnouncement(r: Record<string, unknown>) {
+  return {
+    id: r.id,
+    communityId: r.community_id,
+    authorId: r.author_id,
+    title: r.title,
+    body: r.body,
+    category: r.category ?? 'Umum',
+    targetScope: r.target_scope ?? 'all',
+    targetValue: r.target_value ?? '',
+    pinned: !!r.pinned,
+    createdAt: r.created_at,
+  }
+}
+
+function canReadAnnouncement(me: MemberRow, r: Record<string, unknown>): boolean {
+  if (me.role === 'admin' || me.role === 'superadmin') return true
+  const scope = r.target_scope
+  const target: 'all' | 'rw' | 'rt' | 'block' =
+    scope === 'rw' || scope === 'rt' || scope === 'block' ? scope : 'all'
+  return memberMatchesAudience(
+    String(r.community_id),
+    me.id,
+    target,
+    typeof r.target_value === 'string' ? r.target_value : '',
+  )
 }
 
 /* ================= kesehatan ================= */
@@ -524,10 +741,12 @@ function looksLikeImage(buf: Buffer, mime: string): boolean {
 
 app.get('/api/communities/search', (c) => {
   const q = (c.req.query('q') ?? '').trim().toLowerCase()
-  const rows = db.prepare('SELECT * FROM communities').all() as Record<
-    string,
-    unknown
-  >[]
+  const hostTenant = tenantHost(c)
+  if (hostTenant === null) return bad(c, 'errNoCommunity', 404)
+  // Pada subdomain, halaman daftar/join tidak menjadi direktori tenant lain.
+  const rows = (hostTenant
+    ? db.prepare('SELECT * FROM communities WHERE id=?').all(hostTenant.id)
+    : db.prepare('SELECT * FROM communities').all()) as Record<string, unknown>[]
   const out = rows
     .filter((r) =>
       !q
@@ -555,11 +774,14 @@ app.get('/api/communities/search', (c) => {
 
 /** Cek kode undangan tanpa memakainya. */
 app.get('/api/invites/:code', (c) => {
+  const hostTenant = tenantHost(c)
+  if (hostTenant === null) return bad(c, 'errInvite', 404)
   const code = normalizeCode(c.req.param('code'))
   const inv = db
     .prepare('SELECT * FROM invites WHERE code = ?')
     .get(code) as Record<string, unknown> | undefined
   if (!inv || inv.revoked_at) return bad(c, 'errInvite', 404)
+  if (hostTenant && inv.community_id !== hostTenant.id) return bad(c, 'errInvite', 404)
   if ((inv.expires_at as number) <= now()) return bad(c, 'errInviteExpired', 410)
   const used: string[] = J(inv.used_by as string) ?? []
   if (inv.max_uses !== null && used.length >= (inv.max_uses as number))
@@ -571,6 +793,218 @@ app.get('/api/invites/:code', (c) => {
   return c.json({
     invite: { code: inv.code, role: inv.role, expiresAt: inv.expires_at },
     community: { id: com.id, name: com.name, city: com.city },
+  })
+})
+
+/* ================= konsol superadmin / tenant SaaS ================= */
+
+const SUBSCRIPTION_TIERS = ['FREE', 'COMMUNITY', 'PROFESSIONAL', 'ENTERPRISE'] as const
+
+type SubscriptionTier = (typeof SUBSCRIPTION_TIERS)[number]
+
+function cleanSubdomain(raw: unknown, fallback: string): string {
+  const source = (typeof raw === 'string' && raw.trim() ? raw : fallback)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32)
+  return source.replace(/-+$/g, '').replace(/^-+/, '')
+}
+
+function subscriptionStatus(row: Record<string, unknown>): string {
+  if (row.subscription_status === 'suspended' || row.plan === 'suspended') return 'suspended'
+  if (typeof row.paid_until === 'number' && row.paid_until > now()) return 'active'
+  if (typeof row.trial_ends_at === 'number' && row.trial_ends_at > now()) return 'trial'
+  return 'expired'
+}
+
+function superadminOnly(c: Context<Env>): MemberRow | null {
+  const me = c.get('me')
+  return me.role === 'superadmin' ? me : null
+}
+
+app.get('/api/superadmin/overview', auth, (c) => {
+  if (!superadminOnly(c)) return bad(c, 'forbidden', 403)
+  const communities = db.prepare(
+    `SELECT c.*, count(m.id) AS residents
+     FROM communities c LEFT JOIN members m ON m.community_id=c.id AND m.role<>'superadmin'
+     GROUP BY c.id ORDER BY c.created_at DESC`,
+  ).all() as (Record<string, unknown> & { residents: number })[]
+  const revenue = db.prepare("SELECT coalesce(sum(amount),0) AS amount FROM invoices WHERE status='paid'").get() as { amount: number }
+  const pending = db.prepare("SELECT count(*) AS count FROM invoices WHERE status='awaiting_verification'").get() as { count: number }
+  const residentCount = db.prepare("SELECT count(*) AS count FROM members WHERE role<>'superadmin'").get() as { count: number }
+  const statuses = communities.map((tenant) => subscriptionStatus(tenant))
+  return c.json({
+    metrics: {
+      tenants: communities.length,
+      residents: residentCount.count,
+      revenue: revenue.amount,
+      pendingVerifications: pending.count,
+      active: statuses.filter((status) => status === 'active').length,
+      trial: statuses.filter((status) => status === 'trial').length,
+      suspended: statuses.filter((status) => status === 'suspended').length,
+      expired: statuses.filter((status) => status === 'expired').length,
+    },
+    tenants: communities.map((tenant) => ({
+      ...mapCommunity(tenant),
+      residents: tenant.residents,
+      effectiveSubscriptionStatus: subscriptionStatus(tenant),
+    })),
+  })
+})
+
+/** Superadmin membuat tenant dan satu admin aktif dalam satu transaksi. */
+app.post('/api/superadmin/tenants', auth, async (c) => {
+  const actor = superadminOnly(c)
+  if (!actor) return bad(c, 'forbidden', 403)
+  const body = (await c.req.json().catch(() => ({}))) as {
+    name?: unknown
+    address?: unknown
+    city?: unknown
+    subdomain?: unknown
+    tier?: unknown
+    adminName?: unknown
+    adminPhone?: unknown
+    adminEmail?: unknown
+    adminPassword?: unknown
+    adminHouse?: unknown
+    language?: unknown
+  }
+  const name = typeof body.name === 'string' ? body.name.replaceAll('\u0000', '').trim().slice(0, 80) : ''
+  const address = typeof body.address === 'string' ? body.address.replaceAll('\u0000', '').trim().slice(0, 160) : ''
+  const city = typeof body.city === 'string' ? body.city.replaceAll('\u0000', '').trim().slice(0, 80) : ''
+  const adminName = typeof body.adminName === 'string' ? body.adminName.replaceAll('\u0000', '').trim().slice(0, 80) : ''
+  const adminEmail = typeof body.adminEmail === 'string' ? body.adminEmail.trim().toLowerCase() : ''
+  const adminPhone = typeof body.adminPhone === 'string' ? body.adminPhone.replace(/\s|-/g, '').slice(0, 30) : ''
+  const adminHouse = typeof body.adminHouse === 'string' ? body.adminHouse.replaceAll('\u0000', '').trim().slice(0, 160) : ''
+  const password = typeof body.adminPassword === 'string' ? body.adminPassword : ''
+  const tier = SUBSCRIPTION_TIERS.includes(body.tier as SubscriptionTier)
+    ? body.tier as SubscriptionTier
+    : 'FREE'
+  const subdomain = cleanSubdomain(body.subdomain, name)
+  const language = body.language === 'en' || body.language === 'su' ? body.language : 'id'
+  if (!name || !adminName || !adminEmail || !adminPhone || !adminHouse || password.length < 8 || !subdomain)
+    return bad(c, 'invalid_tenant_input', 422)
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)) return bad(c, 'invalid_tenant_input', 422)
+  if (db.prepare('SELECT 1 FROM communities WHERE lower(subdomain)=?').get(subdomain))
+    return bad(c, 'subdomain_taken', 409)
+  if (db.prepare('SELECT 1 FROM members WHERE lower(email)=? OR phone=?').get(adminEmail, adminPhone))
+    return bad(c, 'admin_identity_taken', 409)
+
+  const communityId = uid('c_')
+  const adminId = uid('m_')
+  const at = now()
+  // Hitung bcrypt sebelum memegang transaksi SQLite, tetapi jangan membuat
+  // tenant/member terlihat sebagian: seluruh INSERT dan KK pertama harus
+  // berhasil atau seluruhnya rollback.
+  const passwordHash = hashPassword(password)
+  try {
+    db.transaction(() => {
+      db.prepare(
+        `INSERT INTO communities
+         (id,name,address,city,created_at,created_by,area,center,language,plan,plan_name,
+          subscription_tier,subscription_status,subdomain,trial_ends_at)
+         VALUES (?,?,?,?,?,'','[]',?,?,'trial','trial',?,'trial',?,?)`,
+      ).run(
+        communityId,
+        name,
+        address,
+        city,
+        at,
+        JSON.stringify({ lat: -6.914744, lng: 107.60981 }),
+        language,
+        tier,
+        subdomain,
+        at + TRIAL_DAYS * DAY,
+      )
+      db.prepare(
+        `INSERT INTO members
+         (id,community_id,name,phone,email,password_hash,house,role,status,language,created_at,decided_at,decided_by,join_method,join_note)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      ).run(
+        adminId,
+        communityId,
+        adminName,
+        adminPhone,
+        adminEmail,
+        passwordHash,
+        adminHouse,
+        'admin',
+        'active',
+        language,
+        at,
+        at,
+        actor.id,
+        'superadmin_create',
+        '',
+      )
+      ensureHouseholdForMember({ communityId, memberId: adminId, address: adminHouse, createdAt: at })
+      db.prepare('UPDATE communities SET created_by=? WHERE id=?').run(adminId, communityId)
+    })()
+  } catch {
+    // Tidak tampilkan detail SQLite (mis. constraint/struktur) ke browser.
+    return bad(c, 'tenant_create_failed', 422)
+  }
+  audit(null, actor.id, 'tenant.create', `${communityId}:${tier}`)
+  return c.json({
+    tenant: {
+      id: communityId,
+      name,
+      subdomain,
+      subscriptionTier: tier,
+      subscriptionStatus: 'trial',
+      trialEndsAt: at + TRIAL_DAYS * DAY,
+    },
+    admin: { id: adminId, name: adminName, email: adminEmail },
+  }, 201)
+})
+
+/** Suspensi tidak menghapus data; aktivasi memulihkan status berdasarkan masa trial/aktif yang nyata. */
+app.put('/api/superadmin/tenants/:id/subscription', auth, async (c) => {
+  const actor = superadminOnly(c)
+  if (!actor) return bad(c, 'forbidden', 403)
+  const id = c.req.param('id') ?? ''
+  const tenant = db.prepare('SELECT * FROM communities WHERE id=?').get(id) as Record<string, unknown> | undefined
+  if (!tenant) return bad(c, 'not_found', 404)
+  const body = (await c.req.json().catch(() => ({}))) as {
+    status?: unknown
+    tier?: unknown
+    reason?: unknown
+    extendTrialDays?: unknown
+  }
+  const current = subscriptionStatus(tenant)
+  const requested = body.status === 'suspended' || body.status === 'active' ? body.status : undefined
+  const tier = SUBSCRIPTION_TIERS.includes(body.tier as SubscriptionTier)
+    ? body.tier as SubscriptionTier
+    : String(tenant.subscription_tier ?? 'FREE') as SubscriptionTier
+  const extend = Number.isInteger(body.extendTrialDays) && Number(body.extendTrialDays) >= 1 && Number(body.extendTrialDays) <= 365
+    ? Number(body.extendTrialDays)
+    : 0
+  if (body.status !== undefined && !requested) return bad(c, 'invalid_subscription_status', 422)
+  if (body.tier !== undefined && !SUBSCRIPTION_TIERS.includes(body.tier as SubscriptionTier))
+    return bad(c, 'invalid_subscription_tier', 422)
+  const reason = typeof body.reason === 'string' ? body.reason.replaceAll('\u0000', '').trim().slice(0, 300) : ''
+  const trialEnds = extend ? Math.max(Number(tenant.trial_ends_at) || 0, now()) + extend * DAY : Number(tenant.trial_ends_at)
+  let status = requested ?? current
+  if (requested === 'active') {
+    status = Number(tenant.paid_until) > now() ? 'active' : trialEnds > now() ? 'trial' : 'expired'
+  } else if (extend && status !== 'suspended') {
+    // Perpanjangan trial menghidupkan kembali tenant kedaluwarsa tanpa
+    // memalsukan status pembayaran sebagai active.
+    status = Number(tenant.paid_until) > now() ? 'active' : 'trial'
+  }
+  db.prepare(
+    `UPDATE communities SET subscription_tier=?, subscription_status=?, trial_ends_at=?, suspended_reason=? WHERE id=?`,
+  ).run(tier, status, trialEnds, status === 'suspended' ? reason || 'Ditangguhkan oleh Superadmin' : null, id)
+  audit(null, actor.id, 'tenant.subscription.update', `${id}:${status}:${tier}${extend ? `:+${extend}d` : ''}`)
+  publishCommunityEvent(id, 'community.hub.updated', 'subscription')
+  return c.json({
+    tenant: {
+      ...mapCommunity(db.prepare('SELECT * FROM communities WHERE id=?').get(id) as Record<string, unknown>),
+      effectiveSubscriptionStatus: status,
+    },
   })
 })
 
@@ -610,6 +1044,12 @@ app.post('/api/auth/register', async (c) => {
   const parsed = registerSchema.safeParse(await c.req.json().catch(() => ({})))
   if (!parsed.success) return bad(c, 'errRequired')
   const i = parsed.data
+  const hostTenant = tenantHost(c)
+  if (hostTenant === null) return bad(c, 'errNoCommunity', 404)
+  // Tenant baru hanya dibuat pada apex. Pada subdomain, warga hanya dapat
+  // meminta bergabung ke lingkungan pemilik host tersebut.
+  if (hostTenant && (i.mode !== 'join' || i.communityId !== hostTenant.id))
+    return bad(c, 'tenant_forbidden', 403)
 
   const email = i.email.trim().toLowerCase()
   const phone = i.phone.replace(/\s|-/g, '')
@@ -717,6 +1157,15 @@ app.post('/api/auth/register', async (c) => {
     (i.joinNote ?? '').trim(),
   )
 
+  // Pendaftaran baru langsung dilekatkan pada KK alamatnya. Bila alamat sudah
+  // ada, ia menjadi anggota keluarga; tidak mungkin lahir dua kepala keluarga
+  // untuk satu alamat hanya karena registrasi dilakukan dari HP lain.
+  ensureHouseholdForMember({
+    communityId,
+    memberId: id,
+    address: i.house.trim(),
+  })
+
   if (firstAdmin)
     db.prepare('UPDATE communities SET created_by=? WHERE id=?').run(id, communityId)
   if (invite) {
@@ -784,9 +1233,17 @@ app.post('/api/auth/login', async (c) => {
   const phoneQuery = identifier.replace(/\s|-/g, '')
   if (!emailQuery || !body.password) return bad(c, 'errLogin', 401)
 
-  const row = db
-    .prepare('SELECT * FROM members WHERE lower(email)=? OR phone=?')
-    .get(emailQuery, phoneQuery) as MemberRow | undefined
+  const hostTenant = tenantHost(c)
+  // Akun tidak bisa dipakai lintas subdomain. Respons tetap generik agar host
+  // tidak menjadi oracle daftar akun/tenant untuk penyerang.
+  if (hostTenant === null) return bad(c, 'errLogin', 401)
+  const row = (hostTenant
+    ? db
+        .prepare('SELECT * FROM members WHERE community_id=? AND (lower(email)=? OR phone=?)')
+        .get(hostTenant.id, emailQuery, phoneQuery)
+    : db
+        .prepare('SELECT * FROM members WHERE lower(email)=? OR phone=?')
+        .get(emailQuery, phoneQuery)) as MemberRow | undefined
 
   // Selalu bandingkan hash agar waktu respons tidak membocorkan
   // apakah email terdaftar atau tidak.
@@ -795,6 +1252,13 @@ app.post('/api/auth/login', async (c) => {
     row?.password_hash ?? '$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinv',
   )
   if (!row || !ok) return bad(c, 'errLogin', 401)
+  if (row.role !== 'superadmin' && row.community_id) {
+    const subscription = db
+      .prepare('SELECT plan,subscription_status FROM communities WHERE id=?')
+      .get(row.community_id) as { plan: string; subscription_status?: string } | undefined
+    if (subscription?.plan === 'suspended' || subscription?.subscription_status === 'suspended')
+      return bad(c, 'tenant_suspended', 403)
+  }
 
   // Perangkat hanya diklaim untuk warga. Superadmin mengelola layanan dari
   // perangkat mana saja — mengikatnya akan merebut perangkat dari warga
@@ -830,8 +1294,12 @@ app.get('/api/state', auth, (c) => {
       communities: (
         db.prepare('SELECT * FROM communities').all() as Record<string, unknown>[]
       ).map(mapCommunity),
-      members: (db.prepare('SELECT * FROM members').all() as MemberRow[]).map(
-        publicMember,
+      // Konsol SaaS hanya membutuhkan identitas operasional/metric tenant.
+      // Jangan jadikan peran superadmin jalan pintas untuk menduplikasi profil
+      // medis seluruh warga ke cache browser; snapshot SOS tetap dibatasi
+      // kepada penerima insiden di jalur tenant.
+      members: (db.prepare('SELECT * FROM members').all() as MemberRow[]).map((member) =>
+        visibleMember(member, me),
       ),
       audit: db.prepare('SELECT * FROM audit ORDER BY at DESC LIMIT 200').all(),
     })
@@ -865,7 +1333,9 @@ app.get('/api/state', auth, (c) => {
     one<Record<string, unknown>>(
       'SELECT * FROM reports WHERE community_id=? ORDER BY created_at DESC LIMIT 200',
     )
-  ).map((report) => mapReport(report, me, timelines.get(String(report.id)) ?? []))
+  )
+    .filter((report) => canReadReport(me, report))
+    .map((report) => mapReport(report, me, timelines.get(String(report.id)) ?? []))
 
   /*
    * Apakah aplikasi perlu menanyakan lokasi sekarang?
@@ -897,9 +1367,14 @@ app.get('/api/state', auth, (c) => {
     schedules: one<Record<string, unknown>>(
       'SELECT * FROM schedules WHERE community_id=?',
     ).map(mapSchedule),
-    patrolLogs: one<Record<string, unknown>>(
-      'SELECT * FROM patrol_logs WHERE community_id=? ORDER BY at DESC LIMIT 200',
-    ).map(mapLog),
+    // Rute/pola ronda adalah data operasional satpam dan pengurus, bukan feed
+    // semua warga. Warga tetap dapat melihat pengumuman keselamatan tanpa GPS
+    // log patroli orang lain.
+    patrolLogs: me.role === 'admin' || me.role === 'satpam'
+      ? one<Record<string, unknown>>(
+          'SELECT * FROM patrol_logs WHERE community_id=? ORDER BY at DESC LIMIT 200',
+        ).map(mapLog)
+      : [],
     invites: requireAdmin(c)
       ? one<Record<string, unknown>>('SELECT * FROM invites WHERE community_id=?').map(
           (r) => ({
@@ -951,29 +1426,31 @@ app.get('/api/state', auth, (c) => {
     })),
     announcements: one<Record<string, unknown>>(
       'SELECT * FROM announcements WHERE community_id=? ORDER BY pinned DESC, created_at DESC',
-    ).map((r) => ({
-      id: r.id,
-      communityId: r.community_id,
-      authorId: r.author_id,
-      title: r.title,
-      body: r.body,
-      pinned: !!r.pinned,
-      createdAt: r.created_at,
-    })),
-    guests: one<Record<string, unknown>>(
-      'SELECT * FROM guests WHERE community_id=? ORDER BY check_in DESC LIMIT 100',
-    ).map((r) => ({
-      id: r.id,
-      communityId: r.community_id,
-      name: r.name,
-      purpose: r.purpose,
-      host: r.host,
-      plate: r.plate,
-      idCard: r.id_card,
-      checkIn: r.check_in,
-      checkOut: r.check_out,
-      recordedBy: r.recorded_by,
-    })),
+    )
+      // Target pengumuman selalu dihitung server dari RT/RW/blok KK. Klien
+      // tidak dapat meminta pengumuman blok tetangga dengan mengubah filter UI.
+      .filter((row) => canReadAnnouncement(me, row))
+      .map(mapAnnouncement),
+    // Buku tamu termasuk identitas tamu/plakat kendaraan, jadi hanya satpam
+    // dan admin tenant yang menerimanya. Menyembunyikan tab UI saja tidak
+    // cukup karena /state adalah sumber cache semua perangkat.
+    guests: me.role === 'admin' || me.role === 'satpam'
+      ? one<Record<string, unknown>>(
+          'SELECT * FROM guests WHERE community_id=? ORDER BY check_in DESC LIMIT 100',
+        ).map((r) => ({
+          id: r.id,
+          communityId: r.community_id,
+          name: r.name,
+          purpose: r.purpose,
+          host: r.host,
+          plate: r.plate,
+          // Nomor KTP bukan data yang dibutuhkan layar daftar tamu. Jangan
+          // masukkan ke cache/browser walaupun viewer adalah petugas.
+          checkIn: r.check_in,
+          checkOut: r.check_out,
+          recordedBy: r.recorded_by,
+        }))
+      : [],
   })
 })
 
@@ -1140,6 +1617,62 @@ app.put('/api/management-responsibilities/:scope', auth, active, async (c) => {
   audit(targetCommunityId, me.id, 'management.responsibility.assign', `${scope} → ${body.memberId}`)
   publishCommunityEvent(targetCommunityId, 'management.updated', scope)
   return c.json({ responsibility })
+})
+
+/* ================= kependudukan / kartu keluarga ================= */
+
+function populationFailure(c: Context, error: unknown) {
+  if (!(error instanceof PopulationError)) return bad(c, 'population_unavailable', 500)
+  const status = error.code === 'not_found' ? 404 : error.code === 'forbidden' ? 403 : 422
+  return bad(c, error.code, status)
+}
+
+app.get('/api/population', auth, active, (c) => {
+  try {
+    return c.json(populationOverview(c.get('me')))
+  } catch (error) {
+    return populationFailure(c, error)
+  }
+})
+
+app.put('/api/population/households/:id/head', auth, active, async (c) => {
+  const me = c.get('me')
+  const body = (await c.req.json().catch(() => ({}))) as { memberId?: unknown }
+  try {
+    const household = setHouseholdHead(me, c.req.param('id') ?? '', body.memberId)
+    audit(me.community_id, me.id, 'population.household.head', household.id)
+    publishCommunityEvent(me.community_id, 'population.updated', household.id)
+    return c.json({ household })
+  } catch (error) {
+    return populationFailure(c, error)
+  }
+})
+
+app.put('/api/population/households/:id/audience', auth, active, async (c) => {
+  const me = c.get('me')
+  const body = (await c.req.json().catch(() => ({}))) as { rt?: unknown; rw?: unknown; block?: unknown }
+  try {
+    updateHouseholdArea(me, c.req.param('id') ?? '', body)
+    audit(me.community_id, me.id, 'population.household.audience', c.req.param('id') ?? '')
+    publishCommunityEvent(me.community_id, 'population.updated', c.req.param('id') ?? '')
+    return c.json({ ok: true })
+  } catch (error) {
+    return populationFailure(c, error)
+  }
+})
+
+app.put('/api/population/members/:id', auth, active, async (c) => {
+  const me = c.get('me')
+  const body = (await c.req.json().catch(() => ({}))) as { relationship?: unknown; birthDate?: unknown }
+  try {
+    const memberId = c.req.param('id') ?? ''
+    updatePopulationMember(me, memberId, body)
+    audit(me.community_id, me.id, 'population.member.update', memberId)
+    publishCommunityEvent(me.community_id, 'population.updated', memberId)
+    return c.json({ ok: true })
+  } catch (error) {
+    return populationFailure(c, error)
+  }
 })
 
 /* ================= area lingkungan ================= */
@@ -1474,7 +2007,7 @@ app.post('/api/alerts', auth, active, async (c) => {
        (id,community_id,author_id,kind,category,note,at_lat,at_lng,address,status,
         created_at,inside_area,attachments,messages,responders,track,live,
         audio_seconds,snapshot,recipients,incident_status,idempotency_key)
-       VALUES (?,?,?,'sos',?,'',?,?,?,'open',?,?,'[]','[]','[]',?,1,0,?,?,'NEW',?)`,
+       VALUES (?,?,?,'sos',?,'',?,?,?,'open',?,?,?,?,?,?,1,0,?,?,'NEW',?)`,
     ).run(
       id,
       me.community_id,
@@ -1485,14 +2018,17 @@ app.post('/api/alerts', auth, active, async (c) => {
       me.house,
       createdAt,
       inside === null ? null : inside ? 1 : 0,
-      JSON.stringify(
+      encryptSensitiveJson([]),
+      encryptSensitiveJson([]),
+      encryptSensitiveJson([]),
+      encryptSensitiveJson(
         at ? [{ lat: at.lat, lng: at.lng, at: createdAt, accuracy: b.accuracy ?? null }] : [],
       ),
       encryptSensitiveJson(snapshot),
       // Nama field deliveredAt dipertahankan untuk kompatibilitas klien lama,
       // tetapi nilainya berarti penerima DITETAPKAN server. Hasil Web Push
       // dicatat terpisah di audit alert.push_dispatch dan bukan delivery proof.
-      JSON.stringify(
+      encryptSensitiveJson(
         audience.map((a) => ({ ...a, deliveredAt: createdAt, acknowledgedAt: null })),
       ),
       b.idempotencyKey ?? null,
@@ -1622,18 +2158,18 @@ app.post('/api/alerts/:id/location', auth, active, async (c) => {
   const lat = b.lat as number
   const lng = b.lng as number
   const accuracy = b.accuracy ?? null
-  const track = (J(r.track as string) ?? []) as {
+  const track = secureArray<{
     lat: number
     lng: number
     at: number
     accuracy: number | null
-  }[]
+  }>(r.track)
   const last = track[track.length - 1]
   if (!last || last.lat !== lat || last.lng !== lng) {
     track.push({ lat, lng, at: now(), accuracy })
     if (track.length > 500) track.shift()
     db.prepare('UPDATE reports SET track=?, at_lat=?, at_lng=? WHERE id=?').run(
-      JSON.stringify(track),
+      encryptSensitiveJson(track),
       lat,
       lng,
       r.id,
@@ -1651,15 +2187,15 @@ function respondToAlert(c: Context<Env>, r: Record<string, unknown>) {
   const me = c.get('me')
   if (!sameCommunity(me, r.community_id as string)) return bad(c, 'forbidden', 403)
 
-  const recipients = (J(r.recipients as string) ?? []) as {
+  const recipients = secureArray<{
     memberId: string | null
     acknowledgedAt: number | null
-  }[]
+  }>(r.recipients)
   const rec = recipients.find((x) => x.memberId === me.id)
   const privileged = requireAdmin(c) || me.role === 'satpam'
   if (!rec && !privileged) return bad(c, 'forbidden', 403)
 
-  const responders: string[] = J(r.responders as string) ?? []
+  const responders = secureArray<string>(r.responders)
   const at = now()
   if (rec && !rec.acknowledgedAt) rec.acknowledgedAt = at
   if (!responders.includes(me.id)) responders.push(me.id)
@@ -1667,7 +2203,7 @@ function respondToAlert(c: Context<Env>, r: Record<string, unknown>) {
   db.prepare(
     `UPDATE reports SET recipients=?, responders=?, handled_by=COALESCE(handled_by, ?),
      handled_at=COALESCE(handled_at, ?) WHERE id=? AND community_id=?`,
-  ).run(JSON.stringify(recipients), JSON.stringify(responders), me.id, at, r.id, r.community_id)
+  ).run(encryptSensitiveJson(recipients), encryptSensitiveJson(responders), me.id, at, r.id, r.community_id)
 
   let current = isIncidentStatus(r.incident_status)
     ? r.incident_status
@@ -1746,7 +2282,7 @@ app.post('/api/alerts/:id/status', auth, active, async (c) => {
     ? r.incident_status
     : initialIncidentStatus(r.status)
   const isOwner = r.author_id === me.id
-  const recipients = (J(r.recipients as string) ?? []) as { memberId: string | null }[]
+  const recipients = secureArray<{ memberId: string | null }>(r.recipients)
   const isParticipant = recipients.some((recipient) => recipient.memberId === me.id)
   const privileged = requireAdmin(c) || me.role === 'satpam'
 
@@ -1803,7 +2339,7 @@ app.post('/api/alerts/:id/messages', auth, active, async (c) => {
   if (!sameCommunity(me, r.community_id as string)) return bad(c, 'forbidden', 403)
 
   const isOwner = r.author_id === me.id
-  const recipients = (J(r.recipients as string) ?? []) as { memberId: string | null }[]
+  const recipients = secureArray<{ memberId: string | null }>(r.recipients)
   const isRecipient = recipients.some((x) => x.memberId === me.id)
   if (!isOwner && !isRecipient && !requireAdmin(c) && me.role !== 'satpam')
     return bad(c, 'forbidden', 403)
@@ -1812,14 +2348,14 @@ app.post('/api/alerts/:id/messages', auth, active, async (c) => {
   const body = (b.body ?? '').trim().slice(0, 1000)
   if (!body) return bad(c, 'errRequired')
 
-  const messages = (J(r.messages as string) ?? []) as unknown[]
+  const messages = secureArray<unknown>(r.messages)
   // Batasi agar satu utas tidak tumbuh tanpa henti.
   if (messages.length >= 500) messages.shift()
 
   const msg = { id: uid('im_'), from: me.id, body, at: now(), system: false }
   messages.push(msg)
   db.prepare('UPDATE reports SET messages=? WHERE id=?').run(
-    JSON.stringify(messages),
+    encryptSensitiveJson(messages),
     r.id,
   )
 
@@ -1827,7 +2363,7 @@ app.post('/api/alerts/:id/messages', auth, active, async (c) => {
    * Beri tahu peserta lain — pelapor dan para penanggap. Tanpa ini,
    * pesan hanya terlihat oleh yang kebetulan sedang membuka layarnya.
    */
-  const responders: string[] = J(r.responders as string) ?? []
+  const responders = secureArray<string>(r.responders)
   const tujuan = new Set<string>([r.author_id as string, ...responders])
   tujuan.delete(me.id)
   if (tujuan.size > 0)
@@ -1863,7 +2399,7 @@ app.post('/api/alerts/:id/attachments', auth, active, async (c) => {
   if (!sameCommunity(me, r.community_id as string)) return bad(c, 'forbidden', 403)
 
   const isOwner = r.author_id === me.id
-  const recipients = (J(r.recipients as string) ?? []) as { memberId: string | null }[]
+  const recipients = secureArray<{ memberId: string | null }>(r.recipients)
   const isRecipient = recipients.some((x) => x.memberId === me.id)
   if (!isOwner && !isRecipient && !requireAdmin(c) && me.role !== 'satpam')
     return bad(c, 'forbidden', 403)
@@ -1881,7 +2417,7 @@ app.post('/api/alerts/:id/attachments', auth, active, async (c) => {
   const bytes = Math.floor((m[2].length * 3) / 4)
   if (bytes > ATTACH_MAX_BYTES) return bad(c, 'errAttachTooBig')
 
-  const list = (J(r.attachments as string) ?? []) as unknown[]
+  const list = secureArray<unknown>(r.attachments)
   if (list.length >= ATTACH_MAX_COUNT) return bad(c, 'errAttachTooMany')
 
   const att = {
@@ -1894,7 +2430,7 @@ app.post('/api/alerts/:id/attachments', auth, active, async (c) => {
   }
   list.push(att)
   db.prepare('UPDATE reports SET attachments=? WHERE id=?').run(
-    JSON.stringify(list),
+    encryptSensitiveJson(list),
     r.id,
   )
   audit(r.community_id as string, me.id, 'alert.attach', String(bytes))
@@ -2226,6 +2762,141 @@ app.post('/api/contacts/:id/verify', auth, active, async (c) => {
   return c.json({ ok: true })
 })
 
+/* ================= buku tamu ================= */
+
+/** Buku tamu adalah data operasional satpam/admin, bukan cache seluruh warga. */
+function canManageGuestBook(me: MemberRow): boolean {
+  return me.role === 'admin' || me.role === 'satpam' || me.role === 'superadmin'
+}
+
+app.post('/api/guests', auth, active, async (c) => {
+  const me = c.get('me')
+  if (!me.community_id || !canManageGuestBook(me)) return bad(c, 'forbidden', 403)
+  const body = (await c.req.json().catch(() => ({}))) as {
+    name?: unknown
+    purpose?: unknown
+    host?: unknown
+    plate?: unknown
+    idCard?: unknown
+  }
+  const clean = (value: unknown, max: number) =>
+    typeof value === 'string' ? value.replaceAll('\u0000', '').trim().slice(0, max) : ''
+  const name = clean(body.name, 100)
+  if (!name) return bad(c, 'invalid_guest', 422)
+  const purpose = clean(body.purpose, 300)
+  const host = clean(body.host, 120)
+  const plate = clean(body.plate, 20).toUpperCase()
+  const idCard = clean(body.idCard, 80)
+  const id = uid('g_')
+  const at = now()
+  // Nomor identitas tidak pernah masuk response/cache perangkat. Simpan
+  // terenkripsi di produksi agar backup SQLite juga tidak memuat plaintext.
+  const protectedIdCard = idCard ? encryptSensitiveJson({ idCard }) : ''
+  db.prepare(
+    `INSERT INTO guests
+     (id,community_id,name,purpose,host,plate,id_card,check_in,recorded_by)
+     VALUES (?,?,?,?,?,?,?,?,?)`,
+  ).run(id, me.community_id, name, purpose, host, plate, protectedIdCard, at, me.id)
+  audit(me.community_id, me.id, 'guest.check_in', id)
+  publishCommunityEvent(me.community_id, 'guest.updated', id)
+  return c.json({ guest: { id, name, purpose, host, plate, checkIn: at } }, 201)
+})
+
+app.post('/api/guests/:id/checkout', auth, active, (c) => {
+  const me = c.get('me')
+  if (!me.community_id || !canManageGuestBook(me)) return bad(c, 'forbidden', 403)
+  const id = c.req.param('id') ?? ''
+  const at = now()
+  const updated = db
+    .prepare(
+      `UPDATE guests SET check_out=?
+       WHERE id=? AND community_id=? AND check_out IS NULL`,
+    )
+    .run(at, id, me.community_id)
+  if (updated.changes !== 1) return bad(c, 'guest_not_available', 409)
+  audit(me.community_id, me.id, 'guest.check_out', id)
+  publishCommunityEvent(me.community_id, 'guest.updated', id)
+  return c.json({ ok: true, checkOut: at })
+})
+
+/* ================= pengumuman bertarget ================= */
+
+const ANNOUNCEMENT_TARGETS = ['all', 'rw', 'rt', 'block'] as const
+
+app.post('/api/announcements', auth, active, async (c) => {
+  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
+  const me = c.get('me')
+  const body = (await c.req.json().catch(() => ({}))) as {
+    title?: unknown
+    body?: unknown
+    category?: unknown
+    targetScope?: unknown
+    targetValue?: unknown
+    pinned?: unknown
+  }
+  const title = typeof body.title === 'string' ? body.title.replaceAll('\u0000', '').trim().slice(0, 140) : ''
+  const text = typeof body.body === 'string' ? body.body.replaceAll('\u0000', '').trim().slice(0, 2_000) : ''
+  const category = typeof body.category === 'string' ? body.category.replaceAll('\u0000', '').trim().slice(0, 50) : ''
+  const targetScope = ANNOUNCEMENT_TARGETS.includes(body.targetScope as (typeof ANNOUNCEMENT_TARGETS)[number])
+    ? (body.targetScope as (typeof ANNOUNCEMENT_TARGETS)[number])
+    : 'all'
+  const targetValue = typeof body.targetValue === 'string'
+    ? body.targetValue.replaceAll('\u0000', '').trim().slice(0, 30)
+    : ''
+  if (!title || !category || (targetScope !== 'all' && !targetValue))
+    return bad(c, 'invalid_announcement', 422)
+
+  const id = uid('ann_')
+  db.prepare(
+    `INSERT INTO announcements
+     (id,community_id,author_id,title,body,category,target_scope,target_value,pinned,created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+  ).run(
+    id,
+    me.community_id,
+    me.id,
+    title,
+    text,
+    category,
+    targetScope,
+    targetValue,
+    body.pinned === true ? 1 : 0,
+    now(),
+  )
+
+  const activeMembers = db
+    .prepare("SELECT id FROM members WHERE community_id=? AND status='active' AND id<>?")
+    .all(me.community_id, me.id) as { id: string }[]
+  const recipients = activeMembers
+    .filter((member) => memberMatchesAudience(me.community_id!, member.id, targetScope, targetValue))
+    .map((member) => member.id)
+  audit(me.community_id, me.id, 'announcement.create', `${category} → ${targetScope}${targetValue ? `:${targetValue}` : ''}`)
+  // SSE membuat warga yang menjadi target membaca pengumuman tanpa polling.
+  // Warga di target lain juga menerima invalidasi kosong; /state menyaring
+  // ulang di server, sehingga isi pengumuman tidak pernah bocor.
+  publishCommunityEvent(me.community_id, 'community.hub.updated', id)
+  void pushToMembers(recipients, {
+    title,
+    body: text || category,
+    url: '#/app/feed',
+    tag: `ann-${id}`,
+  })
+  return c.json({ announcement: { id, title, body: text, category, targetScope, targetValue } }, 201)
+})
+
+app.delete('/api/announcements/:id', auth, active, (c) => {
+  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
+  const me = c.get('me')
+  const row = db
+    .prepare('SELECT id,community_id,title FROM announcements WHERE id=?')
+    .get(c.req.param('id')) as { id: string; community_id: string; title: string } | undefined
+  if (!row || !sameCommunity(me, row.community_id)) return bad(c, 'forbidden', 403)
+  db.prepare('DELETE FROM announcements WHERE id=? AND community_id=?').run(row.id, row.community_id)
+  audit(me.community_id, me.id, 'announcement.delete', row.id)
+  publishCommunityEvent(me.community_id, 'community.hub.updated', row.id)
+  return c.json({ ok: true })
+})
+
 /* ================= siaran ================= */
 
 app.post('/api/broadcasts', auth, active, async (c) => {
@@ -2336,13 +3007,9 @@ app.get('/api/dues', auth, active, (c) => {
   if (!me.community_id) return bad(c, 'errNoCommunity', 404)
   const canManage = canManageScope(me, 'dues')
   const invoices = listDuesInvoices(me.community_id, canManage ? undefined : me.id)
-  const members = canManage
-    ? (db
-        .prepare(
-          "SELECT id,name,house FROM members WHERE community_id=? AND status='active' AND role IN ('warga','satpam','admin') ORDER BY house,name",
-        )
-        .all(me.community_id) as { id: string; name: string; house: string }[])
-    : []
+  // Daftar penerima adalah kepala keluarga satu-per-alamat, bukan seluruh
+  // akun warga. Ini ditegakkan lagi ketika invoice dibuat di dues.ts.
+  const members = canManage ? listBillableHouseholdHeads(me.community_id) : []
   const names = new Map(members.map((member) => [member.id, member]))
 
   return c.json({
@@ -2417,7 +3084,7 @@ app.post('/api/dues/invoices/generate', auth, active, async (c) => {
     return c.json(result, 201)
   } catch (error) {
     const code = error instanceof Error ? error.message : 'errUnknown'
-    const status = code === 'invalid_member' ? 422 : 400
+    const status = code === 'invalid_member' || code === 'invalid_household_head' ? 422 : 400
     return bad(c, code, status)
   }
 })
@@ -2464,6 +3131,219 @@ app.post('/api/dues/:id/verify', auth, active, async (c) => {
   } catch (error) {
     return bad(c, error instanceof Error ? error.message : 'errUnknown', 409)
   }
+})
+
+/* ================= Community Hub — operasi & gotong royong ================= */
+
+/*
+ * Fase 3/4 memakai endpoint sendiri dan tabel sendiri, bukan `reports`.
+ * Semua endpoint tetap memakai `auth`, `active`, community_id dari token, dan
+ * pemeriksaan resource di server/community-hub.ts. Klien tidak pernah memilih
+ * tenant lewat body/query sehingga satu admin RW tidak dapat menyentuh RW lain.
+ */
+const hubCreateSchema = z
+  .object({
+    kind: z.enum(HUB_KINDS),
+    title: z.string().max(180),
+    body: z.string().max(2_200).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict()
+
+function hubFailure(c: Context, error: unknown) {
+  if (!(error instanceof HubError)) return bad(c, 'hub_unavailable', 500)
+  const status =
+    error.code === 'not_found'
+      ? 404
+      : error.code === 'forbidden' || error.code === 'tier_required'
+        ? 403
+        : error.code === 'invalid_hub_state'
+          ? 409
+          : 422
+  return bad(c, error.code, status)
+}
+
+app.get('/api/hub', auth, active, (c) => {
+  try {
+    return c.json(communityHubOverview(c.get('me')))
+  } catch (error) {
+    return hubFailure(c, error)
+  }
+})
+
+app.post('/api/hub/items', auth, active, async (c) => {
+  const me = c.get('me')
+  const parsed = hubCreateSchema.safeParse(await c.req.json().catch(() => ({})))
+  if (!parsed.success) return bad(c, 'invalid_hub_input', 422)
+  try {
+    const item = createHubItem(me, parsed.data)
+    // Jangan mencatat isi surat/aduan maupun nominal janji warga ke audit.
+    audit(me.community_id, me.id, `hub.${item.kind}.create`, item.id)
+    publishCommunityEvent(me.community_id, 'community.hub.updated', item.id)
+    return c.json({ item }, 201)
+  } catch (error) {
+    return hubFailure(c, error)
+  }
+})
+
+app.patch('/api/hub/items/:id', auth, active, async (c) => {
+  const me = c.get('me')
+  const body = (await c.req.json().catch(() => ({}))) as { status?: unknown; note?: unknown }
+  try {
+    const item = setHubItemStatus(me, c.req.param('id') ?? '', body.status, body.note)
+    audit(me.community_id, me.id, `hub.${item.kind}.status`, `${item.id} → ${item.status}`)
+    publishCommunityEvent(me.community_id, 'community.hub.updated', item.id)
+    return c.json({ item })
+  } catch (error) {
+    return hubFailure(c, error)
+  }
+})
+
+/** Admin memutuskan surat; PDF baru boleh diminta setelah APPROVED. */
+app.post('/api/hub/letters/:id/decision', auth, active, async (c) => {
+  const me = c.get('me')
+  const body = (await c.req.json().catch(() => ({}))) as {
+    approve?: unknown
+    note?: unknown
+    signerName?: unknown
+    signerTitle?: unknown
+  }
+  try {
+    const item = decideLetter(me, c.req.param('id') ?? '', body)
+    audit(me.community_id, me.id, body.approve === true ? 'letter.approve' : 'letter.reject', item.id)
+    publishCommunityEvent(me.community_id, 'community.hub.updated', item.id)
+    return c.json({ item })
+  } catch (error) {
+    return hubFailure(c, error)
+  }
+})
+
+app.get('/api/hub/letters/:id/pdf', auth, active, (c) => {
+  const me = c.get('me')
+  try {
+    const data = approvedLetterPdfData(me, c.req.param('id') ?? '')
+    const pdf = createLetterPdf(data)
+    audit(me.community_id, me.id, 'letter.pdf.download', data.number)
+    return c.body(new Uint8Array(pdf), 200, {
+      'Content-Type': 'application/pdf',
+      // Angka/ID dikendalikan server; jangan memantulkan judul input warga di header.
+      'Content-Disposition': `attachment; filename="surat-${String(data.number).replace(/[^A-Za-z0-9-]/g, '-')}.pdf"`,
+      'Cache-Control': 'private, no-store',
+    })
+  } catch (error) {
+    return hubFailure(c, error)
+  }
+})
+
+app.post('/api/hub/items/:id/actions', auth, active, async (c) => {
+  const me = c.get('me')
+  const body = (await c.req.json().catch(() => ({}))) as { action?: unknown; value?: unknown }
+  try {
+    const item = actOnHubItem(me, c.req.param('id') ?? '', body.action, body.value)
+    audit(me.community_id, me.id, `hub.${item.kind}.${String(body.action ?? 'action')}`, item.id)
+    publishCommunityEvent(me.community_id, 'community.hub.updated', item.id)
+    return c.json({ item })
+  } catch (error) {
+    return hubFailure(c, error)
+  }
+})
+
+app.post('/api/hub/items/:id/draw', auth, active, (c) => {
+  const me = c.get('me')
+  try {
+    const item = drawArisan(me, c.req.param('id') ?? '')
+    audit(me.community_id, me.id, 'hub.arisan.draw', item.id)
+    publishCommunityEvent(me.community_id, 'community.hub.updated', item.id)
+    return c.json({ item })
+  } catch (error) {
+    return hubFailure(c, error)
+  }
+})
+
+app.post('/api/hub/items/:id/comments', auth, active, async (c) => {
+  const me = c.get('me')
+  const body = (await c.req.json().catch(() => ({}))) as { body?: unknown }
+  try {
+    const item = addHubComment(me, c.req.param('id') ?? '', body.body)
+    audit(me.community_id, me.id, `hub.${item.kind}.comment`, item.id)
+    publishCommunityEvent(me.community_id, 'community.hub.updated', item.id)
+    return c.json({ item }, 201)
+  } catch (error) {
+    return hubFailure(c, error)
+  }
+})
+
+/** Analitik agregat saja—bukan rekam perilaku individu atau pelacak warga. */
+app.get('/api/hub/analytics', auth, active, (c) => {
+  try {
+    return c.json({ analytics: hubAnalytics(c.get('me')) })
+  } catch (error) {
+    return hubFailure(c, error)
+  }
+})
+
+app.get('/api/hub/branding', auth, active, (c) => {
+  try {
+    return c.json({ branding: getCommunityBranding(c.get('me')) })
+  } catch (error) {
+    return hubFailure(c, error)
+  }
+})
+
+app.put('/api/hub/branding', auth, active, async (c) => {
+  const me = c.get('me')
+  const body = (await c.req.json().catch(() => ({}))) as {
+    brandName?: unknown
+    accentColor?: unknown
+    logoUrl?: unknown
+    customDomain?: unknown
+    whiteLabelRequested?: unknown
+  }
+  try {
+    const branding = saveCommunityBranding(me, body)
+    audit(me.community_id, me.id, 'tenant.branding.update', branding.customDomain || 'default')
+    publishCommunityEvent(me.community_id, 'community.branding.updated', '')
+    return c.json({ branding })
+  } catch (error) {
+    return hubFailure(c, error)
+  }
+})
+
+app.post('/api/hub/branding/verify-domain', auth, active, async (c) => {
+  const me = c.get('me')
+  try {
+    const result = await verifyCommunityDomain(me)
+    audit(me.community_id, me.id, 'tenant.domain.verify', result.verified ? 'dns_verified' : 'pending')
+    publishCommunityEvent(me.community_id, 'community.branding.updated', '')
+    return c.json(result)
+  } catch (error) {
+    return hubFailure(c, error)
+  }
+})
+
+/*
+ * WJW Assistant membaca hanya data tenant yang diizinkan untuk peminta.
+ * Tidak ada snapshot tenant/SOS maupun teks pertanyaan yang dikirim keluar.
+ */
+app.post('/api/assistant', auth, active, async (c) => {
+  const me = c.get('me')
+  if (!hitRateLimit(`assistant:${me.id}`, alamatKlien(c.req.raw.headers), BATAS.assistant))
+    return bad(c, 'errTooManyAttempts', 429)
+  const body = (await c.req.json().catch(() => ({}))) as { question?: unknown }
+  try {
+    const answer = await answerAssistant(me, body.question)
+    return c.json(answer)
+  } catch (error) {
+    if (error instanceof Error && error.message === 'invalid_question')
+      return bad(c, 'invalid_assistant_question', 422)
+    return bad(c, 'assistant_unavailable', 503)
+  }
+})
+
+app.get('/api/assistant/history', auth, active, (c) => {
+  const me = c.get('me')
+  const requested = Number(c.req.query('limit') ?? 30)
+  return c.json({ entries: assistantHistory(me, requested) })
 })
 
 /* ================= push ================= */

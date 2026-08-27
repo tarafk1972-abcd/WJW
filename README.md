@@ -70,8 +70,12 @@ ujung-ke-ujung**, bukan menambah modul administrasi yang rapuh:
    (atau `CANCELLED` untuk alarm palsu). Perpindahan ilegal ditolak server.
 
 Lokasi presisi, snapshot medis, chat, foto, daftar penerima, dan timeline hanya
-masuk ke state pelapor atau penanggap berwenang. Snapshot SOS disimpan terenkripsi
-AES-256-GCM di produksi; seluruh perubahan juga dibatasi `community_id` di backend.
+masuk ke state pelapor atau penanggap berwenang. Dengan
+`WJW_DATA_ENCRYPTION_KEY`, snapshot serta blob SOS sensitif (foto/audio bukti,
+jejak lokasi, pesan, responders, dan daftar penerima) disimpan AES-256-GCM dan
+record lama yang valid dimigrasikan saat boot. Ini **bukan** klaim bahwa seluruh
+SQLite telah terenkripsi: koordinat operasional relasional masih memerlukan
+migrasi privasi khusus. Seluruh perubahan juga dibatasi `community_id` di backend.
 Real-time memakai SSE autentikasi-header sebagai jalur utama, bukan polling.
 
 > **Tidak ada integrasi polisi / layanan darurat.** WJW tidak menghubungi

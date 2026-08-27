@@ -15,11 +15,17 @@ beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'wjw-incident-'))
   process.env.WJW_DB = join(dir, 'test.sqlite')
   process.env.WJW_SUPERADMIN_PASSWORD = 'not-used-in-test'
+  // Jalankan kontrak SOS seperti produksi: seluruh artefak insiden harus
+  // terenkripsi di SQLite, bukan hanya snapshot medisnya.
+  process.env.WJW_DATA_ENCRYPTION_KEY = Buffer.alloc(32, 42).toString('base64url')
   process.env.WJW_NO_LISTEN = '1'
   app = (await import('./index.js')).app
 })
 
-afterAll(() => rmSync(dir, { recursive: true, force: true }))
+afterAll(() => {
+  rmSync(dir, { recursive: true, force: true })
+  delete process.env.WJW_DATA_ENCRYPTION_KEY
+})
 
 async function call(method: string, path: string, body?: unknown, token?: string) {
   const response = await app.fetch(
@@ -105,6 +111,41 @@ describe('lifecycle SOS', () => {
       .prepare("SELECT count(*) AS n FROM reports WHERE author_id=? AND idempotency_key=?")
       .get(a.id, key) as { n: number }
     expect(count.n).toBe(1)
+  })
+
+  it('menyimpan bukti dan seluruh artefak SOS terenkripsi, tetapi tetap membukanya untuk peserta yang berwenang', async () => {
+    const a = await admin()
+    const guard = await member(a.communityId, a.token, 'satpam')
+    const created = await raise(a.token, `encrypted-${Date.now()}-abcdef`)
+    const id = created.body.report.id as string
+    const evidence = 'data:image/png;base64,aGVsbG8='
+
+    expect((await call('POST', `/api/alerts/${id}/attachments`, { dataUrl: evidence }, a.token)).status).toBe(201)
+    expect((await call('POST', `/api/alerts/${id}/messages`, { body: 'Koordinasi rahasia di gerbang A' }, a.token)).status).toBe(201)
+    expect((await call('POST', `/api/alerts/${id}/location`, {
+      lat: -6.912345,
+      lng: 107.601234,
+      accuracy: 8,
+    }, a.token)).status).toBe(200)
+    expect((await call('POST', `/api/alerts/${id}/respond`, {}, guard.token)).status).toBe(200)
+
+    const { db } = await import('./db.js')
+    const raw = db
+      .prepare('SELECT attachments,messages,responders,track,recipients,snapshot FROM reports WHERE id=?')
+      .get(id) as Record<string, string>
+    for (const column of ['attachments', 'messages', 'responders', 'track', 'recipients', 'snapshot'] as const)
+      expect(raw[column]).toMatch(/^enc:v1:/)
+    // Regresi paling penting: data URL foto maupun isi pesan tidak boleh ada
+    // dalam plaintext SQLite/backup.
+    expect(raw.attachments).not.toContain(evidence)
+    expect(raw.messages).not.toContain('Koordinasi rahasia di gerbang A')
+    expect(raw.track).not.toContain('"lat"')
+
+    const state = await call('GET', '/api/state', undefined, a.token)
+    const report = state.body.reports.find((row: { id: string }) => row.id === id)
+    expect(report.attachments[0].dataUrl).toBe(evidence)
+    expect(report.messages[0].body).toBe('Koordinasi rahasia di gerbang A')
+    expect(report.responders).toContain(guard.id)
   })
 
   it('mencatat NEW → ACKNOWLEDGED → RESPONDING → ON_SITE → RESOLVED secara immutable', async () => {

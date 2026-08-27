@@ -18,7 +18,10 @@ export function apiMode(): boolean {
   return !!getToken()
 }
 
-let syncing: Promise<void> | null = null
+// Sinkronisasi digabung hanya untuk token yang sama. Jika pengguna berganti
+// akun cepat pada perangkat bersama, respons tenant lama tidak boleh menimpa
+// cache tenant baru atau membuat sync baru menunggu request lama.
+let syncing: { token: string; promise: Promise<void> } | null = null
 let lastError: string | null = null
 
 /**
@@ -63,14 +66,23 @@ interface StatePayload {
  * Aman dipanggil berulang; panggilan bersamaan digabung menjadi satu.
  */
 export function syncState(): Promise<void> {
-  if (!apiMode()) return Promise.resolve()
-  if (syncing) return syncing
+  const token = getToken()
+  if (!token) {
+    locationWanted = false
+    lastError = null
+    return Promise.resolve()
+  }
+  if (syncing?.token === token) return syncing.promise
 
-  syncing = (async () => {
+  let task!: Promise<void>
+  task = (async () => {
     try {
       const s = (await api.get('/state')) as StatePayload
-      const db = loadDB()
+      // Pengguna mungkin logout atau masuk ke tenant lain saat request lama
+      // berjalan. Jangan pernah tulis respons tersebut ke perangkat baru.
+      if (token !== getToken()) return
 
+      const db = loadDB()
       const next: DBShape = {
         ...db,
         communities: (s.communities ??
@@ -102,16 +114,18 @@ export function syncState(): Promise<void> {
       saveDB(next)
       lastError = null
     } catch (e) {
-      lastError = e instanceof ApiError ? e.code : 'errOffline'
+      // Jangan biarkan kegagalan token/request lama menyalakan indikator
+      // offline pada sesi yang sudah berganti.
+      if (token === getToken()) lastError = e instanceof ApiError ? e.code : 'errOffline'
       // Gagal sinkron tidak boleh menjatuhkan aplikasi — UI boleh membaca
       // cache terakhir. Jalur SOS sendiri tetap wajib menunggu konfirmasi API
       // dan akan berkata belum terkirim bila koneksi gagal.
     } finally {
-      syncing = null
+      if (syncing?.promise === task) syncing = null
     }
   })()
-
-  return syncing
+  syncing = { token, promise: task }
+  return task
 }
 
 /**

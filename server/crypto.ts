@@ -35,7 +35,7 @@ export function ensureSensitiveEncryptionConfigured(): void {
   const key = keyFromEnvironment()
   if (process.env.NODE_ENV === 'production' && !key) {
     throw new Error(
-      'WJW_DATA_ENCRYPTION_KEY wajib di produksi untuk melindungi profil darurat dan snapshot insiden.',
+      'WJW_DATA_ENCRYPTION_KEY wajib di produksi untuk melindungi profil darurat, snapshot/bukti/jejak/pesan SOS, nomor identitas tamu, dan riwayat Assistant.',
     )
   }
 }

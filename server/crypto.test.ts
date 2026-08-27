@@ -20,8 +20,11 @@ describe('enkripsi data sensitif', () => {
     expect(decryptSensitiveJson<typeof source>(encrypted)).toEqual(source)
   })
 
-  it('tetap membaca data plaintext lama untuk migrasi sekali jalan', () => {
-    delete process.env.WJW_DATA_ENCRYPTION_KEY
+  it('tetap membaca data plaintext lama ketika kunci migrasi sudah dikonfigurasi', () => {
+    // Deployment baru sudah memiliki key saat membaca backup/row lama yang
+    // belum sempat dibackfill; kompatibilitas ini mencegah insiden historis
+    // putus di tengah migrasi sekali jalan.
+    process.env.WJW_DATA_ENCRYPTION_KEY = randomBytes(32).toString('base64url')
     expect(decryptSensitiveJson<{ bloodType: string }>(JSON.stringify({ bloodType: 'O+' }))).toEqual({
       bloodType: 'O+',
     })
