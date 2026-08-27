@@ -43,16 +43,14 @@ Arena tidak diberi izin untuk memulai workflow.
 Tunggu sekitar 5–10 menit. Setelah selesai, buka jalannya workflow lalu
 unduh **wjw-apk** di bagian **Artifacts**.
 
-Berkas itu berisi `app-debug.apk` dan `BUILD-INFO.txt`. Periksa
-`BUILD-INFO.txt`: harus menyebut commit yang dipilih dan URL API HTTPS yang
-benar. Salin `app-debug.apk` ke HP, lalu pasang — Android akan meminta izin
-"Instal aplikasi tidak dikenal" satu kali.
+Berkas itu berisi `app-debug.apk`. Salin ke HP, lalu pasang — Android
+akan meminta izin "Instal aplikasi tidak dikenal" satu kali. Periksa penanda
+waktu build (`v…`) di halaman depan aplikasi untuk membedakan artifact baru
+dari APK lama.
 
-Setiap workflow memberi `versionCode` debug yang meningkat dan menampilkan
-commit pendek di penanda versi pada halaman depan aplikasi. Ini membuat APK
-lama mudah dibedakan dari build baru. Jika Android menolak pembaruan karena
-sertifikat debug berbeda, hapus **APK uji** lama terlebih dahulu lalu pasang
-yang baru; data lokal uji akan ikut terhapus.
+Jika Android menolak pemasangan pembaruan karena versionCode atau sertifikat
+debug berbeda, hapus **APK uji** lama terlebih dahulu lalu pasang yang baru;
+data lokal uji akan ikut terhapus.
 
 > **Ini APK "debug", bukan versi rilis.** Cukup untuk dipasang sendiri
 > dan diuji satpam, tetapi **tidak bisa** diunggah ke Play Store dan
@@ -75,8 +73,8 @@ Jangan memasukkan key apa pun. Teks diagonal `API KEY REQUIRED`, URL
 layer CARTO lama. Build dari cabang `arena/01a03e4e-wjw` memakai tile resmi
 OpenStreetMap, menampilkan atribusi OpenStreetMap, dan tidak memakai key
 penyedia peta. Buat artifact baru dari branch tersebut, lalu ganti APK uji
-lama. Periksa penanda versi di halaman depan: artifact baru juga membawa
-potongan commit sumbernya.
+lama. Periksa penanda waktu build di halaman depan untuk memastikan yang
+terpasang bukan lagi artifact lama.
 
 ---
 
