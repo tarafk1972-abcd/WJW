@@ -113,24 +113,6 @@ describe('Countdown jendela pembatalan', () => {
   })
 })
 
-describe('Countdown jendela pembatalan', () => {
-  it('tidak pernah mengirim setelah warga membatalkan dalam lima detik', async () => {
-    vi.useFakeTimers()
-    const onDone = vi.fn()
-    const onCancel = vi.fn()
-    render(wrap(<Countdown seconds={5} label="Darurat medis" onDone={onDone} onCancel={onCancel} />))
-
-    screen.getByRole('button', { name: /Batalkan/i }).dispatchEvent(
-      new MouseEvent('click', { bubbles: true }),
-    )
-    await vi.advanceTimersByTimeAsync(6000)
-
-    expect(onCancel).toHaveBeenCalledTimes(1)
-    expect(onDone).not.toHaveBeenCalled()
-    vi.useRealTimers()
-  })
-})
-
 describe('BigSOS one-button behaviour', () => {
   it('does not fire on a quick tap', async () => {
     const { BigSOS } = await import('../ui/BigSOS')
