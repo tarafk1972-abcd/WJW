@@ -40,7 +40,9 @@ COPY --from=build /app/build/server ./build/server
 EXPOSE 8080
 
 # Tidak membutuhkan curl/wget tambahan; Node 22 mempunyai fetch bawaan.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+# Samakan masa tunggu health container dengan Fly: migrasi SQLite lama yang
+# terenkripsi dapat membuat boot pertama lebih lama dari proses biasa.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:8080/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 CMD ["node", "build/server/index.js"]
