@@ -1,47 +1,112 @@
-# Phase 1 sengaja satu Machine: SQLite + broker SSE dalam-memori tidak boleh
-# diskalakan horizontal sebelum dimigrasikan ke PostgreSQL + Redis/NATS.
 app = "warga-jaga-warga-wjw"
-primary_region = "sin"
 kill_signal = "SIGTERM"
 kill_timeout = "30s"
+primary_region = "sin"
 
 [build]
-  dockerfile = "Dockerfile"
+dockerfile = "Dockerfile"
 
 [env]
-  NODE_ENV = "production"
-  PORT = "8080"
-  WJW_DB = "/data/wjw.sqlite"
-  # APK Capacitor dimuat dari https://localhost, lalu memanggil API Fly
-  # secara lintas-origin. Daftar eksplisit ini tidak membuka origin sembarang.
-  WJW_CORS_ORIGINS = "https://localhost,capacitor://localhost"
-  # Jadwal ronda di tenant Indonesia memakai WIB secara konsisten, bukan UTC
-  # dari host Fly. Konfigurasi zona per-tenant dapat ditambahkan saat ekspansi.
-  TZ = "Asia/Jakarta"
-
-[[mounts]]
-source = "wjw_data"
-destination = "/data"
+NODE_ENV = "production"
+PORT = "8080"
+TZ = "Asia/Jakarta"
+WJW_CORS_ORIGINS = "https://localhost,capacitor://localhost"
+WJW_DB = "/data/wjw.sqlite"
 
 [http_service]
-  internal_port = 8080
-  force_https = true
-  auto_stop_machines = "off"
-  auto_start_machines = true
-  min_machines_running = 1
-  processes = ["app"]
+auto_start_machines = true
+auto_stop_machines = false
+force_https = true
+internal_port = 8_080
+min_machines_running = 1
+processes = [ "app" ]
 
   [[http_service.checks]]
-    # Boot dapat mencakup migrasi SQLite terenkripsi pada volume historis.
-    # Beri proses waktu siap sebelum Fly menyimpulkan release baru gagal;
-    # setelah itu check tetap berjalan setiap 30 detik.
-    grace_period = "60s"
-    interval = "30s"
-    method = "GET"
-    timeout = "5s"
-    path = "/api/health"
+  grace_period = "20s"
+  interval = "30s"
+  method = "GET"
+  path = "/api/health"
+  timeout = "5s"
+
+[[mounts]]
+destination = "/data"
+source = "wjw_data"
 
 [[vm]]
-  memory = "512mb"
-  cpu_kind = "shared"
-  cpus = 1
+cpu_kind = "shared"
+cpus = 1
+memory = "512mb"app = "warga-jaga-warga-wjw"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+primary_region = "sin"
+
+[build]
+dockerfile = "Dockerfile"
+
+[env]
+NODE_ENV = "production"
+PORT = "8080"
+TZ = "Asia/Jakarta"
+WJW_CORS_ORIGINS = "https://localhost,capacitor://localhost"
+WJW_DB = "/data/wjw.sqlite"
+
+[http_service]
+auto_start_machines = true
+auto_stop_machines = false
+force_https = true
+internal_port = 8_080
+min_machines_running = 1
+processes = [ "app" ]
+
+  [[http_service.checks]]
+  grace_period = "20s"
+  interval = "30s"
+  method = "GET"
+  path = "/api/health"
+  timeout = "5s"
+
+[[mounts]]
+destination = "/data"
+source = "wjw_data"
+
+[[vm]]
+cpu_kind = "shared"
+cpus = 1
+memory = "512mb"app = "warga-jaga-warga-wjw"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+primary_region = "sin"
+
+[build]
+dockerfile = "Dockerfile"
+
+[env]
+NODE_ENV = "production"
+PORT = "8080"
+TZ = "Asia/Jakarta"
+WJW_CORS_ORIGINS = "https://localhost,capacitor://localhost"
+WJW_DB = "/data/wjw.sqlite"
+
+[http_service]
+auto_start_machines = true
+auto_stop_machines = false
+force_https = true
+internal_port = 8_080
+min_machines_running = 1
+processes = [ "app" ]
+
+  [[http_service.checks]]
+  grace_period = "20s"
+  interval = "30s"
+  method = "GET"
+  path = "/api/health"
+  timeout = "5s"
+
+[[mounts]]
+destination = "/data"
+source = "wjw_data"
+
+[[vm]]
+cpu_kind = "shared"
+cpus = 1
+memory = "512mb"
