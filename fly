@@ -1,0 +1,112 @@
+app = "warga-jaga-warga-wjw"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+primary_region = "sin"
+
+[build]
+dockerfile = "Dockerfile"
+
+[env]
+NODE_ENV = "production"
+PORT = "8080"
+TZ = "Asia/Jakarta"
+WJW_CORS_ORIGINS = "https://localhost,capacitor://localhost"
+WJW_DB = "/data/wjw.sqlite"
+
+[http_service]
+auto_start_machines = true
+auto_stop_machines = false
+force_https = true
+internal_port = 8_080
+min_machines_running = 1
+processes = [ "app" ]
+
+  [[http_service.checks]]
+  grace_period = "20s"
+  interval = "30s"
+  method = "GET"
+  path = "/api/health"
+  timeout = "5s"
+
+[[mounts]]
+destination = "/data"
+source = "wjw_data"
+
+[[vm]]
+cpu_kind = "shared"
+cpus = 1
+memory = "512mb"app = "warga-jaga-warga-wjw"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+primary_region = "sin"
+
+[build]
+dockerfile = "Dockerfile"
+
+[env]
+NODE_ENV = "production"
+PORT = "8080"
+TZ = "Asia/Jakarta"
+WJW_CORS_ORIGINS = "https://localhost,capacitor://localhost"
+WJW_DB = "/data/wjw.sqlite"
+
+[http_service]
+auto_start_machines = true
+auto_stop_machines = false
+force_https = true
+internal_port = 8_080
+min_machines_running = 1
+processes = [ "app" ]
+
+  [[http_service.checks]]
+  grace_period = "20s"
+  interval = "30s"
+  method = "GET"
+  path = "/api/health"
+  timeout = "5s"
+
+[[mounts]]
+destination = "/data"
+source = "wjw_data"
+
+[[vm]]
+cpu_kind = "shared"
+cpus = 1
+memory = "512mb"app = "warga-jaga-warga-wjw"
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+primary_region = "sin"
+
+[build]
+dockerfile = "Dockerfile"
+
+[env]
+NODE_ENV = "production"
+PORT = "8080"
+TZ = "Asia/Jakarta"
+WJW_CORS_ORIGINS = "https://localhost,capacitor://localhost"
+WJW_DB = "/data/wjw.sqlite"
+
+[http_service]
+auto_start_machines = true
+auto_stop_machines = false
+force_https = true
+internal_port = 8_080
+min_machines_running = 1
+processes = [ "app" ]
+
+  [[http_service.checks]]
+  grace_period = "20s"
+  interval = "30s"
+  method = "GET"
+  path = "/api/health"
+  timeout = "5s"
+
+[[mounts]]
+destination = "/data"
+source = "wjw_data"
+
+[[vm]]
+cpu_kind = "shared"
+cpus = 1
+memory = "512mb"

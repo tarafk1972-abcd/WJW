@@ -108,22 +108,46 @@ export function locationBlockedReason(): 'insecure' | 'unsupported' | null {
   return null
 }
 
-/** One-shot GPS fix. Resolves null instead of throwing. */
+/**
+ * One-shot GPS fix. Resolves null instead of throwing.
+ *
+ * Browser `timeout` biasanya dipatuhi, tetapi beberapa WebView pernah tidak
+ * memanggil callback saat GPS/permission macet. Timer kedua memastikan jalur
+ * SOS tetap lanjut ke server setelah batas waktu, dengan lokasi null bila
+ * perlu—alarm tidak boleh tertahan oleh sensor yang tidak responsif.
+ */
 export function getFix(
   timeout = 8000,
 ): Promise<{ lat: number; lng: number; accuracy: number | null } | null> {
   if (!navigator.geolocation) return Promise.resolve(null)
+  const requestedTimeout = Number.isFinite(timeout) ? Math.trunc(timeout) : 8000
+  const safeTimeout = Math.max(1, Math.min(requestedTimeout, 30_000))
   return new Promise((resolve) => {
-    navigator.geolocation.getCurrentPosition(
-      (p) =>
-        resolve({
-          lat: p.coords.latitude,
-          lng: p.coords.longitude,
-          accuracy: p.coords.accuracy ?? null,
-        }),
-      () => resolve(null),
-      { enableHighAccuracy: true, timeout, maximumAge: 0 },
-    )
+    let settled = false
+    let timer: number | undefined
+    const finish = (value: { lat: number; lng: number; accuracy: number | null } | null) => {
+      if (settled) return
+      settled = true
+      if (timer !== undefined) window.clearTimeout(timer)
+      resolve(value)
+    }
+    // Sedikit toleransi agar callback browser yang tepat di batas waktu tetap
+    // berkesempatan membawa koordinat, tanpa memperpanjang jalur SOS berarti.
+    timer = window.setTimeout(() => finish(null), safeTimeout + 100)
+    try {
+      navigator.geolocation.getCurrentPosition(
+        (p) =>
+          finish({
+            lat: p.coords.latitude,
+            lng: p.coords.longitude,
+            accuracy: p.coords.accuracy ?? null,
+          }),
+        () => finish(null),
+        { enableHighAccuracy: true, timeout: safeTimeout, maximumAge: 0 },
+      )
+    } catch {
+      finish(null)
+    }
   })
 }
 

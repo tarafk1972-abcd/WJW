@@ -5,7 +5,11 @@ import Admin from './pages/Admin'
 import AppShell from './pages/AppShell'
 import Billing from './pages/Billing'
 import Checkpoints from './pages/Checkpoints'
+import Dues from './pages/Dues'
 import ClusterQr from './pages/ClusterQr'
+import Community from './pages/Community'
+import Engagement from './pages/Engagement'
+import AssistantPage from './pages/Assistant'
 import PatrolCheck from './pages/PatrolCheck'
 import BroadcastPage from './pages/Broadcast'
 import EmergencyProfilePage from './pages/EmergencyProfile'
@@ -57,6 +61,10 @@ export default function App() {
               <Route path="admin" element={<Admin />} />
               <Route path="settings" element={<Settings />} />
               <Route path="billing" element={<Billing />} />
+              <Route path="dues" element={<Dues />} />
+              <Route path="community" element={<Community />} />
+              <Route path="engagement" element={<Engagement />} />
+              <Route path="assistant" element={<AssistantPage />} />
               <Route path="support" element={<Support />} />
               <Route path="broadcast" element={<BroadcastPage />} />
               <Route path="patrol-check" element={<PatrolCheck />} />

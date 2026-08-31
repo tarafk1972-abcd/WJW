@@ -1,0 +1,4110 @@
+diff --git a/.dockerignore b/.dockerignore
+index 0501d09..f85429a 100644
+--- a/.dockerignore
++++ b/.dockerignore
+@@ -1 +1,15 @@
++# Berkas yang tidak boleh atau tidak perlu masuk image.
++.git
++.github
++node_modules
++dist
++server-dist
++server/data
++docs
++*.md
++.env
++.env.example
+ fly.toml
++capacitor.config.json
++android
++ios
+diff --git a/.gitignore b/.gitignore
+index b412cc7..9747086 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -9,6 +9,7 @@ lerna-debug.log*
+ 
+ node_modules
+ dist
++server-dist
+ dist-ssr
+ *.local
+ 
+@@ -40,3 +41,7 @@ android/
+ 
+ # Sertifikat pengujian HTTPS lokal — jangan pernah di-commit
+ .cert/
++
++# Rahasia untuk pindah app Fly (scripts/pindah-app-fly.sh) — jangan pernah di-commit
++rahasia.env
++wjw-backup-*.sqlite
+diff --git a/Dockerfile b/Dockerfile
+index 46a5e4c..e27dc49 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1,3 +1,49 @@
+-FROM pierrezemb/gostatic
+-COPY . /srv/http/
+-CMD ["-port","8080","-https-promote", "-enable-logging"]
++# =============================================================
++# Image produksi WJW: satu wadah berisi API + tampilan web.
++#
++# Dibuat dua tahap supaya image akhir tidak memuat perkakas
++# pengembangan (vite, typescript, vitest) — hanya JavaScript siap
++# jalan dan dependensi produksi.
++# =============================================================
++
++# ---------- tahap 1: bangun ----------
++FROM node:22-slim AS build
++WORKDIR /app
++
++# Dependensi lebih dulu, agar lapisan ini ikut cache selama
++# package-lock.json tidak berubah.
++COPY package.json package-lock.json ./
++RUN npm ci
++
++COPY . .
++
++# Tampilan web → dist/ ; server TypeScript → server-dist/
++RUN npm run build && npm run build:server
++
++# ---------- tahap 2: jalankan ----------
++FROM node:22-slim
++WORKDIR /app
++
++ENV NODE_ENV=production
++ENV TZ=Asia/Jakarta
++# Basis data disimpan di volume Fly; lihat [[mounts]] pada fly.toml.
++ENV WJW_DB=/data/wjw.sqlite
++ENV PORT=8080
++
++# Hanya dependensi produksi. better-sqlite3 memakai berkas prebuilt
++# untuk linux-x64 (glibc), jadi tidak perlu kompilator di image ini.
++COPY package.json package-lock.json ./
++RUN npm ci --omit=dev && npm cache clean --force
++
++# Hasil bangunan dari tahap sebelumnya.
++COPY --from=build /app/server-dist ./server-dist
++COPY --from=build /app/dist ./dist
++# db.ts membaca schema.sql dari folder yang sama dengan modulnya.
++COPY --from=build /app/server/schema.sql ./server-dist/schema.sql
++
++# Jangan berjalan sebagai root.
++RUN mkdir -p /data && chown -R node:node /data /app
++USER node
++
++EXPOSE 8080
++CMD ["node", "server-dist/index.js"]
+diff --git a/README.md b/README.md
+index 8a5fb85..d3767b0 100644
+--- a/README.md
++++ b/README.md
+@@ -135,13 +135,14 @@ tetap bebas mengubahnya ke Warga / Satpam / Admin sebelum menerima.
+ | Setelah disetujui, tombol daftar diganti sapaan | `src/pages/Landing.tsx` — jika `deviceId` cocok dengan anggota berstatus aktif, tombol *Daftar* hilang dan muncul **“Apa kabar hari ini, &lt;nama&gt;?”**. |
+ | `tarafk1972@gmail.com` = superadmin | Akun dibuat otomatis (`ensureSuperadmin`). Login → **Konsol Superadmin**: pantau lingkungan & admin, verifikasi pembayaran, jawab tiket CS, catatan aktivitas. |
+ | Aplikasi berbayar, percobaan gratis 14 hari | `TRIAL_DAYS = 14`. Status langganan dihitung `planState()`; setelah habis muncul banner dan halaman **Langganan** (bulanan / tahunan), pembayaran diverifikasi superadmin. |
++| Iuran lingkungan ditagih admin ke warganya | Halaman **Iuran** (`src/pages/Dues.tsx`, API `server/dues.ts`). Yang ditagih adalah **rumah**, nominal ditentukan admin dan bisa berbeda per rumah. Uangnya masuk kas RT — aplikasi hanya mencatat. Lihat [docs/IURAN.md](docs/IURAN.md). |
+ 
+ ## Peran
+ 
+ - **Superadmin** — mengawasi semua lingkungan, verifikasi pembayaran, customer service.
+-- **Admin** — menyetujui anggota, menetapkan peran, menggambar area, pengumuman, langganan.
++- **Admin** — menyetujui anggota, menetapkan peran, menggambar area, pengumuman, langganan, menagih iuran lingkungan.
+ - **Satpam** — buku tamu, patroli berikut titik pantau, menangani laporan.
+-- **Warga** — tombol panik, lapor kejadian, lihat peta & pengumuman.
++- **Warga** — tombol panik, lapor kejadian, lihat peta & pengumuman, membayar iuran.
+ 
+ ## Fitur
+ 
+diff --git a/docs/IURAN.md b/docs/IURAN.md
+new file mode 100644
+index 0000000..230f276
+--- /dev/null
++++ b/docs/IURAN.md
+@@ -0,0 +1,105 @@
++# Iuran lingkungan
++
++Panduan singkat untuk pengurus RT/RW.
++
++Iuran ini **berbeda** dengan menu *Langganan*:
++
++| | Langganan | Iuran lingkungan |
++| --- | --- | --- |
++| Siapa menagih | Pemilik aplikasi (superadmin) | Admin RT/RW |
++| Siapa membayar | Admin RT/RW | Warga, per rumah |
++| Uangnya ke mana | Pemilik aplikasi | Kas lingkungan |
++| Nominal | Tetap (Rp149.000/bln) | **Ditentukan admin** |
++
++Aplikasi tidak pernah menerima atau meneruskan uang iuran. Yang dicatat hanya
++siapa sudah bayar dan siapa belum — semacam buku kas digital.
++
++## Yang ditagih adalah rumah, bukan orang
++
++Satu rumah bisa punya beberapa akun (suami, istri, anak yang sudah punya HP).
++Semuanya melihat **tagihan yang sama** dan siapa pun boleh membayarnya, jadi
++tidak ada tagihan dobel dalam satu rumah.
++
++Karena itu, target yang wajar: **minimal satu HP per rumah**. Rumah yang belum
++memasang aplikasi tetap bisa didata dan ditagih — hanya saja tagihannya harus
++disampaikan secara lisan oleh pengurus, dan pelunasannya dicatat manual oleh
++admin. Di halaman Iuran, rumah seperti itu diberi tanda **“Belum pasang
++aplikasi”**, lengkap dengan hitungannya di bagian atas, supaya pengurus tahu
++sisa rumah yang perlu diajak.
++
++## Langkah pertama kali
++
++1. Buka **Pengaturan → Iuran lingkungan** (atau pintasan **Iuran** di beranda).
++2. Tab **Pengaturan iuran**:
++   - *Nominal per rumah* — mis. `50000`.
++   - *Jatuh tempo tiap tanggal* — 1–28 (dibatasi 28 agar valid di Februari).
++   - *Cara bayar* — teks bebas, mis. `Tunai ke Pak RT / transfer BCA 123456 a.n. Bendahara`.
++     Teks ini yang dibaca warga di tagihannya.
++   - *Buat tagihan otomatis tiap bulan* — nyalakan bila iuran rutin.
++3. Tab **Daftar rumah** → **Ambil dari data warga**. Nomor rumah yang sudah
++   diisi warga saat mendaftar langsung menjadi daftar rumah. Tambahkan sisanya
++   secara manual lewat **Tambah rumah**.
++
++## Menagih
++
++- **Tagihan bulan ini** — satu tombol, semua rumah aktif ditagih sesuai
++  nominalnya. Satu periode hanya boleh sekali; percobaan kedua ditolak
++  (`billExists`), jadi tidak ada tagihan dobel walau tombol tertekan dua kali.
++- **Iuran khusus** — untuk kerja bakti, HUT RI, perbaikan portal. Isi judul dan
++  nominal sendiri; boleh berkali-kali dalam satu bulan.
++- Warga yang sudah memasang aplikasi menerima notifikasi begitu tagihan dibuat.
++
++### Nominal berbeda per rumah
++
++Buka rumahnya di tab **Daftar rumah**, isi *Nominal khusus*. Kosongkan untuk
++kembali mengikuti nominal bawaan. Berguna untuk keringanan, rumah kos, atau
++ruko.
++
++Rumah yang sedang kosong: matikan lewat tombol **Tidak ditagih** — datanya tetap
++ada, tetapi tidak ikut ditagih. (Hapus rumah hanya bila memang ingin membuang
++riwayat tagihannya.)
++
++## Melunasi
++
++Dua jalur, keduanya berakhir di tangan admin:
++
++1. **Tunai** — warga bayar ke pengurus, admin menekan tombol centang di baris
++   rumah tersebut. Status langsung **Lunas**.
++2. **Transfer/QRIS** — warga menekan **“Saya sudah bayar”** di HP-nya. Status
++   menjadi **Menunggu verifikasi** dan admin menerima notifikasi. Setelah
++   mutasi dicek, admin menekan centang untuk mengesahkan, atau **Tolak** dengan
++   alasan (tagihan kembali ke *Belum bayar*).
++
++Uang yang masih *menunggu verifikasi* **tidak** dihitung sebagai terkumpul.
++Angka “Terkumpul” hanya berisi yang sudah benar-benar disahkan pengurus.
++
++**Bebaskan** dipakai bila satu rumah dibebaskan dari satu tagihan tertentu
++(mis. sedang kena musibah). Rumah itu tidak dihitung sebagai tunggakan.
++
++## Catatan teknis
++
++- Tabel: `dues_settings`, `houses`, `dues_bills`, `dues_charges`
++  (`server/schema.sql`). Terpisah penuh dari tabel `invoices` milik langganan.
++- Logika: `server/dues.ts`; hitungan murni (periode, jatuh tempo, rekap) di
++  `server/dues-calc.ts` agar bisa diuji tanpa basis data.
++- Periode memakai **WIB**, bukan UTC — tagihan yang dibuat 1 September pukul
++  00.30 WIB tetap masuk periode September.
++- Tagihan bulanan otomatis ikut penjadwal yang sudah ada
++  (`startRenewalScheduler`, tiap 6 jam) dan menolak duplikat lewat indeks unik
++  `(community_id, period)`.
++- Iuran **membutuhkan server**. Dalam mode luring, halaman Iuran menampilkan
++  keterangan bahwa fitur ini perlu sambungan — berbeda dengan fitur lain yang
++  punya salinan lokal.
++
++## Batas kewenangan
++
++| Aksi | Warga | Satpam | Admin |
++| --- | --- | --- | --- |
++| Melihat tagihan rumah sendiri | ✅ | ✅ | ✅ |
++| Melihat daftar rumah & tagihan tetangga | ❌ | ❌ | ✅ |
++| Menyatakan “saya sudah bayar” | ✅ (rumah sendiri) | ✅ | ✅ |
++| Membuat tagihan / mengubah nominal | ❌ | ❌ | ✅ |
++| Menandai lunas, menolak, membebaskan | ❌ | ❌ | ✅ |
++
++Semua batasan ini ditegakkan di server (`server/index.ts`, blok *iuran
++lingkungan*), bukan sekadar disembunyikan di tampilan.
+diff --git a/fly.toml b/fly.toml
+index c6be328..a2608dc 100644
+--- a/fly.toml
++++ b/fly.toml
+@@ -1,4 +1,4 @@
+-app = "warga-jaga-warga-wjw"
++app = "wjw-app"
+ kill_signal = "SIGTERM"
+ kill_timeout = "30s"
+ primary_region = "sin"
+@@ -17,81 +17,7 @@ WJW_DB = "/data/wjw.sqlite"
+ auto_start_machines = true
+ auto_stop_machines = false
+ force_https = true
+-internal_port = 8_080
+-min_machines_running = 1
+-processes = [ "app" ]
+-
+-  [[http_service.checks]]
+-  grace_period = "20s"
+-  interval = "30s"
+-  method = "GET"
+-  path = "/api/health"
+-  timeout = "5s"
+-
+-[[mounts]]
+-destination = "/data"
+-source = "wjw_data"
+-
+-[[vm]]
+-cpu_kind = "shared"
+-cpus = 1
+-memory = "512mb"app = "warga-jaga-warga-wjw"
+-kill_signal = "SIGTERM"
+-kill_timeout = "30s"
+-primary_region = "sin"
+-
+-[build]
+-dockerfile = "Dockerfile"
+-
+-[env]
+-NODE_ENV = "production"
+-PORT = "8080"
+-TZ = "Asia/Jakarta"
+-WJW_CORS_ORIGINS = "https://localhost,capacitor://localhost"
+-WJW_DB = "/data/wjw.sqlite"
+-
+-[http_service]
+-auto_start_machines = true
+-auto_stop_machines = false
+-force_https = true
+-internal_port = 8_080
+-min_machines_running = 1
+-processes = [ "app" ]
+-
+-  [[http_service.checks]]
+-  grace_period = "20s"
+-  interval = "30s"
+-  method = "GET"
+-  path = "/api/health"
+-  timeout = "5s"
+-
+-[[mounts]]
+-destination = "/data"
+-source = "wjw_data"
+-
+-[[vm]]
+-cpu_kind = "shared"
+-cpus = 1
+-memory = "512mb"app = "warga-jaga-warga-wjw"
+-kill_signal = "SIGTERM"
+-kill_timeout = "30s"
+-primary_region = "sin"
+-
+-[build]
+-dockerfile = "Dockerfile"
+-
+-[env]
+-NODE_ENV = "production"
+-PORT = "8080"
+-TZ = "Asia/Jakarta"
+-WJW_CORS_ORIGINS = "https://localhost,capacitor://localhost"
+-WJW_DB = "/data/wjw.sqlite"
+-
+-[http_service]
+-auto_start_machines = true
+-auto_stop_machines = false
+-force_https = true
+-internal_port = 8_080
++internal_port = 8080
+ min_machines_running = 1
+ processes = [ "app" ]
+ 
+diff --git a/package.json b/package.json
+index 0ad61a1..4c5c617 100644
+--- a/package.json
++++ b/package.json
+@@ -6,6 +6,7 @@
+   "scripts": {
+     "dev": "vite",
+     "build": "tsc -b && vite build",
++    "build:server": "tsc -p server/tsconfig.build.json",
+     "preview": "vite preview",
+     "lint": "oxlint",
+     "test": "vitest run",
+diff --git a/scripts/ambil-rahasia-fly.sh b/scripts/ambil-rahasia-fly.sh
+new file mode 100755
+index 0000000..178dad4
+--- /dev/null
++++ b/scripts/ambil-rahasia-fly.sh
+@@ -0,0 +1,88 @@
++#!/usr/bin/env bash
++#
++# Mengambil nilai rahasia dari app Fly yang sedang berjalan, lalu menuliskannya
++# ke rahasia.env.
++#
++# Kenapa perlu: Fly TIDAK BISA menampilkan kembali nilai rahasia. `fly secrets
++# list` hanya memperlihatkan sidik jarinya, bukan isinya. Tapi rahasia itu
++# disuntikkan sebagai variabel lingkungan ke dalam mesin yang berjalan, jadi
++# kita bisa membacanya dari dalam.
++#
++# Pakai:  bash scripts/ambil-rahasia-fly.sh
++#
++set -euo pipefail
++
++LAMA="${LAMA:-warga-jaga-warga-wjw}"
++KELUARAN="${KELUARAN:-rahasia.env}"
++
++# Yang perlu ikut pindah. TZ / WJW_DB / PORT / NODE_ENV sengaja TIDAK diambil —
++# semuanya sudah ditulis di fly.toml dan Dockerfile. WJW_APP_URL juga tidak,
++# karena harus berubah mengikuti alamat baru.
++NAMA=(
++  WJW_SUPERADMIN_PASSWORD
++  VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY VAPID_SUBJECT
++  SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS MAIL_FROM MAIL_REPLY_TO
++  WJW_QRIS_NAME WJW_QRIS_PHONE WJW_QRIS_IMAGE_URL WJW_PAYMENT_INFO
++  WJW_PRICE_MONTHLY WJW_PRICE_YEARLY WJW_INVOICE_DAYS
++  WJW_RATE_LOGIN_MAX WJW_RATE_REGISTER_MAX
++)
++
++merah() { printf '\033[31m%s\033[0m\n' "$*"; }
++hijau() { printf '\033[32m%s\033[0m\n' "$*"; }
++kuning() { printf '\033[33m%s\033[0m\n' "$*"; }
++
++command -v fly >/dev/null 2>&1 || { merah "flyctl belum terpasang."; exit 1; }
++fly auth whoami >/dev/null 2>&1 || { merah "belum login. Jalankan: fly auth login"; exit 1; }
++
++if [ -e "$KELUARAN" ]; then
++  merah "$KELUARAN sudah ada. Pindahkan atau hapus dulu supaya tidak tertimpa."
++  exit 1
++fi
++
++echo "Membaca variabel lingkungan dari mesin $LAMA ..."
++MENTAH=$(mktemp)
++trap 'rm -f "$MENTAH"' EXIT
++
++# printenv dijalankan di dalam mesin; satu sambungan untuk semua nilai.
++fly ssh console -a "$LAMA" -C "printenv" >"$MENTAH" 2>/dev/null || {
++  merah "gagal menyambung ke mesin. Pastikan app $LAMA sedang menyala:"
++  merah "  fly scale count 1 -a $LAMA"
++  exit 1
++}
++
++# Berkas rahasia harus lahir tertutup, bukan ditutup belakangan.
++umask 077
++: >"$KELUARAN"
++
++ADA=0
++HILANG=()
++for n in "${NAMA[@]}"; do
++  baris=$(grep -m1 "^$n=" "$MENTAH" || true)
++  if [ -n "$baris" ] && [ "$baris" != "$n=" ]; then
++    printf '%s\n' "$baris" >>"$KELUARAN"
++    ADA=$((ADA + 1))
++  else
++    HILANG+=("$n")
++  fi
++done
++
++hijau "$ADA nilai tersimpan ke $KELUARAN (hak akses 600)"
++
++if [ ${#HILANG[@]} -gt 0 ]; then
++  kuning "Tidak diset di app lama (wajar kalau memang belum dipakai):"
++  printf '  - %s\n' "${HILANG[@]}"
++fi
++
++if ! grep -q '^VAPID_PRIVATE_KEY=' "$KELUARAN"; then
++  merah ""
++  merah "PENTING: VAPID_PRIVATE_KEY tidak ketemu."
++  merah "Tanpa itu notifikasi push mati untuk semua warga setelah pindah."
++  merah "Jangan lanjut ke pindah-app-fly.sh sebelum ini beres."
++  exit 1
++fi
++
++echo
++kuning "Periksa isinya sebentar, lalu lanjut:"
++kuning "  bash scripts/pindah-app-fly.sh"
++kuning ""
++kuning "Jangan pernah commit atau kirim $KELUARAN lewat WhatsApp/email."
+diff --git a/scripts/pindah-app-fly.sh b/scripts/pindah-app-fly.sh
+new file mode 100755
+index 0000000..4226fa3
+--- /dev/null
++++ b/scripts/pindah-app-fly.sh
+@@ -0,0 +1,275 @@
++#!/usr/bin/env bash
++#
++# Pindah aplikasi WJW ke nama app Fly yang baru — dua fase.
++#
++# Fly.io tidak bisa mengganti nama app, jadi ini "pindah rumah".
++#
++#   Fase 1 (coba)   : app baru dibuat & di-deploy dengan basis data KOSONG.
++#                     App lama tetap melayani warga. Tanpa risiko sama sekali.
++#                     Di sini ketahuan apakah Dockerfile & kode baru benar.
++#
++#   Fase 2 (pindah) : basis data asli disalin ke app baru. App lama dimatikan.
++#                     Aplikasi mati sekitar 5-15 menit. App lama TIDAK dihapus.
++#
++# Pakai:
++#   bash scripts/pindah-app-fly.sh coba
++#   bash scripts/pindah-app-fly.sh pindah
++#
++set -euo pipefail
++
++LAMA="${LAMA:-warga-jaga-warga-wjw}"
++BARU="${BARU:-wjw-app}"
++REGION="${REGION:-sin}"
++VOLUME="${VOLUME:-wjw_data}"
++UKURAN_GB="${UKURAN_GB:-1}"
++RAHASIA="${RAHASIA:-rahasia.env}"
++DB="/data/wjw.sqlite"
++
++merah() { printf '\033[31m%s\033[0m\n' "$*"; }
++hijau() { printf '\033[32m%s\033[0m\n' "$*"; }
++kuning() { printf '\033[33m%s\033[0m\n' "$*"; }
++judul() { printf '\n\033[1m== %s ==\033[0m\n' "$*"; }
++
++batal() {
++  merah ""
++  merah "BERHENTI: $*"
++  kuning ""
++  kuning "App lama ($LAMA) tidak dihapus. Kalau layanan sedang mati,"
++  kuning "kembalikan sekarang juga:"
++  kuning "    fly scale count 1 -a $LAMA"
++  exit 1
++}
++
++tanya() {
++  local jawab
++  read -r -p "$1 [ketik YA]: " jawab
++  [ "$jawab" = "YA" ] || batal "dibatalkan pengguna"
++}
++
++sehat() { # $1 = url ; menunggu sampai /api/health menjawab
++  local i
++  for i in $(seq 1 36); do
++    if curl -sf -m 10 "$1/api/health" >/tmp/wjw-health.json 2>/dev/null; then
++      grep -q '"ok":true' /tmp/wjw-health.json && return 0
++    fi
++    printf '.'
++    sleep 5
++  done
++  echo
++  return 1
++}
++
++dasar() {
++  command -v fly >/dev/null 2>&1 || batal "flyctl belum terpasang — https://fly.io/docs/flyctl/install/"
++  fly auth whoami >/dev/null 2>&1 || batal "belum login. Jalankan: fly auth login"
++  [ -f fly.toml ] || batal "jalankan dari folder utama repo WJW (tempat fly.toml berada)"
++  grep -q "^app = \"$BARU\"" fly.toml || batal "fly.toml belum menunjuk '$BARU'"
++}
++
++# =============================================================== FASE 1: COBA
++
++fase_coba() {
++  judul "Fase 1 — mendirikan app baru (app lama tidak disentuh)"
++  dasar
++  hijau "flyctl siap, masuk sebagai $(fly auth whoami)"
++
++  if fly status -a "$BARU" >/dev/null 2>&1; then
++    kuning "app '$BARU' sudah ada — melanjutkan deploy ulang saja"
++  else
++    fly apps create "$BARU" || batal "gagal membuat app $BARU (nama mungkin sudah dipakai orang lain)"
++    hijau "app $BARU dibuat"
++  fi
++
++  if fly volumes list -a "$BARU" 2>/dev/null | grep -q "$VOLUME"; then
++    kuning "volume $VOLUME sudah ada"
++  else
++    fly volumes create "$VOLUME" --size "$UKURAN_GB" --region "$REGION" -a "$BARU" --yes ||
++      batal "gagal membuat volume"
++    hijau "volume $VOLUME dibuat ($UKURAN_GB GB, $REGION)"
++  fi
++
++  judul "Deploy"
++  fly deploy -a "$BARU" || batal "deploy gagal. App lama masih melayani warga seperti biasa — tidak ada yang rusak."
++
++  judul "Memeriksa"
++  sehat "https://$BARU.fly.dev" || batal "app baru tidak menjawab. Lihat sebabnya: fly logs -a $BARU"
++  echo
++  hijau "health: $(cat /tmp/wjw-health.json)"
++  curl -sf -m 10 -o /dev/null "https://$BARU.fly.dev/" || batal "halaman utama tidak terbuka"
++  hijau "halaman utama terbuka"
++
++  judul "Fase 1 selesai"
++  cat <<PESAN
++
++App baru hidup di  https://$BARU.fly.dev  dengan basis data KOSONG.
++App lama masih melayani warga seperti biasa.
++
++Sekarang buka alamat baru itu di HP, lalu coba:
++  [ ] halaman terbuka, tampilan benar
++  [ ] daftar akun uji, lalu login
++  [ ] kirim satu laporan uji
++  [ ] buka menu Iuran lingkungan
++
++Ini semua data buangan — akan tertimpa habis di fase 2.
++
++Kalau ada yang rusak, tidak perlu panik: warga tidak terpengaruh.
++Perbaiki, lalu jalankan ulang perintah yang sama.
++
++Kalau semuanya benar, siapkan rahasianya:
++    bash scripts/ambil-rahasia-fly.sh
++lalu pindahkan datanya:
++    bash scripts/pindah-app-fly.sh pindah
++PESAN
++}
++
++# ============================================================= FASE 2: PINDAH
++
++fase_pindah() {
++  judul "Fase 2 — memindahkan basis data"
++  dasar
++
++  fly status -a "$LAMA" >/dev/null 2>&1 || batal "app lama '$LAMA' tidak ditemukan"
++  fly status -a "$BARU" >/dev/null 2>&1 || batal "app baru belum ada. Jalankan dulu: bash $0 coba"
++
++  [ -f "$RAHASIA" ] || batal "berkas '$RAHASIA' tidak ada. Jalankan dulu: bash scripts/ambil-rahasia-fly.sh"
++  grep -q '^VAPID_PRIVATE_KEY=' "$RAHASIA" ||
++    batal "VAPID_PRIVATE_KEY tidak ada di $RAHASIA — tanpa itu notifikasi darurat mati untuk SEMUA warga"
++  hijau "rahasia siap: $(grep -c '=' "$RAHASIA") nilai"
++
++  kuning ""
++  kuning "Mulai detik ini aplikasi akan MATI untuk semua warga, 5-15 menit."
++  kuning "Pastikan sudah jam sepi dan pengumuman sudah disebar."
++  tanya "Mulai pemindahan?"
++
++  # ---- cadangan ----------------------------------------------------------
++  judul "1/5 Mencadangkan basis data lama"
++  CADANGAN="wjw-backup-$(date +%Y%m%d-%H%M%S).sqlite"
++
++  # .backup menghasilkan satu berkas utuh walau basis data sedang dipakai.
++  # Mesin harus MENYALA untuk ini — ssh dan sftp tidak bisa ke mesin mati.
++  if fly ssh console -a "$LAMA" -C "sqlite3 $DB '.backup /data/_pindah.sqlite'" >/dev/null 2>&1; then
++    hijau "snapshot dibuat dengan sqlite3 .backup"
++    fly sftp get /data/_pindah.sqlite "$CADANGAN" -a "$LAMA" || batal "gagal mengunduh cadangan"
++    fly ssh console -a "$LAMA" -C "rm -f /data/_pindah.sqlite" >/dev/null 2>&1 || true
++  else
++    kuning "sqlite3 tidak ada di dalam image lama — menyalin berkas mentah"
++    kuning "(termasuk -wal, supaya transaksi terakhir tidak hilang)"
++    fly sftp get "$DB" "$CADANGAN" -a "$LAMA" || batal "gagal mengunduh basis data"
++    fly sftp get "$DB-wal" "$CADANGAN-wal" -a "$LAMA" 2>/dev/null || kuning "tidak ada -wal (wajar)"
++  fi
++
++  [ -s "$CADANGAN" ] || batal "berkas cadangan kosong"
++  UKURAN=$(wc -c <"$CADANGAN")
++  [ "$UKURAN" -gt 4096 ] || batal "cadangan cuma $UKURAN byte — terlalu kecil, jangan diteruskan"
++
++  if command -v sqlite3 >/dev/null 2>&1; then
++    HASIL=$(sqlite3 "$CADANGAN" 'PRAGMA integrity_check;' 2>&1 || echo gagal)
++    [ "$HASIL" = "ok" ] || batal "cadangan rusak (integrity_check: $HASIL)"
++    hijau "integrity_check: ok"
++    echo "  Isi cadangan — catat angkanya, nanti dibandingkan:"
++    for t in members reports communities dues_charges; do
++      J=$(sqlite3 "$CADANGAN" "SELECT COUNT(*) FROM $t;" 2>/dev/null || echo "-")
++      printf '    %-16s %s\n' "$t" "$J"
++    done
++  else
++    kuning "sqlite3 tidak ada di komputer ini — isi cadangan tidak bisa diperiksa di sini"
++  fi
++  hijau "cadangan: $CADANGAN ($UKURAN byte)"
++
++  # ---- matikan app lama --------------------------------------------------
++  judul "2/5 Mematikan app lama"
++  fly scale count 0 -a "$LAMA" --yes || batal "gagal mematikan app lama"
++  hijau "$LAMA berhenti — tidak ada lagi data baru masuk ke sana"
++
++  # ---- unggah ------------------------------------------------------------
++  judul "3/5 Mengunggah basis data ke app baru"
++
++  # Mesin baru sengaja DIBIARKAN MENYALA: sftp mustahil ke mesin yang mati.
++  # Berkas diunggah ke nama sementara, lalu ditukar dari dalam mesin.
++  printf 'put %s /data/_masuk.sqlite\n' "$CADANGAN" | fly sftp shell -a "$BARU" ||
++    batal "gagal mengunggah basis data"
++  if [ -f "$CADANGAN-wal" ]; then
++    printf 'put %s /data/_masuk.sqlite-wal\n' "$CADANGAN-wal" | fly sftp shell -a "$BARU" || true
++  fi
++
++  # -wal dan -shm sisa uji coba WAJIB dibuang. Kalau tertinggal, SQLite akan
++  # memutar ulang isinya ke atas basis data baru dan merusaknya.
++  fly ssh console -a "$BARU" -C \
++    "sh -c 'rm -f $DB $DB-wal $DB-shm && mv /data/_masuk.sqlite $DB && if [ -f /data/_masuk.sqlite-wal ]; then mv /data/_masuk.sqlite-wal $DB-wal; fi'" ||
++    batal "gagal memasang basis data di mesin baru"
++  hijau "basis data terpasang, sisa uji coba dihapus"
++
++  # ---- rahasia -----------------------------------------------------------
++  judul "4/5 Memasang rahasia"
++  ARGS=()
++  while IFS= read -r baris; do
++    case "$baris" in '' | \#*) continue ;; esac
++    ARGS+=("$baris")
++  done <"$RAHASIA"
++  ARGS+=("WJW_APP_URL=https://$BARU.fly.dev")
++
++  # Sekali jalan supaya mesin hanya sekali restart — restart inilah yang
++  # membuat server membuka berkas basis data yang baru.
++  fly secrets set -a "$BARU" "${ARGS[@]}" || batal "gagal memasang rahasia"
++  hijau "${#ARGS[@]} rahasia terpasang, mesin restart"
++
++  sleep 10
++  fly apps restart "$BARU" >/dev/null 2>&1 || true
++
++  # ---- verifikasi --------------------------------------------------------
++  judul "5/5 Memeriksa"
++  URL="https://$BARU.fly.dev"
++  sehat "$URL" || batal "app baru tidak sehat. Lihat: fly logs -a $BARU"
++  echo
++  hijau "health: $(cat /tmp/wjw-health.json)"
++
++  if grep -q '"push":true' /tmp/wjw-health.json; then
++    hijau "notifikasi push: aktif"
++  else
++    merah "PERINGATAN: push=false — kunci VAPID tidak terbaca."
++    merah "Tombol panik TIDAK akan membangunkan siapa pun. Periksa VAPID di $RAHASIA."
++  fi
++
++  curl -sf -m 10 -o /dev/null "$URL/" || batal "halaman utama tidak terbuka"
++  hijau "halaman utama terbuka"
++
++  judul "Pindahan selesai — pemeriksaan terakhir ada di tangan Anda"
++  cat <<PESAN
++
++Alamat baru : $URL
++Cadangan    : $CADANGAN   (simpan, jangan dihapus)
++App lama    : $LAMA — berhenti, tapi masih utuh
++
++Buka alamat baru di peramban dan pastikan sendiri:
++  [ ] login superadmin berhasil
++  [ ] jumlah warga sama dengan angka yang dicatat di langkah 1
++  [ ] laporan lama masih ada
++  [ ] riwayat iuran & langganan masih ada
++  [ ] tombol panik dari HP uji benar-benar memunculkan notifikasi
++
++Ada yang salah? Kembalikan layanan lama dalam satu perintah:
++    fly scale count 1 -a $LAMA
++(app lama masih memegang seluruh data sampai detik pemadaman tadi)
++
++Semuanya benar? Beri jeda beberapa hari, baru:
++    fly apps destroy $LAMA
++
++Setelah itu: warga memasang ulang aplikasi dari $URL,
++dan APK Android dibangun ulang (docs/BUAT-APK.md).
++PESAN
++}
++
++case "${1:-}" in
++coba) fase_coba ;;
++pindah) fase_pindah ;;
++*)
++  cat <<PESAN
++Pakai:
++  bash $0 coba      Fase 1 — dirikan & uji app baru. Warga tidak terganggu.
++  bash $0 pindah    Fase 2 — pindahkan data. Aplikasi mati 5-15 menit.
++
++Jalankan 'coba' lebih dulu. Selalu.
++PESAN
++  exit 1
++  ;;
++esac
+diff --git a/server/dues-calc.test.ts b/server/dues-calc.test.ts
+new file mode 100644
+index 0000000..98cfc6d
+--- /dev/null
++++ b/server/dues-calc.test.ts
+@@ -0,0 +1,108 @@
++/**
++ * Tes hitungan iuran: periode, jatuh tempo, dan rekap uang.
++ *
++ * Sengaja tanpa basis data supaya bagian paling rawan salah (batas bulan
++ * menurut WIB) bisa diuji cepat.
++ */
++import { describe, expect, it } from 'vitest'
++import {
++  clampAmount,
++  dueDateOf,
++  periodOf,
++  periodTitle,
++  safeDueDay,
++  summarize,
++} from './dues-calc.js'
++
++/** Bantu baca: waktu WIB → epoch. */
++const wib = (s: string) => Date.parse(`${s}+07:00`)
++
++describe('periodOf', () => {
++  it('memakai WIB, bukan UTC', () => {
++    // 1 September 00.30 WIB = 31 Agustus 17.30 UTC — harus tetap September.
++    expect(periodOf(wib('2026-09-01T00:30:00'))).toBe('2026-09')
++    // 31 Agustus 23.59 WIB masih Agustus.
++    expect(periodOf(wib('2026-08-31T23:59:00'))).toBe('2026-08')
++  })
++
++  it('memberi bulan dua digit', () => {
++    expect(periodOf(wib('2026-01-15T08:00:00'))).toBe('2026-01')
++    expect(periodOf(wib('2026-12-15T08:00:00'))).toBe('2026-12')
++  })
++})
++
++describe('periodTitle', () => {
++  it('memakai nama bulan Indonesia', () => {
++    expect(periodTitle('2026-09')).toBe('Iuran September 2026')
++    expect(periodTitle('2026-01')).toBe('Iuran Januari 2026')
++  })
++})
++
++describe('safeDueDay', () => {
++  it('menjaga tanggal tetap ada di semua bulan', () => {
++    expect(safeDueDay(31)).toBe(28)
++    expect(safeDueDay(0)).toBe(10)
++    expect(safeDueDay(-5)).toBe(10)
++    expect(safeDueDay(15)).toBe(15)
++    expect(safeDueDay(15.9)).toBe(15)
++  })
++})
++
++describe('dueDateOf', () => {
++  it('jatuh tempo pukul 23.59 WIB pada tanggal yang diminta', () => {
++    expect(dueDateOf('2026-09', 10)).toBe(wib('2026-09-10T23:59:00'))
++  })
++
++  it('tetap valid di Februari', () => {
++    // Tanggal 30 dibatasi ke 28 agar tidak melompat ke bulan berikutnya.
++    const due = new Date(dueDateOf('2026-02', 30) + 7 * 3600_000)
++    expect(due.getUTCMonth()).toBe(1)
++    expect(due.getUTCDate()).toBe(28)
++  })
++})
++
++describe('clampAmount', () => {
++  it('menolak nilai negatif dan pecahan', () => {
++    expect(clampAmount(-1)).toBe(0)
++    expect(clampAmount(50_000.7)).toBe(50_000)
++    expect(clampAmount(Number.NaN)).toBe(0)
++  })
++
++  it('membatasi salah ketik ekstrem', () => {
++    expect(clampAmount(999_999_999_999)).toBe(100_000_000)
++  })
++})
++
++describe('summarize', () => {
++  const charges = [
++    { amount: 50_000, status: 'paid' },
++    { amount: 50_000, status: 'paid' },
++    { amount: 50_000, status: 'awaiting_verification' },
++    { amount: 50_000, status: 'unpaid' },
++    { amount: 75_000, status: 'unpaid' },
++    { amount: 50_000, status: 'waived' },
++  ]
++
++  it('menghitung jumlah rumah per status', () => {
++    const s = summarize(charges)
++    expect(s.houses).toBe(6)
++    expect(s.paid).toBe(2)
++    expect(s.awaiting).toBe(1)
++    expect(s.unpaid).toBe(2)
++    expect(s.waived).toBe(1)
++  })
++
++  it('hanya mengakui uang yang sudah diverifikasi', () => {
++    const s = summarize(charges)
++    expect(s.collected).toBe(100_000)
++  })
++
++  it('tidak menagih rumah yang dibebaskan', () => {
++    // 5 rumah × nominalnya, tanpa yang waived: 50+50+50+50+75
++    expect(summarize(charges).billed).toBe(275_000)
++  })
++
++  it('aman untuk daftar kosong', () => {
++    expect(summarize([])).toMatchObject({ houses: 0, billed: 0, collected: 0 })
++  })
++})
+diff --git a/server/dues-calc.ts b/server/dues-calc.ts
+new file mode 100644
+index 0000000..006177b
+--- /dev/null
++++ b/server/dues-calc.ts
+@@ -0,0 +1,107 @@
++/**
++ * Hitungan murni untuk iuran lingkungan — tanpa basis data.
++ *
++ * Dipisah dari `dues.ts` supaya bagian yang paling mudah salah (periode,
++ * jatuh tempo, rekap uang) bisa diuji tanpa menyentuh SQLite.
++ */
++
++/** Zona waktu acuan penagihan: WIB (UTC+7). */
++export const WIB_OFFSET = 7 * 60 * 60 * 1000
++
++/** Batas wajar nominal iuran, untuk menolak salah ketik ekstrem. */
++export const DUES_MAX_AMOUNT = 100_000_000
++
++const BULAN = [
++  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
++  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
++]
++
++/**
++ * Periode 'YYYY-MM' menurut WIB, bukan UTC.
++ *
++ * Penting: tagihan yang dibuat 1 September pukul 00.30 WIB harus masuk
++ * periode September, padahal saat itu UTC masih 31 Agustus.
++ */
++export function periodOf(at: number): string {
++  const d = new Date(at + WIB_OFFSET)
++  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
++}
++
++/** Judul bawaan tagihan rutin, mis. "Iuran September 2026". */
++export function periodTitle(period: string): string {
++  const [y, m] = period.split('-').map(Number)
++  const nama = BULAN[(m || 1) - 1] ?? ''
++  return `Iuran ${nama} ${y || ''}`.trim()
++}
++
++/** Batasi tanggal jatuh tempo ke 1-28 agar valid di bulan Februari. */
++export function safeDueDay(day: number): number {
++  const v = Math.trunc(Number(day))
++  if (!Number.isFinite(v) || v < 1) return 10
++  return Math.min(Math.max(v, 1), 28)
++}
++
++/** Jatuh tempo: tanggal `dueDay` pada periode tersebut, pukul 23.59 WIB. */
++export function dueDateOf(period: string, dueDay: number): number {
++  const [y, m] = period.split('-').map(Number)
++  return Date.UTC(y, (m || 1) - 1, safeDueDay(dueDay), 23, 59, 0) - WIB_OFFSET
++}
++
++/** Bersihkan nominal dari nilai negatif, pecahan, dan salah ketik ekstrem. */
++export function clampAmount(n: number): number {
++  const v = Math.trunc(Number(n))
++  if (!Number.isFinite(v) || v < 0) return 0
++  return Math.min(v, DUES_MAX_AMOUNT)
++}
++
++export interface ChargeLike {
++  amount: number
++  status: string
++}
++
++export interface BillSummary {
++  /** Jumlah rumah yang ditagih. */
++  houses: number
++  paid: number
++  awaiting: number
++  unpaid: number
++  waived: number
++  /** Total yang seharusnya masuk (tidak termasuk yang dibebaskan). */
++  billed: number
++  /** Yang sudah benar-benar lunas. */
++  collected: number
++}
++
++/**
++ * Rekap satu penagihan.
++ *
++ * Yang menunggu verifikasi TIDAK dihitung sebagai uang masuk — pengurus
++ * baru boleh mengakuinya setelah mutasi benar-benar dicek.
++ */
++export function summarize(charges: ChargeLike[]): BillSummary {
++  const s: BillSummary = {
++    houses: charges.length,
++    paid: 0,
++    awaiting: 0,
++    unpaid: 0,
++    waived: 0,
++    billed: 0,
++    collected: 0,
++  }
++  for (const c of charges) {
++    if (c.status === 'paid') {
++      s.paid += 1
++      s.collected += c.amount
++      s.billed += c.amount
++    } else if (c.status === 'awaiting_verification') {
++      s.awaiting += 1
++      s.billed += c.amount
++    } else if (c.status === 'waived') {
++      s.waived += 1
++    } else {
++      s.unpaid += 1
++      s.billed += c.amount
++    }
++  }
++  return s
++}
+diff --git a/server/dues.test.ts b/server/dues.test.ts
+new file mode 100644
+index 0000000..6d4ddb9
+--- /dev/null
++++ b/server/dues.test.ts
+@@ -0,0 +1,334 @@
++/**
++ * Tes iuran lingkungan lewat API: admin menagih warganya sendiri.
++ *
++ * Fokusnya pada aturan yang kalau salah bisa merugikan warga:
++ *   - warga tidak boleh membuat/menandai lunas tagihan
++ *   - warga hanya melihat tagihan rumahnya sendiri
++ *   - nominal per rumah bisa berbeda
++ *   - iuran bulanan tidak boleh dobel dalam satu periode
++ */
++import { mkdtempSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join as pathJoin } from 'node:path'
++import { beforeAll, describe, expect, it } from 'vitest'
++
++let app: { fetch: (r: Request) => Response | Promise<Response> }
++
++beforeAll(async () => {
++  process.env.WJW_DB = pathJoin(mkdtempSync(pathJoin(tmpdir(), 'wjw-dues-')), 't.sqlite')
++  process.env.WJW_NO_LISTEN = '1'
++  process.env.WJW_SUPERADMIN_PASSWORD = 'super-secret'
++  app = (await import('./index.js')).app
++})
++
++async function call(m: string, p: string, b?: unknown, t?: string) {
++  const r = await app.fetch(
++    new Request('http://x' + p, {
++      method: m,
++      headers: {
++        'content-type': 'application/json',
++        ...(t ? { Authorization: `Bearer ${t}` } : {}),
++      },
++      body: b === undefined ? undefined : JSON.stringify(b),
++    }),
++  )
++  const x = await r.text()
++  return { status: r.status, body: x ? JSON.parse(x) : null }
++}
++
++let seq = 0
++
++async function makeAdmin() {
++  seq += 1
++  const r = await call('POST', '/api/auth/register', {
++    name: `Ketua${seq}`,
++    phone: `0817${String(seq).padStart(9, '0')}`,
++    email: `dues-admin${seq}@x.id`,
++    password: 'secret123',
++    house: 'A1',
++    mode: 'create',
++    communityName: `RW Iuran ${seq}`,
++  })
++  if (!r.body?.token) throw new Error(`makeAdmin gagal: ${JSON.stringify(r.body)}`)
++  return {
++    token: r.body.token as string,
++    id: r.body.member.id as string,
++    communityId: r.body.member.communityId as string,
++  }
++}
++
++/** Daftarkan warga di rumah tertentu lalu setujui sebagai warga. */
++async function makeWarga(communityId: string, house: string, adminToken: string) {
++  seq += 1
++  const email = `dues-warga${seq}@x.id`
++  const r = await call('POST', '/api/auth/register', {
++    name: `Warga${seq}`,
++    phone: `0823${String(seq).padStart(9, '0')}`,
++    email,
++    password: 'secret123',
++    house,
++    mode: 'join',
++    communityId,
++  })
++  const id = r.body.member.id as string
++  await call(
++    'POST',
++    `/api/members/${id}/decide`,
++    { decision: 'accept', role: 'warga' },
++    adminToken,
++  )
++  const login = await call('POST', '/api/auth/login', {
++    identifier: email,
++    password: 'secret123',
++  })
++  return { id, house, token: login.body.token as string }
++}
++
++/** Lingkungan siap pakai: admin + 2 rumah + nominal iuran. */
++async function setup(amount = 50_000) {
++  const a = await makeAdmin()
++  const w1 = await makeWarga(a.communityId, 'B1', a.token)
++  const w2 = await makeWarga(a.communityId, 'B2', a.token)
++  await call('POST', '/api/dues/settings', { amount }, a.token)
++  await call('POST', '/api/dues/houses/sync', {}, a.token)
++  return { a, w1, w2 }
++}
++
++describe('daftar rumah', () => {
++  it('mengambil rumah dari nomor rumah yang diisi warga saat mendaftar', async () => {
++    const a = await makeAdmin()
++    await makeWarga(a.communityId, 'C1', a.token)
++    await makeWarga(a.communityId, 'C2', a.token)
++
++    const sync = await call('POST', '/api/dues/houses/sync', {}, a.token)
++    // A1 (admin) + C1 + C2
++    expect(sync.body.added).toBe(3)
++
++    // dipanggil dua kali tidak menggandakan
++    const again = await call('POST', '/api/dues/houses/sync', {}, a.token)
++    expect(again.body.added).toBe(0)
++  })
++
++  it('menandai rumah yang belum memasang aplikasi', async () => {
++    const { a } = await setup()
++    await call('POST', '/api/dues/houses', { label: 'B9', headName: 'Pak Ateng' }, a.token)
++
++    const r = await call('GET', '/api/dues', undefined, a.token)
++    const b9 = r.body.houses.find((h: { label: string }) => h.label === 'B9')
++    const b1 = r.body.houses.find((h: { label: string }) => h.label === 'B1')
++    expect(b9.hasApp).toBe(false)
++    expect(b1.hasApp).toBe(true)
++    expect(r.body.housesWithoutApp).toBe(1)
++  })
++
++  it('menolak nomor rumah kembar', async () => {
++    const { a } = await setup()
++    const r = await call('POST', '/api/dues/houses', { label: 'b1' }, a.token)
++    expect(r.status).toBe(400)
++    expect(r.body.error).toBe('houseExists')
++  })
++
++  it('warga tidak boleh menambah rumah', async () => {
++    const { a, w1 } = await setup()
++    void a
++    const r = await call('POST', '/api/dues/houses', { label: 'Z9' }, w1.token)
++    expect(r.status).toBe(403)
++  })
++})
++
++describe('membuat tagihan', () => {
++  it('menagih semua rumah aktif sesuai nominal bawaan', async () => {
++    const { a } = await setup(50_000)
++    const r = await call('POST', '/api/dues/bills', { kind: 'monthly' }, a.token)
++
++    expect(r.status).toBe(200)
++    expect(r.body.summary.houses).toBe(3) // A1, B1, B2
++    expect(r.body.summary.billed).toBe(150_000)
++    expect(r.body.summary.collected).toBe(0)
++    expect(r.body.charges[0].status).toBe('unpaid')
++    expect(r.body.charges[0].reference).toMatch(
++      /^IUR[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{5}$/,
++    )
++  })
++
++  it('menghormati nominal khusus per rumah', async () => {
++    const { a } = await setup(50_000)
++    const list = await call('GET', '/api/dues', undefined, a.token)
++    const b2 = list.body.houses.find((h: { label: string }) => h.label === 'B2')
++    await call('PATCH', `/api/dues/houses/${b2.id}`, { amount: 25_000 }, a.token)
++
++    const r = await call('POST', '/api/dues/bills', { kind: 'monthly' }, a.token)
++    expect(r.body.summary.billed).toBe(125_000)
++  })
++
++  it('melewati rumah yang dinonaktifkan', async () => {
++    const { a } = await setup(50_000)
++    const list = await call('GET', '/api/dues', undefined, a.token)
++    const b2 = list.body.houses.find((h: { label: string }) => h.label === 'B2')
++    await call('PATCH', `/api/dues/houses/${b2.id}`, { active: false }, a.token)
++
++    const r = await call('POST', '/api/dues/bills', { kind: 'monthly' }, a.token)
++    expect(r.body.summary.houses).toBe(2)
++  })
++
++  it('menolak iuran bulanan dobel untuk periode yang sama', async () => {
++    const { a } = await setup()
++    await call('POST', '/api/dues/bills', { kind: 'monthly' }, a.token)
++    const dua = await call('POST', '/api/dues/bills', { kind: 'monthly' }, a.token)
++    expect(dua.status).toBe(400)
++    expect(dua.body.error).toBe('billExists')
++  })
++
++  it('mengizinkan tagihan insidental berkali-kali dengan nominal sendiri', async () => {
++    const { a } = await setup()
++    const satu = await call(
++      'POST',
++      '/api/dues/bills',
++      { kind: 'special', title: 'Kerja bakti', amount: 20_000 },
++      a.token,
++    )
++    const dua = await call(
++      'POST',
++      '/api/dues/bills',
++      { kind: 'special', title: 'HUT RI', amount: 30_000 },
++      a.token,
++    )
++    expect(satu.status).toBe(200)
++    expect(dua.status).toBe(200)
++    expect(satu.body.summary.billed).toBe(60_000)
++    expect(dua.body.summary.billed).toBe(90_000)
++  })
++
++  it('warga tidak boleh membuat tagihan', async () => {
++    const { w1 } = await setup()
++    const r = await call('POST', '/api/dues/bills', { kind: 'monthly' }, w1.token)
++    expect(r.status).toBe(403)
++  })
++
++  it('menolak menagih saat nominal belum diatur', async () => {
++    const a = await makeAdmin()
++    await call('POST', '/api/dues/houses/sync', {}, a.token)
++    const r = await call('POST', '/api/dues/bills', { kind: 'monthly' }, a.token)
++    expect(r.status).toBe(400)
++    expect(r.body.error).toBe('noAmount')
++  })
++})
++
++describe('warga melihat tagihannya', () => {
++  it('hanya menerima tagihan rumahnya sendiri', async () => {
++    const { a, w1 } = await setup()
++    await call('POST', '/api/dues/bills', { kind: 'monthly' }, a.token)
++
++    const r = await call('GET', '/api/dues', undefined, w1.token)
++    expect(r.body.admin).toBe(false)
++    expect(r.body.house.label).toBe('B1')
++    expect(r.body.charges).toHaveLength(1)
++    expect(r.body.charges[0].house).toBe('B1')
++    // tidak ada bocoran daftar rumah tetangga
++    expect(r.body.houses).toBeUndefined()
++  })
++
++  it('melihat cara bayar yang ditulis admin', async () => {
++    const { a, w1 } = await setup()
++    await call('POST', '/api/dues/settings', { payInfo: 'BCA 123 a.n. Bendahara' }, a.token)
++    const r = await call('GET', '/api/dues', undefined, w1.token)
++    expect(r.body.payInfo).toBe('BCA 123 a.n. Bendahara')
++  })
++})
++
++describe('pelunasan', () => {
++  it('admin bisa menandai lunas untuk pembayaran tunai', async () => {
++    const { a } = await setup()
++    const bill = await call('POST', '/api/dues/bills', { kind: 'monthly' }, a.token)
++    const c = bill.body.charges[0]
++
++    const r = await call('POST', `/api/dues/charges/${c.id}/paid`, { method: 'cash' }, a.token)
++    expect(r.body.charge.status).toBe('paid')
++    expect(r.body.charge.method).toBe('cash')
++
++    const after = await call('GET', `/api/dues/bills/${bill.body.bill.id}`, undefined, a.token)
++    expect(after.body.summary.paid).toBe(1)
++    expect(after.body.summary.collected).toBe(c.amount)
++  })
++
++  it('warga mengaku bayar, admin yang menyetujui', async () => {
++    const { a, w1 } = await setup()
++    await call('POST', '/api/dues/bills', { kind: 'monthly' }, a.token)
++    const mine = await call('GET', '/api/dues', undefined, w1.token)
++    const c = mine.body.charges[0]
++
++    const klaim = await call('POST', `/api/dues/charges/${c.id}/claim`, {}, w1.token)
++    expect(klaim.body.charge.status).toBe('awaiting_verification')
++
++    // belum dihitung sebagai uang masuk
++    const antara = await call('GET', '/api/dues', undefined, a.token)
++    expect(antara.body.current.summary.collected).toBe(0)
++    expect(antara.body.current.summary.awaiting).toBe(1)
++
++    const setuju = await call('POST', `/api/dues/charges/${c.id}/paid`, {}, a.token)
++    expect(setuju.body.charge.status).toBe('paid')
++  })
++
++  it('warga tidak boleh mengaku bayar untuk rumah tetangga', async () => {
++    const { a, w1, w2 } = await setup()
++    await call('POST', '/api/dues/bills', { kind: 'monthly' }, a.token)
++    const punyaW2 = await call('GET', '/api/dues', undefined, w2.token)
++    const c = punyaW2.body.charges[0]
++
++    const r = await call('POST', `/api/dues/charges/${c.id}/claim`, {}, w1.token)
++    expect(r.status).toBe(403)
++  })
++
++  it('warga tidak boleh menandai lunas sendiri', async () => {
++    const { a, w1 } = await setup()
++    await call('POST', '/api/dues/bills', { kind: 'monthly' }, a.token)
++    const mine = await call('GET', '/api/dues', undefined, w1.token)
++    const r = await call(
++      'POST',
++      `/api/dues/charges/${mine.body.charges[0].id}/paid`,
++      {},
++      w1.token,
++    )
++    expect(r.status).toBe(403)
++  })
++
++  it('klaim yang ditolak kembali jadi belum bayar', async () => {
++    const { a, w1 } = await setup()
++    await call('POST', '/api/dues/bills', { kind: 'monthly' }, a.token)
++    const mine = await call('GET', '/api/dues', undefined, w1.token)
++    const c = mine.body.charges[0]
++
++    await call('POST', `/api/dues/charges/${c.id}/claim`, {}, w1.token)
++    const tolak = await call(
++      'POST',
++      `/api/dues/charges/${c.id}/reject`,
++      { note: 'mutasi tidak ditemukan' },
++      a.token,
++    )
++    expect(tolak.body.charge.status).toBe('unpaid')
++    expect(tolak.body.charge.note).toBe('mutasi tidak ditemukan')
++  })
++
++  it('rumah yang dibebaskan tidak menambah tagihan', async () => {
++    const { a } = await setup(50_000)
++    const bill = await call('POST', '/api/dues/bills', { kind: 'monthly' }, a.token)
++    const c = bill.body.charges[0]
++    await call('POST', `/api/dues/charges/${c.id}/waive`, { note: 'kena musibah' }, a.token)
++
++    const after = await call('GET', `/api/dues/bills/${bill.body.bill.id}`, undefined, a.token)
++    expect(after.body.summary.waived).toBe(1)
++    expect(after.body.summary.billed).toBe(100_000)
++  })
++})
++
++describe('batas antar lingkungan', () => {
++  it('admin lain tidak bisa menyentuh tagihan lingkungan ini', async () => {
++    const { a } = await setup()
++    const lain = await makeAdmin()
++    const bill = await call('POST', '/api/dues/bills', { kind: 'monthly' }, a.token)
++    const c = bill.body.charges[0]
++
++    const r = await call('POST', `/api/dues/charges/${c.id}/paid`, {}, lain.token)
++    expect(r.status).toBe(403)
++  })
++})
+diff --git a/server/dues.ts b/server/dues.ts
+new file mode 100644
+index 0000000..2de2d98
+--- /dev/null
++++ b/server/dues.ts
+@@ -0,0 +1,604 @@
++/**
++ * Iuran lingkungan — admin RT/RW menagih warganya sendiri.
++ *
++ * Berbeda dengan `billing.ts` (langganan aplikasi: superadmin → admin),
++ * uang iuran masuk ke kas lingkungan. Aplikasi hanya mencatat siapa sudah
++ * bayar dan siapa belum; tidak ada uang yang lewat sistem.
++ *
++ * Yang ditagih adalah RUMAH, bukan akun. Satu rumah bisa punya beberapa
++ * akun (suami, istri, anak) — semuanya melihat tagihan yang sama dan
++ * siapa pun boleh membayarnya. Rumah yang belum memasang aplikasi tetap
++ * didata agar buku kas tetap lengkap.
++ *
++ * Dua cara pelunasan, keduanya berakhir di tangan admin:
++ *   a. Tunai   — warga bayar ke pengurus, admin menekan "Tandai lunas".
++ *   b. QRIS/transfer — warga bayar sendiri lalu menekan "Saya sudah
++ *      bayar" (status menunggu verifikasi), admin menyetujui.
++ */
++import { DAY, audit, db, now, uid } from './db.js'
++import {
++  clampAmount,
++  dueDateOf,
++  periodOf,
++  periodTitle,
++  safeDueDay,
++} from './dues-calc.js'
++
++// Hitungan murni tinggal di dues-calc.ts agar bisa diuji tanpa SQLite;
++// diekspor ulang di sini supaya pemanggil cukup mengenal satu modul.
++export {
++  DUES_MAX_AMOUNT,
++  dueDateOf,
++  periodOf,
++  periodTitle,
++  summarize,
++  type BillSummary,
++} from './dues-calc.js'
++
++export interface DuesSettingsRow {
++  community_id: string
++  amount: number
++  auto_monthly: number
++  due_day: number
++  pay_info: string
++  qris_image: string | null
++  updated_at: number
++  updated_by: string
++}
++
++export interface HouseRow {
++  id: string
++  community_id: string
++  label: string
++  head_name: string
++  amount: number | null
++  active: number
++  note: string
++  created_at: number
++  created_by: string
++}
++
++export interface ChargeRow {
++  id: string
++  bill_id: string
++  community_id: string
++  house_id: string
++  house_label: string
++  amount: number
++  status: string
++  method: string | null
++  reference: string
++  note: string
++  claimed_by: string | null
++  claimed_at: number | null
++  paid_at: number | null
++  settled_by: string | null
++  created_at: number
++}
++
++export interface BillRow {
++  id: string
++  community_id: string
++  title: string
++  kind: string
++  period: string
++  due_at: number | null
++  created_at: number
++  created_by: string
++}
++
++/* ---------------- pengaturan ---------------- */
++
++export function getSettings(communityId: string): DuesSettingsRow {
++  const row = db
++    .prepare('SELECT * FROM dues_settings WHERE community_id=?')
++    .get(communityId) as DuesSettingsRow | undefined
++  if (row) return row
++  return {
++    community_id: communityId,
++    amount: 0,
++    auto_monthly: 0,
++    due_day: 10,
++    pay_info: '',
++    qris_image: null,
++    updated_at: 0,
++    updated_by: '',
++  }
++}
++
++export interface SettingsPatch {
++  amount?: number
++  autoMonthly?: boolean
++  dueDay?: number
++  payInfo?: string
++  /** data URL gambar QRIS; string kosong menghapus. */
++  qrisImage?: string | null
++}
++
++export function saveSettings(
++  communityId: string,
++  actorId: string,
++  patch: SettingsPatch,
++): DuesSettingsRow {
++  const cur = getSettings(communityId)
++  const next: DuesSettingsRow = {
++    ...cur,
++    amount: patch.amount === undefined ? cur.amount : clampAmount(patch.amount),
++    auto_monthly:
++      patch.autoMonthly === undefined ? cur.auto_monthly : patch.autoMonthly ? 1 : 0,
++    due_day: patch.dueDay === undefined ? cur.due_day : safeDueDay(patch.dueDay),
++    pay_info: patch.payInfo === undefined ? cur.pay_info : patch.payInfo.slice(0, 500),
++    qris_image:
++      patch.qrisImage === undefined ? cur.qris_image : patch.qrisImage || null,
++    updated_at: now(),
++    updated_by: actorId,
++  }
++  db.prepare(
++    `INSERT INTO dues_settings
++       (community_id, amount, auto_monthly, due_day, pay_info, qris_image,
++        updated_at, updated_by)
++     VALUES (?,?,?,?,?,?,?,?)
++     ON CONFLICT(community_id) DO UPDATE SET
++       amount=excluded.amount, auto_monthly=excluded.auto_monthly,
++       due_day=excluded.due_day, pay_info=excluded.pay_info,
++       qris_image=excluded.qris_image, updated_at=excluded.updated_at,
++       updated_by=excluded.updated_by`,
++  ).run(
++    communityId,
++    next.amount,
++    next.auto_monthly,
++    next.due_day,
++    next.pay_info,
++    next.qris_image,
++    next.updated_at,
++    next.updated_by,
++  )
++  audit(communityId, actorId, 'dues.settings', `${next.amount} auto=${next.auto_monthly}`)
++  return next
++}
++
++/* ---------------- rumah ---------------- */
++
++export function listHouses(communityId: string): HouseRow[] {
++  return db
++    .prepare('SELECT * FROM houses WHERE community_id=? ORDER BY label COLLATE NOCASE')
++    .all(communityId) as HouseRow[]
++}
++
++export function getHouse(id: string): HouseRow | null {
++  return (db.prepare('SELECT * FROM houses WHERE id=?').get(id) as HouseRow) ?? null
++}
++
++export function findHouseByLabel(communityId: string, label: string): HouseRow | null {
++  return (
++    (db
++      .prepare('SELECT * FROM houses WHERE community_id=? AND lower(label)=lower(?)')
++      .get(communityId, label.trim()) as HouseRow) ?? null
++  )
++}
++
++export interface HouseInput {
++  label: string
++  headName?: string
++  amount?: number | null
++  active?: boolean
++  note?: string
++}
++
++export function addHouse(
++  communityId: string,
++  actorId: string,
++  input: HouseInput,
++): HouseRow {
++  const label = input.label.trim().slice(0, 40)
++  if (!label) throw new DuesError('houseLabelRequired')
++  if (findHouseByLabel(communityId, label)) throw new DuesError('houseExists')
++  const row: HouseRow = {
++    id: uid('h_'),
++    community_id: communityId,
++    label,
++    head_name: (input.headName ?? '').trim().slice(0, 80),
++    amount: input.amount == null ? null : clampAmount(input.amount),
++    active: input.active === false ? 0 : 1,
++    note: (input.note ?? '').slice(0, 200),
++    created_at: now(),
++    created_by: actorId,
++  }
++  db.prepare(
++    `INSERT INTO houses
++       (id, community_id, label, head_name, amount, active, note, created_at, created_by)
++     VALUES (?,?,?,?,?,?,?,?,?)`,
++  ).run(
++    row.id,
++    row.community_id,
++    row.label,
++    row.head_name,
++    row.amount,
++    row.active,
++    row.note,
++    row.created_at,
++    row.created_by,
++  )
++  audit(communityId, actorId, 'dues.house.add', label)
++  return row
++}
++
++export function updateHouse(
++  id: string,
++  actorId: string,
++  input: Partial<HouseInput>,
++): HouseRow {
++  const cur = getHouse(id)
++  if (!cur) throw new DuesError('notFound')
++  const label = input.label === undefined ? cur.label : input.label.trim().slice(0, 40)
++  if (!label) throw new DuesError('houseLabelRequired')
++  const clash = findHouseByLabel(cur.community_id, label)
++  if (clash && clash.id !== id) throw new DuesError('houseExists')
++  const next: HouseRow = {
++    ...cur,
++    label,
++    head_name:
++      input.headName === undefined ? cur.head_name : input.headName.trim().slice(0, 80),
++    amount:
++      input.amount === undefined
++        ? cur.amount
++        : input.amount == null
++          ? null
++          : clampAmount(input.amount),
++    active: input.active === undefined ? cur.active : input.active ? 1 : 0,
++    note: input.note === undefined ? cur.note : input.note.slice(0, 200),
++  }
++  db.prepare(
++    'UPDATE houses SET label=?, head_name=?, amount=?, active=?, note=? WHERE id=?',
++  ).run(next.label, next.head_name, next.amount, next.active, next.note, id)
++  audit(cur.community_id, actorId, 'dues.house.edit', next.label)
++  return next
++}
++
++/**
++ * Hapus rumah. Riwayat tagihannya ikut terhapus (ON DELETE CASCADE),
++ * jadi untuk rumah yang sekadar tidak ditagih lagi, pakai `active=false`.
++ */
++export function removeHouse(id: string, actorId: string): void {
++  const cur = getHouse(id)
++  if (!cur) throw new DuesError('notFound')
++  db.prepare('DELETE FROM houses WHERE id=?').run(id)
++  audit(cur.community_id, actorId, 'dues.house.remove', cur.label)
++}
++
++/**
++ * Buat data rumah dari nomor rumah yang sudah diisi anggota saat mendaftar,
++ * sehingga admin tidak perlu mengetik ulang daftar rumah.
++ *
++ * Hanya menambah yang belum ada — tidak pernah menimpa data admin.
++ */
++export function syncHousesFromMembers(communityId: string, actorId: string): number {
++  const rows = db
++    .prepare(
++      `SELECT house, MIN(name) AS name FROM members
++        WHERE community_id=? AND status='active' AND TRIM(house) <> ''
++        GROUP BY lower(TRIM(house))`,
++    )
++    .all(communityId) as { house: string; name: string }[]
++  let added = 0
++  for (const r of rows) {
++    const label = r.house.trim()
++    if (findHouseByLabel(communityId, label)) continue
++    addHouse(communityId, actorId, { label, headName: r.name })
++    added += 1
++  }
++  return added
++}
++
++/** Rumah milik seorang anggota, dicocokkan lewat nomor rumahnya. */
++export function houseOfMember(
++  communityId: string,
++  house: string | null,
++): HouseRow | null {
++  if (!house || !house.trim()) return null
++  return findHouseByLabel(communityId, house)
++}
++
++/** Berapa yang ditagih ke sebuah rumah. */
++export function amountFor(house: HouseRow, settings: DuesSettingsRow): number {
++  return house.amount == null ? settings.amount : house.amount
++}
++
++/* ---------------- penagihan ---------------- */
++
++export class DuesError extends Error {
++  readonly code: string
++  constructor(code: string) {
++    super(code)
++    this.code = code
++  }
++}
++
++/** Nomor rujukan pembayaran iuran; pendek dan tanpa huruf rancu. */
++export function duesReference(): string {
++  const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
++  for (let attempt = 0; attempt < 20; attempt++) {
++    let code = 'IUR'
++    for (let i = 0; i < 5; i++) {
++      code += ALPHABET[Math.floor(Math.random() * ALPHABET.length)]
++    }
++    if (!db.prepare('SELECT 1 FROM dues_charges WHERE reference=?').get(code)) return code
++  }
++  return `IUR${uid('').slice(-5).toUpperCase()}`
++}
++
++export interface CreateBillInput {
++  communityId: string
++  actorId: string
++  title?: string
++  kind?: 'monthly' | 'special'
++  /** 'YYYY-MM'; wajib untuk iuran bulanan. */
++  period?: string
++  dueAt?: number | null
++  /** Bila diisi, hanya rumah ini yang ditagih. Default: semua rumah aktif. */
++  houseIds?: string[]
++  /** Nominal seragam untuk penagihan ini (mis. iuran 17-an). */
++  amount?: number
++}
++
++export interface BillWithCharges {
++  bill: BillRow
++  charges: ChargeRow[]
++}
++
++/**
++ * Buat satu penagihan beserta tagihan tiap rumah.
++ *
++ * Rumah tanpa nominal (bawaan 0 dan tanpa nominal khusus) dilewati —
++ * menagih Rp0 hanya mengotori daftar.
++ */
++export function createBill(input: CreateBillInput): BillWithCharges {
++  const kind = input.kind === 'special' ? 'special' : 'monthly'
++  const period = kind === 'monthly' ? (input.period || periodOf(now())) : ''
++  const settings = getSettings(input.communityId)
++
++  if (kind === 'monthly' && billOfPeriod(input.communityId, period))
++    throw new DuesError('billExists')
++
++  const all = listHouses(input.communityId).filter((h) => h.active === 1)
++  const picked = input.houseIds?.length
++    ? all.filter((h) => input.houseIds!.includes(h.id))
++    : all
++  if (picked.length === 0) throw new DuesError('noHouses')
++
++  const at = now()
++  const bill: BillRow = {
++    id: uid('bill_'),
++    community_id: input.communityId,
++    title:
++      (input.title ?? '').trim().slice(0, 80) ||
++      (kind === 'monthly' ? periodTitle(period) : 'Iuran'),
++    kind,
++    period,
++    due_at:
++      input.dueAt === undefined
++        ? kind === 'monthly'
++          ? dueDateOf(period, settings.due_day)
++          : at + 14 * DAY
++        : input.dueAt,
++    created_at: at,
++    created_by: input.actorId,
++  }
++
++  const charges: ChargeRow[] = []
++  const tx = db.transaction(() => {
++    db.prepare(
++      `INSERT INTO dues_bills
++         (id, community_id, title, kind, period, due_at, created_at, created_by)
++       VALUES (?,?,?,?,?,?,?,?)`,
++    ).run(
++      bill.id,
++      bill.community_id,
++      bill.title,
++      bill.kind,
++      bill.period,
++      bill.due_at,
++      bill.created_at,
++      bill.created_by,
++    )
++    for (const h of picked) {
++      const amount =
++        input.amount === undefined ? amountFor(h, settings) : clampAmount(input.amount)
++      if (amount <= 0) continue
++      const row: ChargeRow = {
++        id: uid('due_'),
++        bill_id: bill.id,
++        community_id: input.communityId,
++        house_id: h.id,
++        house_label: h.label,
++        amount,
++        status: 'unpaid',
++        method: null,
++        reference: duesReference(),
++        note: '',
++        claimed_by: null,
++        claimed_at: null,
++        paid_at: null,
++        settled_by: null,
++        created_at: at,
++      }
++      db.prepare(
++        `INSERT INTO dues_charges
++           (id, bill_id, community_id, house_id, house_label, amount, status,
++            reference, created_at)
++         VALUES (?,?,?,?,?,?,'unpaid',?,?)`,
++      ).run(
++        row.id,
++        row.bill_id,
++        row.community_id,
++        row.house_id,
++        row.house_label,
++        row.amount,
++        row.reference,
++        row.created_at,
++      )
++      charges.push(row)
++    }
++  })
++  tx()
++
++  if (charges.length === 0) {
++    db.prepare('DELETE FROM dues_bills WHERE id=?').run(bill.id)
++    throw new DuesError('noAmount')
++  }
++
++  audit(
++    input.communityId,
++    input.actorId,
++    'dues.bill',
++    `${bill.title} · ${charges.length} rumah`,
++  )
++  return { bill, charges }
++}
++
++export function billOfPeriod(communityId: string, period: string): BillRow | null {
++  return (
++    (db
++      .prepare('SELECT * FROM dues_bills WHERE community_id=? AND period=?')
++      .get(communityId, period) as BillRow) ?? null
++  )
++}
++
++export function listBills(communityId: string, limit = 24): BillRow[] {
++  return db
++    .prepare(
++      'SELECT * FROM dues_bills WHERE community_id=? ORDER BY created_at DESC LIMIT ?',
++    )
++    .all(communityId, limit) as BillRow[]
++}
++
++export function getBill(id: string): BillRow | null {
++  return (db.prepare('SELECT * FROM dues_bills WHERE id=?').get(id) as BillRow) ?? null
++}
++
++export function getCharge(id: string): ChargeRow | null {
++  return (
++    (db.prepare('SELECT * FROM dues_charges WHERE id=?').get(id) as ChargeRow) ?? null
++  )
++}
++
++export function chargesOfBill(billId: string): ChargeRow[] {
++  return db
++    .prepare(
++      'SELECT * FROM dues_charges WHERE bill_id=? ORDER BY house_label COLLATE NOCASE',
++    )
++    .all(billId) as ChargeRow[]
++}
++
++export function chargesOfHouse(houseId: string, limit = 24): ChargeRow[] {
++  return db
++    .prepare('SELECT * FROM dues_charges WHERE house_id=? ORDER BY created_at DESC LIMIT ?')
++    .all(houseId, limit) as ChargeRow[]
++}
++
++/** Hapus satu penagihan beserta tagihannya (mis. salah buat). */
++export function removeBill(id: string, actorId: string): void {
++  const bill = getBill(id)
++  if (!bill) throw new DuesError('notFound')
++  db.prepare('DELETE FROM dues_bills WHERE id=?').run(id)
++  audit(bill.community_id, actorId, 'dues.bill.remove', bill.title)
++}
++
++/* ---------------- pelunasan ---------------- */
++
++/** Admin menandai lunas (biasanya pembayaran tunai ke pengurus). */
++export function markPaid(
++  chargeId: string,
++  actorId: string,
++  method: 'cash' | 'transfer' | 'qris' = 'cash',
++  note = '',
++): ChargeRow {
++  const cur = getCharge(chargeId)
++  if (!cur) throw new DuesError('notFound')
++  if (cur.status === 'paid') return cur
++  db.prepare(
++    `UPDATE dues_charges
++        SET status='paid', method=?, paid_at=?, settled_by=?, note=?
++      WHERE id=?`,
++  ).run(method, now(), actorId, note.slice(0, 200) || cur.note, chargeId)
++  audit(
++    cur.community_id,
++    actorId,
++    'dues.paid',
++    `${cur.house_label} ${cur.amount} ${method}`,
++  )
++  return getCharge(chargeId)!
++}
++
++/** Warga menekan "saya sudah bayar" — menunggu verifikasi admin. */
++export function claimCharge(
++  chargeId: string,
++  memberId: string,
++  method: 'transfer' | 'qris' = 'qris',
++  note = '',
++): ChargeRow {
++  const cur = getCharge(chargeId)
++  if (!cur) throw new DuesError('notFound')
++  if (cur.status === 'paid') throw new DuesError('alreadyPaid')
++  if (cur.status === 'waived') throw new DuesError('notFound')
++  db.prepare(
++    `UPDATE dues_charges
++        SET status='awaiting_verification', method=?, claimed_by=?, claimed_at=?, note=?
++      WHERE id=?`,
++  ).run(method, memberId, now(), note.slice(0, 200), chargeId)
++  audit(cur.community_id, memberId, 'dues.claim', `${cur.house_label} ${cur.reference}`)
++  return getCharge(chargeId)!
++}
++
++/** Admin menolak klaim warga; tagihan kembali ke status belum bayar. */
++export function rejectClaim(chargeId: string, actorId: string, note = ''): ChargeRow {
++  const cur = getCharge(chargeId)
++  if (!cur) throw new DuesError('notFound')
++  db.prepare(
++    `UPDATE dues_charges
++        SET status='unpaid', claimed_by=NULL, claimed_at=NULL, note=?
++      WHERE id=?`,
++  ).run(note.slice(0, 200), chargeId)
++  audit(cur.community_id, actorId, 'dues.reject', `${cur.house_label} ${note}`)
++  return getCharge(chargeId)!
++}
++
++/** Bebaskan satu rumah dari tagihan tertentu (keringanan). */
++export function waiveCharge(chargeId: string, actorId: string, note = ''): ChargeRow {
++  const cur = getCharge(chargeId)
++  if (!cur) throw new DuesError('notFound')
++  db.prepare(
++    `UPDATE dues_charges SET status='waived', settled_by=?, note=? WHERE id=?`,
++  ).run(actorId, note.slice(0, 200), chargeId)
++  audit(cur.community_id, actorId, 'dues.waive', `${cur.house_label} ${note}`)
++  return getCharge(chargeId)!
++}
++
++/* ---------------- iuran bulanan otomatis ---------------- */
++
++/**
++ * Buat tagihan bulanan untuk semua lingkungan yang mengaktifkannya.
++ * Aman dipanggil berkali-kali: indeks unik per periode menolak duplikat.
++ */
++export function runMonthlyDues(at = now()): number {
++  const period = periodOf(at)
++  const rows = db
++    .prepare('SELECT * FROM dues_settings WHERE auto_monthly=1 AND amount > 0')
++    .all() as DuesSettingsRow[]
++  let created = 0
++  for (const s of rows) {
++    if (billOfPeriod(s.community_id, period)) continue
++    try {
++      createBill({
++        communityId: s.community_id,
++        actorId: 'system',
++        kind: 'monthly',
++        period,
++      })
++      created += 1
++    } catch {
++      // lingkungan tanpa rumah aktif atau tanpa nominal — lewati diam-diam
++    }
++  }
++  return created
++}
+diff --git a/server/index.ts b/server/index.ts
+index 56967f8..6981a33 100644
+--- a/server/index.ts
++++ b/server/index.ts
+@@ -1,4 +1,7 @@
+ import { serve } from '@hono/node-server'
++import { serveStatic } from '@hono/node-server/serve-static'
++import { existsSync, readFileSync } from 'node:fs'
++import { join } from 'node:path'
+ import { Hono } from 'hono'
+ import { cors } from 'hono/cors'
+ import type { Context, Next } from 'hono'
+@@ -51,6 +54,32 @@ import {
+   rejectPayment,
+   verifyPayment,
+ } from './billing.js'
++import {
++  DuesError,
++  addHouse,
++  chargesOfBill,
++  chargesOfHouse,
++  claimCharge,
++  createBill,
++  getBill,
++  getCharge,
++  getHouse,
++  getSettings as duesSettings,
++  houseOfMember,
++  listBills,
++  listHouses,
++  markPaid,
++  rejectClaim,
++  removeBill,
++  removeHouse,
++  saveSettings as saveDuesSettings,
++  summarize,
++  syncHousesFromMembers,
++  updateHouse,
++  waiveCharge,
++  type ChargeRow,
++  type HouseRow,
++} from './dues.js'
+ import { billEmail, paidEmail } from './email-templates.js'
+ import {
+   QRIS_MAX_BYTES,
+@@ -101,6 +130,36 @@ const app = new Hono<Env>()
+ 
+ app.use('/api/*', cors({ origin: (o) => o ?? '*', credentials: true }))
+ 
++/**
++ * Header keamanan.
++ *
++ * Dipasang di sini, bukan di proksi, supaya ikut ke mana pun aplikasi
++ * dipasang — Fly, VPS sendiri, atau di belakang nginx.
++ *
++ * `img-src` sengaja mengizinkan ubin OpenStreetMap; tanpa itu peta kosong.
++ * Bila suatu saat memakai Google Fonts, tambahkan domainnya ke `style-src`
++ * dan `font-src` — kalau tidak, huruf jatuh ke bawaan sistem.
++ */
++app.use('*', async (c, next) => {
++  await next()
++  const h = c.res.headers
++  h.set(
++    'content-security-policy',
++    "default-src 'self'; base-uri 'self'; frame-ancestors 'none'; " +
++      "form-action 'self'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; " +
++      "media-src 'self' data: blob:; connect-src 'self'; style-src 'self' 'unsafe-inline'; " +
++      "script-src 'self'; worker-src 'self' blob:",
++  )
++  h.set('permissions-policy', 'geolocation=(self), microphone=(self), camera=(self)')
++  h.set('referrer-policy', 'strict-origin-when-cross-origin')
++  h.set('x-content-type-options', 'nosniff')
++  h.set('x-frame-options', 'DENY')
++  // Balasan API tidak boleh mengendap di cache peramban — data warga
++  // berubah tiap saat, dan sebagiannya bersifat pribadi.
++  if (c.req.path.startsWith('/api/')) h.set('cache-control', 'private, no-store')
++})
++
++
+ /* ---------------- util ---------------- */
+ 
+ const J = (s: string) => JSON.parse(s || 'null')
+@@ -1849,6 +1908,10 @@ function mapInvoice(r: Record<string, unknown>) {
+ }
+ 
+ app.get('/api/billing', auth, active, (c) => {
++  // Urusan langganan hanya untuk admin/superadmin. Warga & satpam memakai
++  // aplikasi secara gratis, jadi mereka tidak perlu — dan tidak boleh —
++  // melihat tagihan lingkungan beserta nomor referensinya.
++  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
+   const me = c.get('me')
+   const rows = db
+     .prepare('SELECT * FROM invoices WHERE community_id=? ORDER BY created_at DESC LIMIT 50')
+@@ -2117,6 +2180,416 @@ app.post('/api/billing/:id/resend', auth, active, async (c) => {
+   return c.json(r)
+ })
+ 
++/* ================= iuran lingkungan ================= */
++
++/**
++ * Iuran adalah urusan internal lingkungan: admin menagih warganya.
++ * Semua warga aktif boleh melihat tagihan rumahnya sendiri; hanya admin
++ * yang boleh membuat tagihan, mengubah nominal, dan menandai lunas.
++ */
++
++function duesFail(c: Context<Env>, e: unknown) {
++  if (e instanceof DuesError) return bad(c, e.code, e.code === 'notFound' ? 404 : 400)
++  throw e
++}
++
++function mapHouse(h: HouseRow, settings: { amount: number }, withApp: Set<string>) {
++  return {
++    id: h.id,
++    label: h.label,
++    headName: h.head_name,
++    amount: h.amount,
++    effectiveAmount: h.amount == null ? settings.amount : h.amount,
++    active: h.active === 1,
++    note: h.note,
++    hasApp: withApp.has(h.label.trim().toLowerCase()),
++  }
++}
++
++function mapCharge(x: ChargeRow) {
++  return {
++    id: x.id,
++    billId: x.bill_id,
++    houseId: x.house_id,
++    house: x.house_label,
++    amount: x.amount,
++    status: x.status,
++    method: x.method,
++    reference: x.reference,
++    note: x.note,
++    claimedAt: x.claimed_at,
++    paidAt: x.paid_at,
++    createdAt: x.created_at,
++  }
++}
++
++/** Label rumah yang sudah punya minimal satu akun aktif. */
++function housesWithApp(communityId: string): Set<string> {
++  const rows = db
++    .prepare(
++      `SELECT DISTINCT lower(TRIM(house)) AS h FROM members
++        WHERE community_id=? AND status='active' AND TRIM(house) <> ''`,
++    )
++    .all(communityId) as { h: string }[]
++  return new Set(rows.map((r) => r.h))
++}
++
++/**
++ * Ringkasan iuran.
++ *
++ * Admin menerima seluruh daftar rumah dan tagihan; warga hanya menerima
++ * tagihan rumahnya sendiri berikut cara membayar.
++ */
++app.get('/api/dues', auth, active, (c) => {
++  const me = c.get('me')
++  if (!me.community_id) return bad(c, 'errNoCommunity')
++  const settings = duesSettings(me.community_id)
++  const admin = requireAdmin(c)
++
++  const pay = {
++    payInfo: settings.pay_info,
++    qrisImage: settings.qris_image,
++  }
++
++  if (!admin) {
++    const house = houseOfMember(me.community_id, me.house)
++    const charges = house ? chargesOfHouse(house.id) : []
++    return c.json({
++      admin: false,
++      amount: settings.amount,
++      house: house ? { id: house.id, label: house.label } : null,
++      charges: charges.map(mapCharge),
++      ...pay,
++    })
++  }
++
++  const houses = listHouses(me.community_id)
++  const withApp = housesWithApp(me.community_id)
++  const bills = listBills(me.community_id)
++  const latest = bills[0] ? chargesOfBill(bills[0].id) : []
++  return c.json({
++    admin: true,
++    settings: {
++      amount: settings.amount,
++      autoMonthly: settings.auto_monthly === 1,
++      dueDay: settings.due_day,
++      ...pay,
++    },
++    houses: houses.map((h) => mapHouse(h, settings, withApp)),
++    housesWithoutApp: houses.filter(
++      (h) => h.active === 1 && !withApp.has(h.label.trim().toLowerCase()),
++    ).length,
++    bills: bills.map((b) => ({
++      id: b.id,
++      title: b.title,
++      kind: b.kind,
++      period: b.period,
++      dueAt: b.due_at,
++      createdAt: b.created_at,
++    })),
++    current: bills[0]
++      ? {
++          billId: bills[0].id,
++          charges: latest.map(mapCharge),
++          summary: summarize(latest),
++        }
++      : null,
++  })
++})
++
++/** Rincian satu penagihan. */
++app.get('/api/dues/bills/:id', auth, active, (c) => {
++  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
++  const me = c.get('me')
++  const bill = getBill(c.req.param('id') ?? '')
++  if (!bill || !sameCommunity(me, bill.community_id)) return bad(c, 'forbidden', 403)
++  const charges = chargesOfBill(bill.id)
++  return c.json({
++    bill: {
++      id: bill.id,
++      title: bill.title,
++      kind: bill.kind,
++      period: bill.period,
++      dueAt: bill.due_at,
++      createdAt: bill.created_at,
++    },
++    charges: charges.map(mapCharge),
++    summary: summarize(charges),
++  })
++})
++
++const duesSettingsSchema = z.object({
++  amount: z.number().int().min(0).optional(),
++  autoMonthly: z.boolean().optional(),
++  dueDay: z.number().int().min(1).max(28).optional(),
++  payInfo: z.string().max(500).optional(),
++  qrisImage: z.string().max(400_000).nullable().optional(),
++})
++
++app.post('/api/dues/settings', auth, active, async (c) => {
++  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
++  const me = c.get('me')
++  if (!me.community_id) return bad(c, 'errNoCommunity')
++  const p = duesSettingsSchema.safeParse(await c.req.json().catch(() => ({})))
++  if (!p.success) return bad(c, 'errInvalid')
++  const s = saveDuesSettings(me.community_id, me.id, p.data)
++  return c.json({
++    settings: {
++      amount: s.amount,
++      autoMonthly: s.auto_monthly === 1,
++      dueDay: s.due_day,
++      payInfo: s.pay_info,
++      qrisImage: s.qris_image,
++    },
++  })
++})
++
++const houseSchema = z.object({
++  label: z.string().min(1).max(40),
++  headName: z.string().max(80).optional(),
++  amount: z.number().int().min(0).nullable().optional(),
++  active: z.boolean().optional(),
++  note: z.string().max(200).optional(),
++})
++
++app.post('/api/dues/houses', auth, active, async (c) => {
++  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
++  const me = c.get('me')
++  if (!me.community_id) return bad(c, 'errNoCommunity')
++  const p = houseSchema.safeParse(await c.req.json().catch(() => ({})))
++  if (!p.success) return bad(c, 'errInvalid')
++  try {
++    return c.json({ house: addHouse(me.community_id, me.id, p.data) })
++  } catch (e) {
++    return duesFail(c, e)
++  }
++})
++
++app.patch('/api/dues/houses/:id', auth, active, async (c) => {
++  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
++  const me = c.get('me')
++  const cur = getHouse(c.req.param('id') ?? '')
++  if (!cur || !sameCommunity(me, cur.community_id)) return bad(c, 'forbidden', 403)
++  const p = houseSchema.partial().safeParse(await c.req.json().catch(() => ({})))
++  if (!p.success) return bad(c, 'errInvalid')
++  try {
++    return c.json({ house: updateHouse(cur.id, me.id, p.data) })
++  } catch (e) {
++    return duesFail(c, e)
++  }
++})
++
++app.delete('/api/dues/houses/:id', auth, active, (c) => {
++  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
++  const me = c.get('me')
++  const cur = getHouse(c.req.param('id') ?? '')
++  if (!cur || !sameCommunity(me, cur.community_id)) return bad(c, 'forbidden', 403)
++  try {
++    removeHouse(cur.id, me.id)
++    return c.json({ ok: true })
++  } catch (e) {
++    return duesFail(c, e)
++  }
++})
++
++/** Ambil daftar rumah dari nomor rumah yang diisi warga saat mendaftar. */
++app.post('/api/dues/houses/sync', auth, active, (c) => {
++  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
++  const me = c.get('me')
++  if (!me.community_id) return bad(c, 'errNoCommunity')
++  const added = syncHousesFromMembers(me.community_id, me.id)
++  return c.json({ added })
++})
++
++const billSchema = z.object({
++  title: z.string().max(80).optional(),
++  kind: z.enum(['monthly', 'special']).optional(),
++  period: z
++    .string()
++    .regex(/^\d{4}-\d{2}$/)
++    .optional(),
++  amount: z.number().int().min(0).optional(),
++  houseIds: z.array(z.string()).max(2000).optional(),
++  dueAt: z.number().int().nullable().optional(),
++})
++
++app.post('/api/dues/bills', auth, active, async (c) => {
++  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
++  const me = c.get('me')
++  if (!me.community_id) return bad(c, 'errNoCommunity')
++  const p = billSchema.safeParse(await c.req.json().catch(() => ({})))
++  if (!p.success) return bad(c, 'errInvalid')
++  try {
++    const r = createBill({ communityId: me.community_id, actorId: me.id, ...p.data })
++    // Beri tahu warga yang sudah memasang aplikasi.
++    const targets = db
++      .prepare(
++        `SELECT id FROM members
++          WHERE community_id=? AND status='active' AND role='warga'`,
++      )
++      .all(me.community_id) as { id: string }[]
++    if (targets.length > 0) {
++      void pushToMembers(
++        targets.map((t) => t.id),
++        {
++          title: r.bill.title,
++          body: 'Tagihan iuran lingkungan baru untuk rumah Anda.',
++          url: '#/app/iuran',
++          tag: 'dues',
++        },
++      )
++    }
++    return c.json({
++      bill: r.bill,
++      charges: r.charges.map(mapCharge),
++      summary: summarize(r.charges),
++    })
++  } catch (e) {
++    return duesFail(c, e)
++  }
++})
++
++app.delete('/api/dues/bills/:id', auth, active, (c) => {
++  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
++  const me = c.get('me')
++  const bill = getBill(c.req.param('id') ?? '')
++  if (!bill || !sameCommunity(me, bill.community_id)) return bad(c, 'forbidden', 403)
++  try {
++    removeBill(bill.id, me.id)
++    return c.json({ ok: true })
++  } catch (e) {
++    return duesFail(c, e)
++  }
++})
++
++/** Admin menandai satu tagihan lunas (pembayaran tunai ke pengurus). */
++app.post('/api/dues/charges/:id/paid', auth, active, async (c) => {
++  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
++  const me = c.get('me')
++  const cur = getCharge(c.req.param('id') ?? '')
++  if (!cur || !sameCommunity(me, cur.community_id)) return bad(c, 'forbidden', 403)
++  const b = (await c.req.json().catch(() => ({}))) as {
++    method?: 'cash' | 'transfer' | 'qris'
++    note?: string
++  }
++  try {
++    const row = markPaid(cur.id, me.id, b.method ?? 'cash', b.note ?? '')
++    if (row.claimed_by) {
++      void pushToMembers([row.claimed_by], {
++        title: 'Iuran lunas',
++        body: `Pembayaran iuran ${row.house_label} sudah dicatat.`,
++        url: '#/app/iuran',
++        tag: 'dues',
++      })
++    }
++    return c.json({ charge: mapCharge(row) })
++  } catch (e) {
++    return duesFail(c, e)
++  }
++})
++
++/** Warga menekan "saya sudah bayar" untuk tagihan rumahnya. */
++app.post('/api/dues/charges/:id/claim', auth, active, async (c) => {
++  const me = c.get('me')
++  const cur = getCharge(c.req.param('id') ?? '')
++  if (!cur || !sameCommunity(me, cur.community_id)) return bad(c, 'forbidden', 403)
++
++  // Hanya penghuni rumah yang bersangkutan (atau admin) yang boleh mengaku bayar.
++  const mine = houseOfMember(me.community_id ?? '', me.house)
++  if (!requireAdmin(c) && mine?.id !== cur.house_id) return bad(c, 'forbidden', 403)
++
++  const b = (await c.req.json().catch(() => ({}))) as {
++    method?: 'transfer' | 'qris'
++    note?: string
++  }
++  try {
++    const row = claimCharge(cur.id, me.id, b.method ?? 'qris', b.note ?? '')
++    const admins = db
++      .prepare(
++        `SELECT id FROM members
++          WHERE community_id=? AND status='active' AND role='admin'`,
++      )
++      .all(cur.community_id) as { id: string }[]
++    if (admins.length > 0) {
++      void pushToMembers(
++        admins.map((a) => a.id),
++        {
++          title: 'Konfirmasi iuran',
++          body: `${row.house_label} menyatakan sudah membayar (${row.reference}).`,
++          url: '#/app/iuran',
++          tag: 'dues-claim',
++        },
++      )
++    }
++    return c.json({ charge: mapCharge(row) })
++  } catch (e) {
++    return duesFail(c, e)
++  }
++})
++
++/** Admin menolak klaim; tagihan kembali berstatus belum bayar. */
++app.post('/api/dues/charges/:id/reject', auth, active, async (c) => {
++  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
++  const me = c.get('me')
++  const cur = getCharge(c.req.param('id') ?? '')
++  if (!cur || !sameCommunity(me, cur.community_id)) return bad(c, 'forbidden', 403)
++  const b = (await c.req.json().catch(() => ({}))) as { note?: string }
++  try {
++    const row = rejectClaim(cur.id, me.id, b.note ?? '')
++    if (cur.claimed_by) {
++      void pushToMembers([cur.claimed_by], {
++        title: 'Konfirmasi iuran ditolak',
++        body: b.note?.slice(0, 120) || 'Pembayaran belum ditemukan oleh pengurus.',
++        url: '#/app/iuran',
++        tag: 'dues',
++      })
++    }
++    return c.json({ charge: mapCharge(row) })
++  } catch (e) {
++    return duesFail(c, e)
++  }
++})
++
++/** Bebaskan satu rumah dari tagihan tertentu. */
++app.post('/api/dues/charges/:id/waive', auth, active, async (c) => {
++  if (!requireAdmin(c)) return bad(c, 'adminOnly', 403)
++  const me = c.get('me')
++  const cur = getCharge(c.req.param('id') ?? '')
++  if (!cur || !sameCommunity(me, cur.community_id)) return bad(c, 'forbidden', 403)
++  const b = (await c.req.json().catch(() => ({}))) as { note?: string }
++  try {
++    return c.json({ charge: mapCharge(waiveCharge(cur.id, me.id, b.note ?? '')) })
++  } catch (e) {
++    return duesFail(c, e)
++  }
++})
++
++/* ================= tampilan web ================= */
++
++/**
++ * Sajikan hasil build tampilan web bila ada, sehingga satu wadah cukup
++ * untuk API sekaligus aplikasinya (dan keduanya seasal — tidak perlu CORS).
++ *
++ * Kalau folder `dist` tidak ada — misalnya saat pengembangan, ketika Vite
++ * yang menyajikan tampilan — bagian ini dilewati begitu saja.
++ *
++ * Catatan: `WJW_STATIC_DIR` harus relatif terhadap direktori kerja proses.
++ */
++const STATIC_DIR = process.env.WJW_STATIC_DIR ?? './dist'
++const INDEX_HTML = join(STATIC_DIR, 'index.html')
++
++if (existsSync(INDEX_HTML)) {
++  const indexHtml = readFileSync(INDEX_HTML, 'utf8')
++  app.use('/*', serveStatic({ root: STATIC_DIR }))
++  // Aplikasi memakai rute di sisi klien: alamat apa pun yang bukan berkas
++  // dan bukan /api harus tetap membuka index.html.
++  app.get('*', (c) => {
++    if (c.req.path.startsWith('/api/')) return c.json({ error: 'notFound' }, 404)
++    return c.html(indexHtml)
++  })
++  console.log(`[WJW] menyajikan tampilan web dari ${STATIC_DIR}`)
++}
++
+ /* ================= start ================= */
+ 
+ // Hanya membuka port saat dijalankan langsung; saat di-import oleh tes,
+diff --git a/server/renewals.ts b/server/renewals.ts
+index e0e4660..8c6433b 100644
+--- a/server/renewals.ts
++++ b/server/renewals.ts
+@@ -24,6 +24,7 @@ import {
+   openInvoiceOf,
+   priceOf,
+ } from './billing.js'
++import { runMonthlyDues } from './dues.js'
+ 
+ /** URL gambar QRIS yang bisa dibuka klien email. */
+ import { pushToMembers } from './push.js'
+@@ -288,12 +289,28 @@ export async function runRenewalCheck(
+   return out
+ }
+ 
++/**
++ * Satu putaran penjadwal: perpanjangan langganan + iuran bulanan warga.
++ *
++ * Iuran ikut di sini agar tidak ada penjadwal kedua yang harus dipantau.
++ * `runMonthlyDues` menolak duplikat sendiri lewat indeks unik per periode,
++ * jadi aman meski dipanggil beberapa kali sehari.
++ */
++async function tick(): Promise<void> {
++  await runRenewalCheck()
++  try {
++    runMonthlyDues()
++  } catch {
++    // kegagalan iuran satu lingkungan tidak boleh menghentikan penjadwal
++  }
++}
++
+ /** Jalankan pemeriksaan berkala. Mengembalikan fungsi penghenti. */
+ export function startRenewalScheduler(intervalMs = 6 * 60 * 60 * 1000): () => void {
+   // jalankan sekali saat mulai, lalu berkala
+-  void runRenewalCheck().catch(() => {})
++  void tick().catch(() => {})
+   const id = setInterval(() => {
+-    void runRenewalCheck().catch(() => {})
++    void tick().catch(() => {})
+   }, intervalMs)
+   id.unref?.()
+   return () => clearInterval(id)
+diff --git a/server/schema.sql b/server/schema.sql
+index 7d14c24..b4872c7 100644
+--- a/server/schema.sql
++++ b/server/schema.sql
+@@ -276,3 +276,92 @@ CREATE TABLE IF NOT EXISTS settings (
+   at    INTEGER NOT NULL
+ );
+ 
++-- ============================================================
++-- Iuran lingkungan: admin RT/RW menagih warganya sendiri.
++-- Terpisah total dari tabel `invoices` (langganan superadmin → admin);
++-- uangnya masuk ke kas RT, bukan ke pemilik aplikasi.
++-- ============================================================
++
++-- Pengaturan iuran per lingkungan.
++CREATE TABLE IF NOT EXISTS dues_settings (
++  community_id   TEXT PRIMARY KEY REFERENCES communities(id) ON DELETE CASCADE,
++  -- nominal bawaan tiap rumah (Rupiah); rumah bisa menimpanya
++  amount         INTEGER NOT NULL DEFAULT 0,
++  -- 1 = sistem membuat tagihan rutin tiap awal bulan
++  auto_monthly   INTEGER NOT NULL DEFAULT 0,
++  -- tanggal jatuh tempo tiap bulan (1-28)
++  due_day        INTEGER NOT NULL DEFAULT 10,
++  -- keterangan cara bayar yang ditulis admin (no. rekening, nama bendahara)
++  pay_info       TEXT NOT NULL DEFAULT '',
++  -- gambar QRIS milik RT (data URL), opsional
++  qris_image     TEXT,
++  updated_at     INTEGER NOT NULL,
++  updated_by     TEXT NOT NULL DEFAULT ''
++);
++
++-- Daftar rumah. Sumber kebenaran untuk "siapa saja yang ditagih",
++-- termasuk rumah yang belum memasang aplikasi.
++CREATE TABLE IF NOT EXISTS houses (
++  id           TEXT PRIMARY KEY,
++  community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
++  -- nomor/label rumah, mis. "A-12"; unik per lingkungan
++  label        TEXT NOT NULL,
++  head_name    TEXT NOT NULL DEFAULT '',
++  -- nominal khusus rumah ini; NULL = ikut nominal bawaan
++  amount       INTEGER,
++  -- 0 = tidak ditagih (rumah kosong, dibebaskan)
++  active       INTEGER NOT NULL DEFAULT 1,
++  note         TEXT NOT NULL DEFAULT '',
++  created_at   INTEGER NOT NULL,
++  created_by   TEXT NOT NULL DEFAULT ''
++);
++CREATE UNIQUE INDEX IF NOT EXISTS idx_houses_label
++  ON houses(community_id, lower(label));
++
++-- Satu penagihan (rutin bulanan atau insidental).
++CREATE TABLE IF NOT EXISTS dues_bills (
++  id           TEXT PRIMARY KEY,
++  community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
++  title        TEXT NOT NULL,
++  -- monthly | special
++  kind         TEXT NOT NULL DEFAULT 'monthly',
++  -- 'YYYY-MM' untuk iuran bulanan; kosong untuk insidental
++  period       TEXT NOT NULL DEFAULT '',
++  due_at       INTEGER,
++  created_at   INTEGER NOT NULL,
++  created_by   TEXT NOT NULL
++);
++-- Iuran bulanan hanya boleh sekali per periode.
++CREATE UNIQUE INDEX IF NOT EXISTS idx_bills_period
++  ON dues_bills(community_id, period) WHERE period <> '';
++CREATE INDEX IF NOT EXISTS idx_bills_community
++  ON dues_bills(community_id, created_at DESC);
++
++-- Tagihan satu rumah dalam satu penagihan.
++CREATE TABLE IF NOT EXISTS dues_charges (
++  id           TEXT PRIMARY KEY,
++  bill_id      TEXT NOT NULL REFERENCES dues_bills(id) ON DELETE CASCADE,
++  community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
++  house_id     TEXT NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
++  -- disalin agar riwayat tetap terbaca bila label rumah diubah
++  house_label  TEXT NOT NULL,
++  amount       INTEGER NOT NULL,
++  -- unpaid → awaiting_verification → paid | waived
++  status       TEXT NOT NULL DEFAULT 'unpaid',
++  -- cash | transfer | qris
++  method       TEXT,
++  -- nomor rujukan yang ditentukan sistem, dipakai saat warga bayar via QRIS
++  reference    TEXT NOT NULL DEFAULT '',
++  note         TEXT NOT NULL DEFAULT '',
++  -- warga yang menekan "saya sudah bayar"
++  claimed_by   TEXT,
++  claimed_at   INTEGER,
++  paid_at      INTEGER,
++  -- admin yang menandai lunas / menyetujui
++  settled_by   TEXT,
++  created_at   INTEGER NOT NULL
++);
++CREATE UNIQUE INDEX IF NOT EXISTS idx_charge_once ON dues_charges(bill_id, house_id);
++CREATE INDEX IF NOT EXISTS idx_charges_community
++  ON dues_charges(community_id, created_at DESC);
++CREATE INDEX IF NOT EXISTS idx_charges_house ON dues_charges(house_id, status);
+diff --git a/server/tsconfig.build.json b/server/tsconfig.build.json
+new file mode 100644
+index 0000000..a18414c
+--- /dev/null
++++ b/server/tsconfig.build.json
+@@ -0,0 +1,11 @@
++{
++  "//": "Dipakai saat membuat image Docker: mengubah server TypeScript menjadi JavaScript biasa, supaya image produksi tidak perlu memuat tsx dan seluruh perkakas pengembangan.",
++  "extends": "./tsconfig.json",
++  "compilerOptions": {
++    "noEmit": false,
++    "allowImportingTsExtensions": false,
++    "outDir": "../server-dist",
++    "sourceMap": true
++  },
++  "exclude": ["**/*.test.ts"]
++}
+diff --git a/src/App.tsx b/src/App.tsx
+index 26a67bb..7722ed0 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -10,6 +10,7 @@ import PatrolCheck from './pages/PatrolCheck'
+ import BroadcastPage from './pages/Broadcast'
+ import EmergencyProfilePage from './pages/EmergencyProfile'
+ import Console from './pages/Console'
++import Dues from './pages/Dues'
+ import Guests from './pages/Guests'
+ import Home from './pages/Home'
+ import Landing from './pages/Landing'
+@@ -57,6 +58,7 @@ export default function App() {
+               <Route path="admin" element={<Admin />} />
+               <Route path="settings" element={<Settings />} />
+               <Route path="billing" element={<Billing />} />
++              <Route path="iuran" element={<Dues />} />
+               <Route path="support" element={<Support />} />
+               <Route path="broadcast" element={<BroadcastPage />} />
+               <Route path="patrol-check" element={<PatrolCheck />} />
+diff --git a/src/lib/api.ts b/src/lib/api.ts
+index 9d3446d..b3ac3d3 100644
+--- a/src/lib/api.ts
++++ b/src/lib/api.ts
+@@ -87,6 +87,7 @@ export const api = {
+   get: <T>(p: string) => request<T>('GET', p),
+   post: <T>(p: string, b?: unknown) => request<T>('POST', p, b),
+   put: <T>(p: string, b?: unknown) => request<T>('PUT', p, b),
++  patch: <T>(p: string, b?: unknown) => request<T>('PATCH', p, b),
+   del: <T>(p: string) => request<T>('DELETE', p),
+ }
+ 
+@@ -248,6 +249,139 @@ export const billingApi = {
+     api.post(`/billing/${id}/verify`, { approve, note }),
+ }
+ 
++/* ---------------- iuran lingkungan ---------------- */
++
++export type ChargeStatus = 'unpaid' | 'awaiting_verification' | 'paid' | 'waived'
++
++export interface ChargeDto {
++  id: string
++  billId: string
++  houseId: string
++  house: string
++  amount: number
++  status: ChargeStatus
++  method: string | null
++  reference: string
++  note: string
++  claimedAt: number | null
++  paidAt: number | null
++  createdAt: number
++}
++
++export interface HouseDto {
++  id: string
++  label: string
++  headName: string
++  /** Nominal khusus rumah ini; null = ikut nominal bawaan. */
++  amount: number | null
++  effectiveAmount: number
++  active: boolean
++  note: string
++  /** Sudah ada minimal satu akun aktif di rumah ini. */
++  hasApp: boolean
++}
++
++export interface DuesBillDto {
++  id: string
++  title: string
++  kind: 'monthly' | 'special'
++  period: string
++  dueAt: number | null
++  createdAt: number
++}
++
++export interface DuesSummary {
++  houses: number
++  paid: number
++  awaiting: number
++  unpaid: number
++  waived: number
++  billed: number
++  collected: number
++}
++
++/** Tampilan admin: seluruh rumah dan tagihan. */
++export interface DuesAdminView {
++  admin: true
++  settings: {
++    amount: number
++    autoMonthly: boolean
++    dueDay: number
++    payInfo: string
++    qrisImage: string | null
++  }
++  houses: HouseDto[]
++  housesWithoutApp: number
++  bills: DuesBillDto[]
++  current: { billId: string; charges: ChargeDto[]; summary: DuesSummary } | null
++}
++
++/** Tampilan warga: hanya tagihan rumahnya sendiri. */
++export interface DuesWargaView {
++  admin: false
++  amount: number
++  house: { id: string; label: string } | null
++  charges: ChargeDto[]
++  payInfo: string
++  qrisImage: string | null
++}
++
++export type DuesView = DuesAdminView | DuesWargaView
++
++export const duesApi = {
++  fetch: () => api.get<DuesView>('/dues'),
++  saveSettings: (patch: {
++    amount?: number
++    autoMonthly?: boolean
++    dueDay?: number
++    payInfo?: string
++    qrisImage?: string | null
++  }) => api.post<{ settings: DuesAdminView['settings'] }>('/dues/settings', patch),
++
++  addHouse: (input: { label: string; headName?: string; amount?: number | null }) =>
++    api.post<{ house: HouseDto }>('/dues/houses', input),
++  updateHouse: (
++    id: string,
++    patch: {
++      label?: string
++      headName?: string
++      amount?: number | null
++      active?: boolean
++      note?: string
++    },
++  ) => api.patch<{ house: HouseDto }>(`/dues/houses/${id}`, patch),
++  removeHouse: (id: string) => api.del(`/dues/houses/${id}`),
++  /** Ambil daftar rumah dari nomor rumah yang diisi warga saat mendaftar. */
++  syncHouses: () => api.post<{ added: number }>('/dues/houses/sync'),
++
++  createBill: (input: {
++    kind: 'monthly' | 'special'
++    title?: string
++    amount?: number
++    houseIds?: string[]
++  }) =>
++    api.post<{ bill: DuesBillDto; charges: ChargeDto[]; summary: DuesSummary }>(
++      '/dues/bills',
++      input,
++    ),
++  bill: (id: string) =>
++    api.get<{ bill: DuesBillDto; charges: ChargeDto[]; summary: DuesSummary }>(
++      `/dues/bills/${id}`,
++    ),
++  removeBill: (id: string) => api.del(`/dues/bills/${id}`),
++
++  /** Admin menandai lunas (biasanya tunai). */
++  markPaid: (id: string, method: 'cash' | 'transfer' | 'qris' = 'cash') =>
++    api.post<{ charge: ChargeDto }>(`/dues/charges/${id}/paid`, { method }),
++  /** Warga menyatakan sudah membayar; menunggu verifikasi admin. */
++  claim: (id: string, method: 'transfer' | 'qris' = 'qris') =>
++    api.post<{ charge: ChargeDto }>(`/dues/charges/${id}/claim`, { method }),
++  reject: (id: string, note: string) =>
++    api.post<{ charge: ChargeDto }>(`/dues/charges/${id}/reject`, { note }),
++  waive: (id: string, note = '') =>
++    api.post<{ charge: ChargeDto }>(`/dues/charges/${id}/waive`, { note }),
++}
++
+ /** Gambar QRIS — hanya superadmin yang boleh mengubah. */
+ export const qrisApi = {
+   upload: (mime: string, data: string) =>
+diff --git a/src/lib/i18n.ts b/src/lib/i18n.ts
+index 60f79c9..2150d17 100644
+--- a/src/lib/i18n.ts
++++ b/src/lib/i18n.ts
+@@ -262,6 +262,69 @@ const id = {
+   bestValue: 'Paling hemat',
+   save2Months: 'Hemat 2 bulan',
+ 
++  // iuran lingkungan
++  dues: 'Iuran lingkungan',
++  duesShort: 'Iuran',
++  duesAdminIntro:
++    'Tagih iuran ke tiap rumah, catat yang sudah bayar. Uang tetap di kas lingkungan — aplikasi hanya mencatat.',
++  duesWargaIntro: 'Tagihan iuran untuk rumah Anda.',
++  duesAmount: 'Nominal per rumah',
++  duesAmountHint: 'Nominal bawaan. Rumah tertentu bisa diberi nominal berbeda.',
++  duesDueDay: 'Jatuh tempo tiap tanggal',
++  duesAuto: 'Buat tagihan otomatis tiap bulan',
++  duesPayInfo: 'Cara bayar',
++  duesPayInfoHint: 'Mis. tunai ke Pak RT, atau transfer BCA 123456 a.n. Bendahara.',
++  duesSettings: 'Pengaturan iuran',
++  duesSettingsSaved: 'Pengaturan iuran tersimpan.',
++  duesHouses: 'Daftar rumah',
++  duesHouseCount: '{n} rumah',
++  duesAddHouse: 'Tambah rumah',
++  duesHouseLabel: 'Nomor rumah',
++  duesHouseHead: 'Nama kepala keluarga',
++  duesHouseAmount: 'Nominal khusus (kosongkan = ikut bawaan)',
++  duesHouseSaved: 'Data rumah tersimpan.',
++  duesHouseRemoved: 'Rumah dihapus.',
++  duesHouseRemoveConfirm: 'Hapus rumah ini beserta riwayat tagihannya?',
++  duesHouseInactive: 'Tidak ditagih',
++  duesSyncHouses: 'Ambil dari data warga',
++  duesSynced: '{n} rumah ditambahkan dari data warga.',
++  duesNoApp: 'Belum pasang aplikasi',
++  duesNoAppNote:
++    '{n} rumah belum memasang aplikasi. Sarankan minimal satu HP per rumah agar tagihan langsung sampai.',
++  duesCreateBill: 'Buat tagihan',
++  duesCreateMonthly: 'Tagihan bulan ini',
++  duesCreateSpecial: 'Iuran khusus',
++  duesBillTitle: 'Judul tagihan',
++  duesBillTitleHint: 'Mis. Kerja bakti, HUT RI, perbaikan portal.',
++  duesBillCreated: 'Tagihan dibuat untuk {n} rumah.',
++  duesBillExists: 'Tagihan bulan ini sudah dibuat.',
++  duesNoAmount: 'Isi dulu nominal iuran.',
++  duesNoHouses: 'Belum ada rumah yang didata.',
++  duesBills: 'Riwayat penagihan',
++  duesNoBills: 'Belum ada penagihan.',
++  duesCollected: 'Terkumpul',
++  duesOutstanding: 'Belum masuk',
++  duesPaidCount: '{paid} dari {total} rumah lunas',
++  duesStatusUnpaid: 'Belum bayar',
++  duesStatusAwaiting: 'Menunggu verifikasi',
++  duesStatusPaid: 'Lunas',
++  duesStatusWaived: 'Dibebaskan',
++  duesMarkPaid: 'Tandai lunas',
++  duesMarkPaidConfirm: 'Tandai iuran {house} sudah lunas?',
++  duesApprove: 'Setujui',
++  duesRejectClaim: 'Tolak',
++  duesRejectNote: 'Alasan penolakan',
++  duesWaive: 'Bebaskan',
++  duesWaiveConfirm: 'Bebaskan {house} dari tagihan ini?',
++  duesIPaid: 'Saya sudah bayar',
++  duesClaimSent: 'Konfirmasi terkirim. Menunggu pengurus memeriksa.',
++  duesClaimNote: 'Pengurus akan mencocokkan pembayaran Anda.',
++  duesNoHouseForMe:
++    'Nomor rumah Anda belum terdaftar di daftar iuran. Hubungi pengurus lingkungan.',
++  duesNoBillsForMe: 'Belum ada tagihan iuran untuk rumah Anda.',
++  duesNeedServer: 'Iuran lingkungan membutuhkan sambungan ke server.',
++  duesRef: 'Nomor referensi',
++
+   // superadmin
+   superadminConsole: 'Konsol Superadmin',
+   overview: 'Ringkasan',
+@@ -617,6 +680,16 @@ const id = {
+ 
+   // --- koneksi server ---
+   errOffline: 'Tidak terhubung ke server. Coba lagi.',
++  // kode error dari server untuk iuran
++  billExists: 'Tagihan bulan ini sudah dibuat.',
++  noHouses: 'Belum ada rumah yang didata.',
++  noAmount: 'Isi dulu nominal iuran.',
++  houseExists: 'Nomor rumah itu sudah ada.',
++  houseLabelRequired: 'Nomor rumah wajib diisi.',
++  alreadyPaid: 'Tagihan ini sudah lunas.',
++  notFound: 'Data tidak ditemukan.',
++  forbidden: 'Anda tidak berhak melakukan ini.',
++  errInvalid: 'Isian belum benar.',
+   errUnknown: 'Terjadi kesalahan. Coba lagi.',
+   offlineBanner: 'Mode luring — perubahan hanya tersimpan di HP ini.',
+   syncing: 'Menyinkronkan…',
+@@ -977,6 +1050,69 @@ const en: Dict = {
+   bestValue: 'Best value',
+   save2Months: 'Save 2 months',
+ 
++  // community dues
++  dues: 'Community dues',
++  duesShort: 'Dues',
++  duesAdminIntro:
++    'Bill each house and track who has paid. The money stays in the neighbourhood treasury — the app only keeps the record.',
++  duesWargaIntro: 'Dues for your house.',
++  duesAmount: 'Amount per house',
++  duesAmountHint: 'Default amount. Individual houses can be given a different one.',
++  duesDueDay: 'Due on day',
++  duesAuto: 'Create a bill automatically every month',
++  duesPayInfo: 'How to pay',
++  duesPayInfoHint: 'E.g. cash to the head of RT, or transfer to BCA 123456.',
++  duesSettings: 'Dues settings',
++  duesSettingsSaved: 'Dues settings saved.',
++  duesHouses: 'Houses',
++  duesHouseCount: '{n} houses',
++  duesAddHouse: 'Add house',
++  duesHouseLabel: 'House number',
++  duesHouseHead: 'Head of household',
++  duesHouseAmount: 'Custom amount (leave empty to use the default)',
++  duesHouseSaved: 'House saved.',
++  duesHouseRemoved: 'House removed.',
++  duesHouseRemoveConfirm: 'Remove this house and its billing history?',
++  duesHouseInactive: 'Not billed',
++  duesSyncHouses: 'Import from members',
++  duesSynced: '{n} houses added from member data.',
++  duesNoApp: 'App not installed',
++  duesNoAppNote:
++    '{n} houses have not installed the app. Aim for at least one phone per house so bills arrive directly.',
++  duesCreateBill: 'Create bill',
++  duesCreateMonthly: 'Bill for this month',
++  duesCreateSpecial: 'One-off collection',
++  duesBillTitle: 'Bill title',
++  duesBillTitleHint: 'E.g. clean-up day, Independence Day, gate repair.',
++  duesBillCreated: 'Bill created for {n} houses.',
++  duesBillExists: 'This month has already been billed.',
++  duesNoAmount: 'Set the dues amount first.',
++  duesNoHouses: 'No houses recorded yet.',
++  duesBills: 'Billing history',
++  duesNoBills: 'No bills yet.',
++  duesCollected: 'Collected',
++  duesOutstanding: 'Outstanding',
++  duesPaidCount: '{paid} of {total} houses paid',
++  duesStatusUnpaid: 'Unpaid',
++  duesStatusAwaiting: 'Awaiting check',
++  duesStatusPaid: 'Paid',
++  duesStatusWaived: 'Waived',
++  duesMarkPaid: 'Mark as paid',
++  duesMarkPaidConfirm: 'Mark dues for {house} as paid?',
++  duesApprove: 'Approve',
++  duesRejectClaim: 'Reject',
++  duesRejectNote: 'Reason for rejection',
++  duesWaive: 'Waive',
++  duesWaiveConfirm: 'Waive this bill for {house}?',
++  duesIPaid: 'I have paid',
++  duesClaimSent: 'Confirmation sent. Waiting for the committee to check.',
++  duesClaimNote: 'The committee will match your payment.',
++  duesNoHouseForMe:
++    'Your house number is not on the dues list yet. Please contact the committee.',
++  duesNoBillsForMe: 'No dues billed to your house yet.',
++  duesNeedServer: 'Community dues needs a connection to the server.',
++  duesRef: 'Reference number',
++
+   superadminConsole: 'Superadmin console',
+   overview: 'Overview',
+   communities: 'Neighbourhoods',
+@@ -1307,6 +1443,16 @@ const en: Dict = {
+   storageFull: 'Storage full — the attachment was not saved, but the alert was still sent.',
+ 
+   errOffline: 'Cannot reach the server. Please try again.',
++  // server error codes for dues
++  billExists: 'This month has already been billed.',
++  noHouses: 'No houses recorded yet.',
++  noAmount: 'Set the dues amount first.',
++  houseExists: 'That house number already exists.',
++  houseLabelRequired: 'House number is required.',
++  alreadyPaid: 'This bill is already paid.',
++  notFound: 'Not found.',
++  forbidden: 'You are not allowed to do that.',
++  errInvalid: 'Please check the form.',
+   errUnknown: 'Something went wrong. Please try again.',
+   offlineBanner: 'Offline — changes are only saved on this phone.',
+   syncing: 'Syncing…',
+@@ -1612,6 +1758,39 @@ const su: Dict = {
+   billCreatedLocal: 'Tagihan parantos didamel. Mayar via QRIS, teras pencét “Abdi parantos mayar”.',
+   localBillNote:
+     'Mode luar jaringan: tagihan ieu ngan disimpen di HP ieu. Nomer référénsi didamel ku sistem sareng teu tiasa dirobih.',
++
++  // iuran lingkungan
++  dues: 'Iuran lingkungan',
++  duesShort: 'Iuran',
++  duesAdminIntro:
++    'Tagih iuran ka unggal imah, catet saha nu parantos mayar. Artosna tetep di kas lingkungan — aplikasi mah ngan nyatet.',
++  duesWargaIntro: 'Tagihan iuran kanggo imah Anjeun.',
++  duesAmount: 'Jumlah per imah',
++  duesDueDay: 'Wates mayar unggal tanggal',
++  duesAuto: 'Damel tagihan otomatis unggal bulan',
++  duesPayInfo: 'Cara mayar',
++  duesSettings: 'Setelan iuran',
++  duesHouses: 'Daptar imah',
++  duesHouseCount: '{n} imah',
++  duesAddHouse: 'Tambih imah',
++  duesHouseLabel: 'Nomer imah',
++  duesHouseHead: 'Nami kapala kulawarga',
++  duesSyncHouses: 'Candak tina data warga',
++  duesNoApp: 'Can masang aplikasi',
++  duesCreateBill: 'Damel tagihan',
++  duesCreateMonthly: 'Tagihan bulan ieu',
++  duesCreateSpecial: 'Iuran husus',
++  duesBills: 'Riwayat tagihan',
++  duesCollected: 'Kakumpul',
++  duesOutstanding: 'Can asup',
++  duesStatusUnpaid: 'Can mayar',
++  duesStatusAwaiting: 'Ngantosan verifikasi',
++  duesStatusPaid: 'Lunas',
++  duesStatusWaived: 'Dibébaskeun',
++  duesMarkPaid: 'Tandaan lunas',
++  duesIPaid: 'Abdi parantos mayar',
++  duesClaimSent: 'Konfirmasi parantos dikirim. Ngantosan pangurus mariksa.',
++  duesNoBillsForMe: 'Teu acan aya tagihan iuran kanggo imah Anjeun.',
+ }
+ 
+ export const DICTS: Record<Lang, Dict> = { id, en, su }
+diff --git a/src/pages/Billing.tsx b/src/pages/Billing.tsx
+index add16ce..cbaf83d 100644
+--- a/src/pages/Billing.tsx
++++ b/src/pages/Billing.tsx
+@@ -28,7 +28,7 @@ export default function Billing() {
+   const [claiming, setClaiming] = useState<InvoiceDto | null>(null)
+ 
+   const load = useCallback(async () => {
+-    if (!apiMode()) return
++    if (!apiMode() || !isAdmin) return
+     try {
+       const r = await billingApi.fetch()
+       setInvoices(r.invoices)
+@@ -37,18 +37,26 @@ export default function Billing() {
+     } catch {
+       setInvoices(null)
+     }
+-  }, [])
++  }, [isAdmin])
+ 
+   useEffect(() => {
+     void load()
+   }, [load])
+ 
++  // Halaman ini murni urusan admin ↔ superadmin. Bila warga atau satpam
++  // mengetik URL-nya secara manual, kembalikan ke beranda.
++  useEffect(() => {
++    if (!isAdmin) nav('/app', { replace: true })
++  }, [isAdmin, nav])
++
+   const localPayments = useMemo(
+     () => (community ? db.payments.filter((p) => p.communityId === community.id) : []),
+     [db.payments, community],
+   )
+ 
+   if (!me || !community) return null
++  // Pengalihan di atas sedang berjalan — jangan render apa pun dulu.
++  if (!isAdmin) return null
+ 
+   /** Tagihan yang belum lunas. */
+   const openInvoice = invoices?.find(
+@@ -162,168 +170,159 @@ export default function Billing() {
+         </div>
+       </div>
+ 
+-      {!isAdmin ? (
+-        <div className="banner banner-info" style={{ marginTop: 14 }}>
+-          <Icon name="info" size={17} />
+-          <span>{t('adminOnly')}</span>
+-        </div>
+-      ) : (
+-        <>
+-          {/* tagihan berjalan */}
+-          {openInvoice && (
+-            <div
+-              className="card"
+-              style={{
+-                marginTop: 14,
+-                borderColor:
+-                  openInvoice.status === 'awaiting_verification'
+-                    ? 'var(--info)'
+-                    : 'var(--warn)',
+-              }}
+-            >
+-              <div className="row-between" style={{ marginBottom: 10 }}>
+-                <span className="strong">{chipLabel(openInvoice.status)}</span>
+-                <span className={`chip ${chipClass(openInvoice.status)}`}>
+-                  {fmtMoney(openInvoice.amount, lang)}
+-                </span>
+-              </div>
+-
+-              {openInvoice.status === 'awaiting_verification' ? (
+-                <p className="tiny">
+-                  {t('verifyWithin')} · {openInvoice.reference}
+-                </p>
+-              ) : (
+-                <>
+-                  {openInvoice.note && (
+-                    <div className="banner banner-danger" style={{ marginBottom: 10 }}>
+-                      <Icon name="info" size={15} />
+-                      <span>{t('rejectedNote', { note: openInvoice.note })}</span>
+-                    </div>
+-                  )}
+-
+-                  <QrisCard
+-                    qris={qris}
+-                    reference={openInvoice.reference}
+-                    amount={openInvoice.amount}
+-                  />
++      {/* tagihan berjalan */}
++      {openInvoice && (
++        <div
++          className="card"
++          style={{
++            marginTop: 14,
++            borderColor:
++              openInvoice.status === 'awaiting_verification'
++                ? 'var(--info)'
++                : 'var(--warn)',
++          }}
++        >
++          <div className="row-between" style={{ marginBottom: 10 }}>
++            <span className="strong">{chipLabel(openInvoice.status)}</span>
++            <span className={`chip ${chipClass(openInvoice.status)}`}>
++              {fmtMoney(openInvoice.amount, lang)}
++            </span>
++          </div>
+ 
+-                  <button
+-                    className="btn btn-primary"
+-                    onClick={() => setClaiming(openInvoice)}
+-                  >
+-                    <Icon name="check" size={16} /> {t('iHavePaid')}
+-                  </button>
+-                  <button
+-                    className="btn btn-ghost"
+-                    style={{ marginTop: 8 }}
+-                    disabled={busy}
+-                    onClick={async () => {
+-                      try {
+-                        await billingApi.resend(openInvoice.id)
+-                        toast(t('billResent'))
+-                      } catch {
+-                        toast(t('errUnknown'), 'err')
+-                      }
+-                    }}
+-                  >
+-                    <Icon name="send" size={15} /> {t('resendBill')}
+-                  </button>
+-                </>
++          {openInvoice.status === 'awaiting_verification' ? (
++            <p className="tiny">
++              {t('verifyWithin')} · {openInvoice.reference}
++            </p>
++          ) : (
++            <>
++              {openInvoice.note && (
++                <div className="banner banner-danger" style={{ marginBottom: 10 }}>
++                  <Icon name="info" size={15} />
++                  <span>{t('rejectedNote', { note: openInvoice.note })}</span>
++                </div>
+               )}
+-            </div>
+-          )}
+ 
+-          {/* tagihan berjalan — mode lokal */}
+-          {!apiMode() && openLocal && (
+-            <div className="card" style={{ marginTop: 14, borderColor: 'var(--warn)' }}>
+-              <div className="row-between" style={{ marginBottom: 10 }}>
+-                <span className="strong">{t('billPending')}</span>
+-                <span className="chip chip-warn">{fmtMoney(openLocal.amount, lang)}</span>
+-              </div>
+               <QrisCard
+                 qris={qris}
+-                reference={openLocal.reference}
+-                amount={openLocal.amount}
++                reference={openInvoice.reference}
++                amount={openInvoice.amount}
+               />
+-              <p className="tiny center">{t('localBillNote')}</p>
+-            </div>
++
++              <button
++                className="btn btn-primary"
++                onClick={() => setClaiming(openInvoice)}
++              >
++                <Icon name="check" size={16} /> {t('iHavePaid')}
++              </button>
++              <button
++                className="btn btn-ghost"
++                style={{ marginTop: 8 }}
++                disabled={busy}
++                onClick={async () => {
++                  try {
++                    await billingApi.resend(openInvoice.id)
++                    toast(t('billResent'))
++                  } catch {
++                    toast(t('errUnknown'), 'err')
++                  }
++                }}
++              >
++                <Icon name="send" size={15} /> {t('resendBill')}
++              </button>
++            </>
+           )}
++        </div>
++      )}
+ 
+-          {/* pilih paket — hanya bila tidak ada tagihan berjalan */}
+-          {!openInvoice && !(!apiMode() && openLocal) && (
+-            <>
+-              <div className="section-title">{t('subscribe')}</div>
+-              <div className="col" style={{ gap: 10 }}>
+-                <button
+-                  className={`price-card ${choice === 'monthly' ? 'on' : ''}`}
+-                  onClick={() => setChoice('monthly')}
+-                >
+-                  <div className="row-between">
+-                    <div>
+-                      <div className="strong">{t('planMonthly')}</div>
+-                      <div className="amt">
+-                        {fmtMoney(prices.monthly, lang)}
+-                        <span className="tiny">{t('perMonth')}</span>
+-                      </div>
+-                    </div>
+-                    {choice === 'monthly' && (
+-                      <Icon name="check" size={22} color="var(--brand)" />
+-                    )}
++      {/* tagihan berjalan — mode lokal */}
++      {!apiMode() && openLocal && (
++        <div className="card" style={{ marginTop: 14, borderColor: 'var(--warn)' }}>
++          <div className="row-between" style={{ marginBottom: 10 }}>
++            <span className="strong">{t('billPending')}</span>
++            <span className="chip chip-warn">{fmtMoney(openLocal.amount, lang)}</span>
++          </div>
++          <QrisCard
++            qris={qris}
++            reference={openLocal.reference}
++            amount={openLocal.amount}
++          />
++          <p className="tiny center">{t('localBillNote')}</p>
++        </div>
++      )}
++
++      {/* pilih paket — hanya bila tidak ada tagihan berjalan */}
++      {!openInvoice && !(!apiMode() && openLocal) && (
++        <>
++          <div className="section-title">{t('subscribe')}</div>
++          <div className="col" style={{ gap: 10 }}>
++            <button
++              className={`price-card ${choice === 'monthly' ? 'on' : ''}`}
++              onClick={() => setChoice('monthly')}
++            >
++              <div className="row-between">
++                <div>
++                  <div className="strong">{t('planMonthly')}</div>
++                  <div className="amt">
++                    {fmtMoney(prices.monthly, lang)}
++                    <span className="tiny">{t('perMonth')}</span>
++                  </div>
++                </div>
++                {choice === 'monthly' && (
++                  <Icon name="check" size={22} color="var(--brand)" />
++                )}
++              </div>
++            </button>
++            <button
++              className={`price-card ${choice === 'yearly' ? 'on' : ''}`}
++              onClick={() => setChoice('yearly')}
++            >
++              <span className="badge-corner">{t('bestValue')}</span>
++              <div className="row-between">
++                <div>
++                  <div className="strong">
++                    {t('planYearly')} ·{' '}
++                    <span className="tiny">{t('save2Months')}</span>
+                   </div>
+-                </button>
+-                <button
+-                  className={`price-card ${choice === 'yearly' ? 'on' : ''}`}
+-                  onClick={() => setChoice('yearly')}
+-                >
+-                  <span className="badge-corner">{t('bestValue')}</span>
+-                  <div className="row-between">
+-                    <div>
+-                      <div className="strong">
+-                        {t('planYearly')} ·{' '}
+-                        <span className="tiny">{t('save2Months')}</span>
+-                      </div>
+-                      <div className="amt">
+-                        {fmtMoney(prices.yearly, lang)}
+-                        <span className="tiny">{t('perYear')}</span>
+-                      </div>
+-                    </div>
+-                    {choice === 'yearly' && (
+-                      <Icon name="check" size={22} color="var(--brand)" />
+-                    )}
++                  <div className="amt">
++                    {fmtMoney(prices.yearly, lang)}
++                    <span className="tiny">{t('perYear')}</span>
+                   </div>
+-                </button>
++                </div>
++                {choice === 'yearly' && (
++                  <Icon name="check" size={22} color="var(--brand)" />
++                )}
+               </div>
++            </button>
++          </div>
+ 
+-              {apiMode() ? (
+-                <>
+-                  <button
+-                    className="btn btn-primary"
+-                    style={{ marginTop: 16 }}
+-                    disabled={busy}
+-                    onClick={() => void createBill()}
+-                  >
+-                    <Icon name="credit" size={16} />{' '}
+-                    {busy ? t('loading') : t('createBill')}
+-                  </button>
+-                  <p className="tiny center" style={{ marginTop: 10 }}>
+-                    {t('billEmailNote', { email: me.email })}
+-                  </p>
+-                </>
+-              ) : (
+-                /* mode lokal — tanpa server, tanpa email */
+-                <>
+-                  <button
+-                    className="btn btn-primary"
+-                    style={{ marginTop: 16 }}
+-                    onClick={createLocalBill}
+-                  >
+-                    <Icon name="credit" size={16} /> {t('createBill')}
+-                  </button>
+-                  <p className="tiny center" style={{ marginTop: 10 }}>
+-                    {t('localBillNote')}
+-                  </p>
+-                </>
+-              )}
++          {apiMode() ? (
++            <>
++              <button
++                className="btn btn-primary"
++                style={{ marginTop: 16 }}
++                disabled={busy}
++                onClick={() => void createBill()}
++              >
++                <Icon name="credit" size={16} />{' '}
++                {busy ? t('loading') : t('createBill')}
++              </button>
++              <p className="tiny center" style={{ marginTop: 10 }}>
++                {t('billEmailNote', { email: me.email })}
++              </p>
++            </>
++          ) : (
++            /* mode lokal — tanpa server, tanpa email */
++            <>
++              <button
++                className="btn btn-primary"
++                style={{ marginTop: 16 }}
++                onClick={createLocalBill}
++              >
++                <Icon name="credit" size={16} /> {t('createBill')}
++              </button>
++              <p className="tiny center" style={{ marginTop: 10 }}>
++                {t('localBillNote')}
++              </p>
+             </>
+           )}
+         </>
+diff --git a/src/pages/Dues.tsx b/src/pages/Dues.tsx
+new file mode 100644
+index 0000000..f2abb30
+--- /dev/null
++++ b/src/pages/Dues.tsx
+@@ -0,0 +1,774 @@
++/**
++ * Iuran lingkungan.
++ *
++ * Satu halaman, dua wajah:
++ *   - Admin  : atur nominal, kelola daftar rumah, buat tagihan, tandai lunas.
++ *   - Warga  : lihat tagihan rumahnya dan konfirmasi kalau sudah bayar.
++ *
++ * Yang ditagih adalah RUMAH. Semua akun di rumah yang sama melihat tagihan
++ * yang sama, jadi cukup satu HP per rumah untuk bisa ditagih — sisanya
++ * boleh ikut memantau.
++ */
++import { useCallback, useEffect, useState } from 'react'
++import { useNavigate } from 'react-router'
++import {
++  ApiError,
++  duesApi,
++  type ChargeDto,
++  type ChargeStatus,
++  type DuesAdminView,
++  type DuesView,
++  type DuesWargaView,
++  type HouseDto,
++} from '../lib/api'
++import { fmtDate, fmtMoney } from '../lib/format'
++import { useApp } from '../lib/store'
++import { apiMode } from '../lib/sync'
++import { Icon } from '../ui/Icon'
++import { Sheet } from '../ui/Sheet'
++import { useToast } from '../ui/Toast'
++import type { Key } from '../lib/i18n'
++
++const STATUS_KEY: Record<ChargeStatus, Key> = {
++  unpaid: 'duesStatusUnpaid',
++  awaiting_verification: 'duesStatusAwaiting',
++  paid: 'duesStatusPaid',
++  waived: 'duesStatusWaived',
++}
++
++const STATUS_CHIP: Record<ChargeStatus, string> = {
++  unpaid: 'chip-warn',
++  awaiting_verification: 'chip-info',
++  paid: 'chip-brand',
++  waived: 'chip-purple',
++}
++
++export default function Dues() {
++  const { me, community, t, lang } = useApp()
++  const nav = useNavigate()
++  const toast = useToast()
++
++  const [view, setView] = useState<DuesView | null>(null)
++  const [busy, setBusy] = useState(false)
++
++  const load = useCallback(async () => {
++    if (!apiMode()) return
++    try {
++      setView(await duesApi.fetch())
++    } catch {
++      setView(null)
++    }
++  }, [])
++
++  useEffect(() => {
++    void load()
++  }, [load])
++
++  /** Bungkus aksi: kunci tombol, tampilkan pesan, lalu muat ulang. */
++  const run = async (fn: () => Promise<unknown>, okKey?: Key, vars?: Record<string, string | number>) => {
++    setBusy(true)
++    try {
++      await fn()
++      await load()
++      if (okKey) toast(t(okKey, vars))
++    } catch (e) {
++      toast(t((e instanceof ApiError ? e.code : 'errUnknown') as Key), 'err')
++    }
++    setBusy(false)
++  }
++
++  if (!me || !community) return null
++
++  return (
++    <div className="page">
++      <div className="row" style={{ marginBottom: 14 }}>
++        <button className="icon-btn" onClick={() => nav(-1)}>
++          <Icon name="chevronLeft" size={18} />
++        </button>
++        <h2 className="grow" style={{ fontSize: 20, fontWeight: 800 }}>
++          {t('dues')}
++        </h2>
++      </div>
++
++      {!apiMode() ? (
++        <div className="banner banner-info">
++          <Icon name="info" size={17} />
++          <span>{t('duesNeedServer')}</span>
++        </div>
++      ) : !view ? (
++        <div className="empty">
++          <span className="em">💰</span>
++          {t('loading')}
++        </div>
++      ) : view.admin ? (
++        <AdminView v={view} t={t} lang={lang} busy={busy} run={run} reload={load} />
++      ) : (
++        <WargaView v={view} t={t} lang={lang} busy={busy} run={run} />
++      )}
++    </div>
++  )
++}
++
++/* ---------------- tampilan warga ---------------- */
++
++function WargaView({
++  v,
++  t,
++  lang,
++  busy,
++  run,
++}: {
++  v: DuesWargaView
++  t: (k: Key, vars?: Record<string, string | number>) => string
++  lang: 'id' | 'en' | 'su'
++  busy: boolean
++  run: (fn: () => Promise<unknown>, okKey?: Key) => Promise<void>
++}) {
++  const open = v.charges.find(
++    (c) => c.status === 'unpaid' || c.status === 'awaiting_verification',
++  )
++
++  if (!v.house) {
++    return (
++      <div className="banner banner-warn">
++        <Icon name="info" size={17} />
++        <span>{t('duesNoHouseForMe')}</span>
++      </div>
++    )
++  }
++
++  return (
++    <>
++      <p className="muted" style={{ marginTop: 0 }}>
++        {t('duesWargaIntro')} · {v.house.label}
++      </p>
++
++      {open ? (
++        <div
++          className="card"
++          style={{
++            borderColor:
++              open.status === 'awaiting_verification' ? 'var(--info)' : 'var(--warn)',
++          }}
++        >
++          <div className="row-between" style={{ marginBottom: 8 }}>
++            <span className="strong">{fmtMoney(open.amount, lang)}</span>
++            <span className={`chip ${STATUS_CHIP[open.status]}`}>
++              {t(STATUS_KEY[open.status])}
++            </span>
++          </div>
++
++          <div className="tiny">
++            {t('duesRef')}: {open.reference}
++          </div>
++
++          {v.payInfo && (
++            <p className="tiny" style={{ marginTop: 8 }}>
++              {v.payInfo}
++            </p>
++          )}
++          {v.qrisImage && (
++            <img
++              src={v.qrisImage}
++              alt="QRIS"
++              style={{ width: '100%', borderRadius: 12, marginTop: 10 }}
++            />
++          )}
++
++          {open.status === 'unpaid' ? (
++            <button
++              className="btn btn-primary"
++              style={{ marginTop: 12 }}
++              disabled={busy}
++              onClick={() => void run(() => duesApi.claim(open.id), 'duesClaimSent')}
++            >
++              <Icon name="check" size={16} /> {t('duesIPaid')}
++            </button>
++          ) : (
++            <p className="tiny center" style={{ marginTop: 10 }}>
++              {t('duesClaimNote')}
++            </p>
++          )}
++        </div>
++      ) : (
++        <div className="empty">
++          <span className="em">🎉</span>
++          {t('duesNoBillsForMe')}
++        </div>
++      )}
++
++      <div className="section-title">{t('duesBills')}</div>
++      {v.charges.length === 0 ? (
++        <div className="empty">
++          <span className="em">🧾</span>
++          {t('duesNoBills')}
++        </div>
++      ) : (
++        v.charges.map((c) => <ChargeRow key={c.id} c={c} t={t} lang={lang} />)
++      )}
++    </>
++  )
++}
++
++function ChargeRow({
++  c,
++  t,
++  lang,
++}: {
++  c: ChargeDto
++  t: (k: Key) => string
++  lang: 'id' | 'en' | 'su'
++}) {
++  return (
++    <div className="item">
++      <div
++        className="item-icon"
++        style={{
++          background: c.status === 'paid' ? 'var(--brand-soft)' : 'var(--surface-2)',
++          color: c.status === 'paid' ? 'var(--brand)' : 'var(--text-2)',
++        }}
++      >
++        <Icon name="credit" size={18} />
++      </div>
++      <div className="grow">
++        <div className="strong">{fmtMoney(c.amount, lang)}</div>
++        <div className="tiny">{fmtDate(c.createdAt, lang)}</div>
++      </div>
++      <span className={`chip ${STATUS_CHIP[c.status]}`}>{t(STATUS_KEY[c.status])}</span>
++    </div>
++  )
++}
++
++/* ---------------- tampilan admin ---------------- */
++
++function AdminView({
++  v,
++  t,
++  lang,
++  busy,
++  run,
++  reload,
++}: {
++  v: DuesAdminView
++  t: (k: Key, vars?: Record<string, string | number>) => string
++  lang: 'id' | 'en' | 'su'
++  busy: boolean
++  run: (
++    fn: () => Promise<unknown>,
++    okKey?: Key,
++    vars?: Record<string, string | number>,
++  ) => Promise<void>
++  reload: () => Promise<void>
++}) {
++  const toast = useToast()
++  const [tab, setTab] = useState<'bill' | 'houses' | 'settings'>('bill')
++  const [editing, setEditing] = useState<HouseDto | null>(null)
++  const [adding, setAdding] = useState(false)
++  const [special, setSpecial] = useState(false)
++
++  const s = v.current?.summary
++
++  return (
++    <>
++      <p className="muted" style={{ marginTop: 0 }}>
++        {t('duesAdminIntro')}
++      </p>
++
++      {/* ringkasan penagihan terakhir */}
++      {v.current && s && (
++        <div
++          className="card"
++          style={{
++            background: 'linear-gradient(135deg, rgba(46,194,126,.16), var(--surface))',
++          }}
++        >
++          <div className="row-between">
++            <div>
++              <div className="tiny">{v.bills[0]?.title}</div>
++              <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: -0.5 }}>
++                {fmtMoney(s.collected, lang)}
++              </div>
++              <div className="muted" style={{ marginTop: 2 }}>
++                {t('duesCollected')} · {t('duesPaidCount', { paid: s.paid, total: s.houses })}
++              </div>
++            </div>
++            <Icon name="chart" size={30} color="var(--brand)" />
++          </div>
++          {s.billed - s.collected > 0 && (
++            <div className="tiny" style={{ marginTop: 8 }}>
++              {t('duesOutstanding')}: {fmtMoney(s.billed - s.collected, lang)}
++              {s.awaiting > 0 && ` · ${s.awaiting} ${t('duesStatusAwaiting').toLowerCase()}`}
++            </div>
++          )}
++        </div>
++      )}
++
++      {/* rumah yang belum memasang aplikasi */}
++      {v.housesWithoutApp > 0 && (
++        <div className="banner banner-warn" style={{ marginTop: 12 }}>
++          <Icon name="info" size={17} />
++          <span>{t('duesNoAppNote', { n: v.housesWithoutApp })}</span>
++        </div>
++      )}
++
++      <div className="btn-row" style={{ marginTop: 14 }}>
++        <button
++          className={`btn btn-sm ${tab === 'bill' ? 'btn-primary' : 'btn-ghost'}`}
++          onClick={() => setTab('bill')}
++        >
++          {t('duesShort')}
++        </button>
++        <button
++          className={`btn btn-sm ${tab === 'houses' ? 'btn-primary' : 'btn-ghost'}`}
++          onClick={() => setTab('houses')}
++        >
++          {t('duesHouses')}
++        </button>
++        <button
++          className={`btn btn-sm ${tab === 'settings' ? 'btn-primary' : 'btn-ghost'}`}
++          onClick={() => setTab('settings')}
++        >
++          {t('duesSettings')}
++        </button>
++      </div>
++
++      {tab === 'bill' && (
++        <>
++          <div className="btn-row" style={{ marginTop: 12 }}>
++            <button
++              className="btn btn-primary"
++              disabled={busy}
++              onClick={() =>
++                void run(() => duesApi.createBill({ kind: 'monthly' }), 'duesBillCreated', {
++                  n: v.houses.filter((h) => h.active).length,
++                })
++              }
++            >
++              <Icon name="plus" size={16} /> {t('duesCreateMonthly')}
++            </button>
++            <button className="btn btn-ghost" onClick={() => setSpecial(true)}>
++              <Icon name="gift" size={16} /> {t('duesCreateSpecial')}
++            </button>
++          </div>
++
++          <div className="section-title">{t('duesShort')}</div>
++          {!v.current || v.current.charges.length === 0 ? (
++            <div className="empty">
++              <span className="em">🧾</span>
++              {t('duesNoBills')}
++            </div>
++          ) : (
++            v.current.charges.map((c) => (
++              <AdminCharge key={c.id} c={c} t={t} lang={lang} busy={busy} run={run} />
++            ))
++          )}
++
++          {v.bills.length > 1 && (
++            <>
++              <div className="section-title">{t('duesBills')}</div>
++              {v.bills.slice(1).map((b) => (
++                <div key={b.id} className="item">
++                  <div
++                    className="item-icon"
++                    style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}
++                  >
++                    <Icon name="clipboard" size={18} />
++                  </div>
++                  <div className="grow">
++                    <div className="strong">{b.title}</div>
++                    <div className="tiny">{fmtDate(b.createdAt, lang)}</div>
++                  </div>
++                </div>
++              ))}
++            </>
++          )}
++        </>
++      )}
++
++      {tab === 'houses' && (
++        <>
++          <div className="btn-row" style={{ marginTop: 12 }}>
++            <button className="btn btn-primary" onClick={() => setAdding(true)}>
++              <Icon name="plus" size={16} /> {t('duesAddHouse')}
++            </button>
++            <button
++              className="btn btn-ghost"
++              disabled={busy}
++              onClick={async () => {
++                try {
++                  const r = await duesApi.syncHouses()
++                  await reload()
++                  toast(t('duesSynced', { n: r.added }))
++                } catch {
++                  toast(t('errUnknown'), 'err')
++                }
++              }}
++            >
++              <Icon name="users" size={16} /> {t('duesSyncHouses')}
++            </button>
++          </div>
++
++          <div className="section-title">
++            {t('duesHouseCount', { n: v.houses.length })}
++          </div>
++          {v.houses.length === 0 ? (
++            <div className="empty">
++              <span className="em">🏠</span>
++              {t('duesNoHouses')}
++            </div>
++          ) : (
++            v.houses.map((h) => (
++              <button key={h.id} className="item" onClick={() => setEditing(h)}>
++                <div
++                  className="item-icon"
++                  style={{
++                    background: h.hasApp ? 'var(--brand-soft)' : 'var(--warn-soft)',
++                    color: h.hasApp ? 'var(--brand)' : 'var(--warn)',
++                  }}
++                >
++                  <Icon name="home" size={18} />
++                </div>
++                <div className="grow" style={{ textAlign: 'left' }}>
++                  <div className="strong">
++                    {h.label}
++                    {h.headName ? ` · ${h.headName}` : ''}
++                  </div>
++                  <div className="tiny">
++                    {fmtMoney(h.effectiveAmount, lang)}
++                    {!h.active ? ` · ${t('duesHouseInactive')}` : ''}
++                    {!h.hasApp ? ` · ${t('duesNoApp')}` : ''}
++                  </div>
++                </div>
++                <Icon name="chevronRight" size={16} color="var(--text-3)" />
++              </button>
++            ))
++          )}
++        </>
++      )}
++
++      {tab === 'settings' && <SettingsTab v={v} t={t} busy={busy} run={run} />}
++
++      <HouseSheet
++        open={adding || !!editing}
++        house={editing}
++        t={t}
++        busy={busy}
++        run={run}
++        onClose={() => {
++          setAdding(false)
++          setEditing(null)
++        }}
++      />
++
++      <SpecialSheet
++        open={special}
++        t={t}
++        busy={busy}
++        run={run}
++        onClose={() => setSpecial(false)}
++      />
++    </>
++  )
++}
++
++function AdminCharge({
++  c,
++  t,
++  lang,
++  busy,
++  run,
++}: {
++  c: ChargeDto
++  t: (k: Key, vars?: Record<string, string | number>) => string
++  lang: 'id' | 'en' | 'su'
++  busy: boolean
++  run: (fn: () => Promise<unknown>, okKey?: Key) => Promise<void>
++}) {
++  return (
++    <div className="item">
++      <div
++        className="item-icon"
++        style={{
++          background:
++            c.status === 'paid'
++              ? 'var(--brand-soft)'
++              : c.status === 'awaiting_verification'
++                ? 'var(--info-soft)'
++                : 'var(--warn-soft)',
++          color:
++            c.status === 'paid'
++              ? 'var(--brand)'
++              : c.status === 'awaiting_verification'
++                ? 'var(--info)'
++                : 'var(--warn)',
++        }}
++      >
++        <Icon name="home" size={18} />
++      </div>
++      <div className="grow">
++        <div className="strong">
++          {c.house} · {fmtMoney(c.amount, lang)}
++        </div>
++        <div className="tiny">
++          {t(STATUS_KEY[c.status])}
++          {c.status === 'awaiting_verification' ? ` · ${c.reference}` : ''}
++        </div>
++      </div>
++      {c.status !== 'paid' && c.status !== 'waived' && (
++        <button
++          className="btn btn-sm btn-primary btn-auto"
++          disabled={busy}
++          onClick={() => void run(() => duesApi.markPaid(c.id))}
++        >
++          <Icon name="check" size={14} />
++        </button>
++      )}
++    </div>
++  )
++}
++
++function SettingsTab({
++  v,
++  t,
++  busy,
++  run,
++}: {
++  v: DuesAdminView
++  t: (k: Key, vars?: Record<string, string | number>) => string
++  busy: boolean
++  run: (fn: () => Promise<unknown>, okKey?: Key) => Promise<void>
++}) {
++  const [amount, setAmount] = useState(String(v.settings.amount || ''))
++  const [dueDay, setDueDay] = useState(String(v.settings.dueDay))
++  const [payInfo, setPayInfo] = useState(v.settings.payInfo)
++  const [auto, setAuto] = useState(v.settings.autoMonthly)
++
++  return (
++    <div className="card" style={{ marginTop: 12 }}>
++      <label className="field">
++        <span>{t('duesAmount')}</span>
++        <input
++          className="input"
++          inputMode="numeric"
++          value={amount}
++          onChange={(e) => setAmount(e.target.value.replace(/\D/g, ''))}
++          placeholder="50000"
++        />
++      </label>
++      <p className="tiny">{t('duesAmountHint')}</p>
++
++      <label className="field">
++        <span>{t('duesDueDay')}</span>
++        <input
++          className="input"
++          inputMode="numeric"
++          value={dueDay}
++          onChange={(e) => setDueDay(e.target.value.replace(/\D/g, ''))}
++          placeholder="10"
++        />
++      </label>
++
++      <label className="field">
++        <span>{t('duesPayInfo')}</span>
++        <textarea
++          className="input"
++          rows={3}
++          value={payInfo}
++          onChange={(e) => setPayInfo(e.target.value)}
++          placeholder={t('duesPayInfoHint')}
++        />
++      </label>
++
++      <button
++        className={`btn btn-sm ${auto ? 'btn-primary' : 'btn-ghost'}`}
++        onClick={() => setAuto(!auto)}
++      >
++        <Icon name={auto ? 'check' : 'clock'} size={15} /> {t('duesAuto')}
++      </button>
++
++      <button
++        className="btn btn-primary"
++        style={{ marginTop: 12 }}
++        disabled={busy}
++        onClick={() =>
++          void run(
++            () =>
++              duesApi.saveSettings({
++                amount: Number(amount || 0),
++                dueDay: Number(dueDay || 10),
++                payInfo,
++                autoMonthly: auto,
++              }),
++            'duesSettingsSaved',
++          )
++        }
++      >
++        <Icon name="check" size={16} /> {t('save')}
++      </button>
++    </div>
++  )
++}
++
++function HouseSheet({
++  open,
++  house,
++  t,
++  busy,
++  run,
++  onClose,
++}: {
++  open: boolean
++  house: HouseDto | null
++  t: (k: Key, vars?: Record<string, string | number>) => string
++  busy: boolean
++  run: (fn: () => Promise<unknown>, okKey?: Key) => Promise<void>
++  onClose: () => void
++}) {
++  const [label, setLabel] = useState('')
++  const [head, setHead] = useState('')
++  const [amount, setAmount] = useState('')
++
++  // Isi ulang tiap kali rumah yang disunting berganti.
++  useEffect(() => {
++    setLabel(house?.label ?? '')
++    setHead(house?.headName ?? '')
++    setAmount(house?.amount == null ? '' : String(house.amount))
++  }, [house, open])
++
++  const save = async () => {
++    const patch = {
++      label,
++      headName: head,
++      amount: amount === '' ? null : Number(amount),
++    }
++    await run(
++      () => (house ? duesApi.updateHouse(house.id, patch) : duesApi.addHouse(patch)),
++      'duesHouseSaved',
++    )
++    onClose()
++  }
++
++  return (
++    <Sheet open={open} onClose={onClose} title={house ? house.label : t('duesAddHouse')}>
++      <label className="field">
++        <span>{t('duesHouseLabel')}</span>
++        <input
++          className="input"
++          value={label}
++          onChange={(e) => setLabel(e.target.value)}
++          placeholder="A-12"
++        />
++      </label>
++      <label className="field">
++        <span>{t('duesHouseHead')}</span>
++        <input
++          className="input"
++          value={head}
++          onChange={(e) => setHead(e.target.value)}
++        />
++      </label>
++      <label className="field">
++        <span>{t('duesHouseAmount')}</span>
++        <input
++          className="input"
++          inputMode="numeric"
++          value={amount}
++          onChange={(e) => setAmount(e.target.value.replace(/\D/g, ''))}
++        />
++      </label>
++
++      <button className="btn btn-primary" disabled={busy || !label} onClick={() => void save()}>
++        <Icon name="check" size={16} /> {t('save')}
++      </button>
++
++      {house && (
++        <>
++          <button
++            className="btn btn-ghost"
++            style={{ marginTop: 8 }}
++            disabled={busy}
++            onClick={() =>
++              void run(() => duesApi.updateHouse(house.id, { active: !house.active })).then(
++                onClose,
++              )
++            }
++          >
++            <Icon name={house.active ? 'eyeOff' : 'eye'} size={15} />{' '}
++            {house.active ? t('duesHouseInactive') : t('duesShort')}
++          </button>
++          <button
++            className="btn btn-danger"
++            style={{ marginTop: 8 }}
++            disabled={busy}
++            onClick={() => {
++              if (!confirm(t('duesHouseRemoveConfirm'))) return
++              void run(() => duesApi.removeHouse(house.id), 'duesHouseRemoved').then(onClose)
++            }}
++          >
++            <Icon name="trash" size={15} /> {t('delete')}
++          </button>
++        </>
++      )}
++    </Sheet>
++  )
++}
++
++function SpecialSheet({
++  open,
++  t,
++  busy,
++  run,
++  onClose,
++}: {
++  open: boolean
++  t: (k: Key, vars?: Record<string, string | number>) => string
++  busy: boolean
++  run: (fn: () => Promise<unknown>, okKey?: Key) => Promise<void>
++  onClose: () => void
++}) {
++  const [title, setTitle] = useState('')
++  const [amount, setAmount] = useState('')
++
++  return (
++    <Sheet open={open} onClose={onClose} title={t('duesCreateSpecial')}>
++      <label className="field">
++        <span>{t('duesBillTitle')}</span>
++        <input
++          className="input"
++          value={title}
++          onChange={(e) => setTitle(e.target.value)}
++          placeholder={t('duesBillTitleHint')}
++        />
++      </label>
++      <label className="field">
++        <span>{t('duesAmount')}</span>
++        <input
++          className="input"
++          inputMode="numeric"
++          value={amount}
++          onChange={(e) => setAmount(e.target.value.replace(/\D/g, ''))}
++        />
++      </label>
++      <button
++        className="btn btn-primary"
++        disabled={busy || !title || !amount}
++        onClick={() => {
++          void run(
++            () =>
++              duesApi.createBill({
++                kind: 'special',
++                title,
++                amount: Number(amount),
++              }),
++          ).then(() => {
++            setTitle('')
++            setAmount('')
++            onClose()
++          })
++        }}
++      >
++        <Icon name="check" size={16} /> {t('duesCreateBill')}
++      </button>
++    </Sheet>
++  )
++}
+diff --git a/src/pages/Home.tsx b/src/pages/Home.tsx
+index 243ca18..34fb6f1 100644
+--- a/src/pages/Home.tsx
++++ b/src/pages/Home.tsx
+@@ -84,6 +84,13 @@ export default function Home() {
+       bg: 'var(--warn-soft)',
+       go: () => nav('/app/network'),
+     },
++    {
++      icon: 'home',
++      label: t('duesShort'),
++      color: 'var(--purple)',
++      bg: 'rgba(163,113,247,.16)',
++      go: () => nav('/app/iuran'),
++    },
+   ]
+ 
+   return (
+diff --git a/src/pages/Settings.tsx b/src/pages/Settings.tsx
+index 64d95f8..51eae48 100644
+--- a/src/pages/Settings.tsx
++++ b/src/pages/Settings.tsx
+@@ -239,6 +239,13 @@ export default function Settings() {
+         <span className="grow strong">{t('contactCS')}</span>
+         <Icon name="chevronRight" size={16} color="var(--text-3)" />
+       </button>
++      {/* Iuran lingkungan terbuka untuk semua: warga melihat tagihan
++          rumahnya, admin mengelola penagihannya. */}
++      <button className="list-link" onClick={() => nav('/app/iuran')}>
++        <Icon name="home" size={19} color="var(--warn)" />
++        <span className="grow strong">{t('dues')}</span>
++        <Icon name="chevronRight" size={16} color="var(--text-3)" />
++      </button>
+       {isAdmin && (
+         <button className="list-link" onClick={() => nav('/app/billing')}>
+           <Icon name="credit" size={19} color="var(--brand)" />

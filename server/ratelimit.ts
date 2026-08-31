@@ -85,6 +85,13 @@ export const BATAS = {
     max: Number(process.env.WJW_RATE_REGISTER_MAX ?? 200),
     windowMs: 60 * 60_000,
   },
+  // Asisten dapat memakai penyedia berbayar bila operator mengaktifkannya.
+  // Batasi per anggota + alamat pada handler agar satu warga tidak menghabiskan
+  // kuota seluruh tenant, tanpa menghukum warga lain di Wi-Fi yang sama.
+  assistant: {
+    max: Number(process.env.WJW_RATE_ASSISTANT_MAX ?? 30),
+    windowMs: 60 * 60_000,
+  },
 }
 
 /**

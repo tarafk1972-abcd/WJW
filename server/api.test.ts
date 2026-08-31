@@ -63,6 +63,7 @@ async function makeAdmin() {
   return {
     token: r.body.token as string,
     id: r.body.member.id as string,
+    name: r.body.member.name as string,
     communityId: r.body.member.communityId as string,
   }
 }
@@ -96,6 +97,19 @@ async function join(communityId: string, role?: string, adminToken?: string) {
 }
 
 describe('autentikasi', () => {
+  it('menutup aplikasi publik dari embedding/clickjacking secara default', async () => {
+    const res = await app.fetch(new Request(BASE + '/api/health'))
+    expect(res.headers.get('X-Frame-Options')).toBe('DENY')
+    expect(res.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'")
+  })
+
+  it('menolak payload API yang terlalu besar sebelum diproses', async () => {
+    const huge = 'x'.repeat(2 * 1024 * 1024)
+    const response = await call('POST', '/api/auth/login', { identifier: huge, password: 'x' })
+    expect(response.status).toBe(413)
+    expect(response.body).toEqual({ error: 'payload_too_large' })
+  })
+
   it('tidak pernah mengembalikan sandi atau hash-nya', async () => {
     const a = await makeAdmin()
     const me = await call('GET', '/api/me', undefined, a.token)
@@ -202,7 +216,7 @@ describe('otorisasi peran', () => {
 })
 
 describe('privasi profil darurat', () => {
-  it('warga biasa tidak melihat data medis anggota lain, satpam boleh', async () => {
+  it('tidak memasukkan profil medis ke daftar anggota, tetapi memberikannya ke petugas pada snapshot SOS', async () => {
     const a = await makeAdmin()
     await call('PUT', '/api/me/profile', { emergency: { bloodType: 'O' } }, a.token)
     const w = await join(a.communityId, 'warga', a.token)
@@ -214,7 +228,19 @@ describe('privasi profil darurat', () => {
 
     const asGuard = await call('GET', '/api/state', undefined, g.token)
     const adminSeenByGuard = asGuard.body.members.find((m: { id: string }) => m.id === a.id)
-    expect(adminSeenByGuard.emergency).toEqual({ bloodType: 'O' })
+    expect(adminSeenByGuard.emergency).toBeUndefined()
+
+    await call('POST', '/api/alerts', { category: 'medical' }, a.token)
+    const guardAfterSos = await call('GET', '/api/state', undefined, g.token)
+    const sos = guardAfterSos.body.reports.find((r: { kind: string }) => r.kind === 'sos')
+    expect(sos.snapshot).toMatchObject({ name: a.name, bloodType: 'O' })
+
+    const rootLogin = await call('POST', '/api/auth/login', {
+      identifier: 'tarafk1972@gmail.com', password: 'super-secret',
+    })
+    const rootState = await call('GET', '/api/state', undefined, rootLogin.body.token)
+    const adminSeenByRoot = rootState.body.members.find((m: { id: string }) => m.id === a.id)
+    expect(adminSeenByRoot.emergency).toBeUndefined()
   })
 
   it('kontak pribadi anggota lain tidak bocor', async () => {

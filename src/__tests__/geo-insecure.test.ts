@@ -77,4 +77,16 @@ describe('getFix di halaman tidak aman', () => {
     aturLingkungan({ secure: false })
     await expect(getFix(50)).resolves.toBeNull()
   })
+
+  it('melepas jalur SOS bila WebView tidak pernah membalas GPS', async () => {
+    vi.useFakeTimers()
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: { getCurrentPosition: () => {} },
+    })
+    const fix = getFix(50)
+    await vi.advanceTimersByTimeAsync(151)
+    await expect(fix).resolves.toBeNull()
+    vi.useRealTimers()
+  })
 })

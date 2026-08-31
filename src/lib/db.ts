@@ -56,6 +56,8 @@ function emptyDB(): DBShape {
     announcements: [],
     broadcasts: [],
     contacts: [],
+    managementResponsibilities: [],
+    canAssignManagementResponsibilities: false,
     checkpoints: [],
     schedules: [],
     patrolLogs: [],
@@ -117,6 +119,22 @@ function migrate(db: DBShape) {
     if (p.method !== PAYMENT_METHOD) {
       p.method = PAYMENT_METHOD
     }
+  }
+  // Cache lama belum mengenal mandat Admin 1/2/3 atau penugasan satpam.
+  // Tanpa migrasi ini mode lokal/offline akan gagal saat membaca `.find()`.
+  if (!Array.isArray(db.managementResponsibilities)) db.managementResponsibilities = []
+  if (typeof db.canAssignManagementResponsibilities !== 'boolean')
+    db.canAssignManagementResponsibilities = false
+  // Jadwal yang dibuat sebelum penugasan personel berlaku untuk seluruh tim.
+  for (const schedule of db.schedules) {
+    if (!Array.isArray(schedule.assignedSatpamIds)) schedule.assignedSatpamIds = []
+  }
+  // Pengumuman lokal sebelum audiens bertarget selalu berarti "Umum untuk
+  // semua". Jangan biarkan objek lama merusak layar setelah pembaruan.
+  for (const announcement of db.announcements) {
+    if (!announcement.category) announcement.category = 'Umum'
+    if (!announcement.targetScope) announcement.targetScope = 'all'
+    if (typeof announcement.targetValue !== 'string') announcement.targetValue = ''
   }
 }
 
@@ -1154,12 +1172,13 @@ export function checkpointsOf(db: DBShape, communityId: string): Checkpoint[] {
 
 export function addSchedule(
   actorId: string,
-  sch: Omit<PatrolSchedule, 'id' | 'createdAt' | 'active'> &
-    Partial<Pick<PatrolSchedule, 'active'>>,
+  sch: Omit<PatrolSchedule, 'id' | 'createdAt' | 'active' | 'assignedSatpamIds'> &
+    Partial<Pick<PatrolSchedule, 'active' | 'assignedSatpamIds'>>,
 ): PatrolSchedule {
   const db = loadDB()
   const s2: PatrolSchedule = {
     ...sch,
+    assignedSatpamIds: sch.assignedSatpamIds ?? [],
     id: uid('sc_'),
     active: sch.active ?? true,
     createdAt: Date.now(),
@@ -1192,17 +1211,27 @@ export function activeSchedule(
   db: DBShape,
   communityId: string,
   at: number = Date.now(),
+  satpamId?: string,
 ): { schedule: PatrolSchedule; late: boolean } | null {
   const mins = minutesOfDay(at)
   const day = new Date(at).getDay()
 
   for (const sc of db.schedules) {
     if (sc.communityId !== communityId || !sc.active) continue
-    if (sc.days.length && !sc.days.includes(day)) continue
-
+    if (
+      satpamId &&
+      sc.assignedSatpamIds.length > 0 &&
+      !sc.assignedSatpamIds.includes(satpamId)
+    )
+      continue
     const overnight = sc.endMinute <= sc.startMinute
+    const afterMidnight = overnight && mins < sc.startMinute
+    // Shift Senin 23.00–02.00 tetap milik Senin ketika dicatat Selasa 01.00.
+    const scheduleDay = afterMidnight ? (day + 6) % 7 : day
+    if (sc.days.length && !sc.days.includes(scheduleDay)) continue
+
     const end = overnight ? sc.endMinute + 1440 : sc.endMinute
-    const now = overnight && mins < sc.startMinute ? mins + 1440 : mins
+    const now = afterMidnight ? mins + 1440 : mins
 
     if (now >= sc.startMinute && now <= end) {
       return { schedule: sc, late: now > sc.startMinute + sc.graceMin }
@@ -1283,7 +1312,7 @@ export function recordPatrol(opts: {
   if (!inside && !opts.force)
     return { ok: false, error: 'errTooFar', distanceM: dist, checkpoint: cp }
 
-  const act = activeSchedule(db, opts.communityId, now)
+  const act = activeSchedule(db, opts.communityId, now, opts.satpamId)
   let status: PatrolLogStatus = 'offschedule'
   if (act) status = act.late ? 'late' : 'ontime'
 
@@ -1370,10 +1399,18 @@ export function endPatrol(patrolId: string) {
 }
 
 export function addAnnouncement(
-  a: Omit<Announcement, 'id' | 'createdAt'>,
+  a: Omit<Announcement, 'id' | 'createdAt' | 'category' | 'targetScope' | 'targetValue'> &
+    Partial<Pick<Announcement, 'category' | 'targetScope' | 'targetValue'>>,
 ): Announcement {
   const db = loadDB()
-  const ann: Announcement = { ...a, id: uid('n_'), createdAt: Date.now() }
+  const ann: Announcement = {
+    ...a,
+    category: a.category ?? 'Umum',
+    targetScope: a.targetScope ?? 'all',
+    targetValue: a.targetValue ?? '',
+    id: uid('n_'),
+    createdAt: Date.now(),
+  }
   db.announcements.unshift(ann)
   audit(db, a.communityId, a.authorId, 'announcement', a.title)
   saveDB(db)

@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { addReport, deleteAnnouncement } from '../lib/db'
+import { deleteAnnouncement } from '../lib/db'
+import { alertApi, announcementApi } from '../lib/api'
+import { getFix } from '../lib/capture'
+import { apiMode, syncState } from '../lib/sync'
 import { timeAgo } from '../lib/format'
 import { CATEGORY_META, statusChip, statusKey } from '../lib/meta'
 import { useApp } from '../lib/store'
@@ -9,13 +12,19 @@ import { Icon, type IconName } from '../ui/Icon'
 import { PanicGrid } from '../ui/PanicGrid'
 import { SafetyCheck } from '../ui/SafetyCheck'
 import { useToast } from '../ui/Toast'
-import type { LatLng, PanicType } from '../lib/types'
+import type { PanicType } from '../lib/types'
+
+function emergencyRequestKey(): string {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID().replaceAll('-', '')
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 16)}`
+}
 
 export default function Home() {
   const { db, me, community, t, lang, isAdmin, isSatpam, plan } = useApp()
   const nav = useNavigate()
   const toast = useToast()
-  const [armed, setArmed] = useState<PanicType | null>(null)
+  const [armed, setArmed] = useState<{ type: PanicType; key: string } | null>(null)
+  const [sendingPanic, setSendingPanic] = useState(false)
 
   if (!me || !community) return null
 
@@ -29,30 +38,33 @@ export default function Home() {
     .filter((b) => b.communityId === community.id)
     .slice(0, 3)
 
-  /** Fires after the countdown completes: capture location and raise the alert. */
-  const sendPanic = async (type: PanicType) => {
-    let at: LatLng | null = null
-    try {
-      const pos = await new Promise<GeolocationPosition>((res, rej) =>
-        navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 }),
-      )
-      at = { lat: pos.coords.latitude, lng: pos.coords.longitude }
-    } catch {
-      at = community.center
+  /** Fires after countdown; only server confirmation may create an SOS. */
+  const sendPanic = async (type: PanicType, idempotencyKey: string) => {
+    if (!apiMode()) {
+      setArmed(null)
+      toast('Peringatan: koneksi ke server gagal. Darurat belum terkirim.', 'err')
+      return
     }
-    const rep = addReport({
-      communityId: community.id,
-      authorId: me.id,
-      kind: 'sos',
-      category: type,
-      note: t(CATEGORY_META[type].key),
-      at,
-      address: me.house,
-    })
-    setArmed(null)
-    toast(t('panicSent'), 'err')
-    if (navigator.vibrate) navigator.vibrate([120, 60, 120])
-    nav(`/app/reports?id=${rep.id}`)
+    setSendingPanic(true)
+    try {
+      const fix = await getFix(1500)
+      const result = await alertApi.raise(
+        type,
+        fix ? { lat: fix.lat, lng: fix.lng } : null,
+        fix?.accuracy ?? null,
+        idempotencyKey,
+      )
+      await syncState()
+      setArmed(null)
+      toast(t('panicSent'), 'err')
+      if (navigator.vibrate) navigator.vibrate([120, 60, 120])
+      nav(`/app/reports?id=${result.report.id}`)
+    } catch {
+      setArmed(null)
+      toast('Peringatan: koneksi ke server gagal. Darurat belum terkirim.', 'err')
+    } finally {
+      setSendingPanic(false)
+    }
   }
 
   const quick: { icon: IconName; label: string; color: string; bg: string; go: () => void }[] = [
@@ -83,6 +95,34 @@ export default function Home() {
       color: 'var(--warn)',
       bg: 'var(--warn-soft)',
       go: () => nav('/app/network'),
+    },
+    {
+      icon: 'credit',
+      label: 'Iuran',
+      color: 'var(--brand)',
+      bg: 'var(--brand-soft)',
+      go: () => nav('/app/dues'),
+    },
+    {
+      icon: 'users',
+      label: 'Kelola warga',
+      color: 'var(--purple)',
+      bg: 'rgba(163,113,247,.14)',
+      go: () => nav('/app/community'),
+    },
+    {
+      icon: 'heart',
+      label: 'Gotong royong',
+      color: 'var(--danger)',
+      bg: 'var(--danger-soft)',
+      go: () => nav('/app/engagement'),
+    },
+    {
+      icon: 'headset',
+      label: 'WJW Assistant',
+      color: 'var(--info)',
+      bg: 'var(--info-soft)',
+      go: () => nav('/app/assistant'),
     },
   ]
 
@@ -156,7 +196,11 @@ export default function Home() {
         </p>
       </div>
 
-      <PanicGrid onTrigger={(type) => setArmed(type)} />
+      <PanicGrid
+        disabled={sendingPanic || !!armed}
+        onTrigger={(type) => setArmed({ type, key: emergencyRequestKey() })}
+        onCancel={() => toast(t('alertCancelled'))}
+      />
 
       <div className="btn-row" style={{ marginTop: 12 }}>
         <button className="btn btn-danger grow" onClick={() => nav('/app')}>
@@ -219,7 +263,7 @@ export default function Home() {
       <div className="section-title">
         {t('announcements')}
         {isAdmin && (
-          <button className="btn btn-sm btn-ghost" onClick={() => nav('/app/admin?post=1')}>
+          <button className="btn btn-sm btn-ghost" onClick={() => nav('/app/community')}>
             <Icon name="plus" size={13} /> {t('newAnnouncement')}
           </button>
         )}
@@ -258,7 +302,16 @@ export default function Home() {
                 <button
                   className="icon-btn"
                   style={{ width: 30, height: 30 }}
-                  onClick={() => deleteAnnouncement(a.id)}
+                  onClick={() => {
+                    if (!apiMode()) {
+                      deleteAnnouncement(a.id)
+                      return
+                    }
+                    void announcementApi
+                      .remove(a.id)
+                      .then(() => syncState())
+                      .catch(() => toast('Pengumuman belum dapat dihapus dari server.', 'err'))
+                  }}
                 >
                   <Icon name="trash" size={14} />
                 </button>
@@ -302,9 +355,11 @@ export default function Home() {
 
       {armed && (
         <Countdown
-          label={t(CATEGORY_META[armed].key)}
-          onDone={() => void sendPanic(armed)}
+          label={t(CATEGORY_META[armed.type].key)}
+          sending={sendingPanic}
+          onDone={() => void sendPanic(armed.type, armed.key)}
           onCancel={() => {
+            if (sendingPanic) return
             setArmed(null)
             toast(t('alertCancelled'))
           }}

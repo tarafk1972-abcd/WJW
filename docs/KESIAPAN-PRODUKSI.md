@@ -1,14 +1,28 @@
 # Kesiapan Produksi — Warga Jaga Warga
 
-Penilaian jujur per 17 Agustus 2026.
+Penilaian jujur per 28 Agustus 2026.
 
 ## Kesimpulan singkat
 
-**Belum layak diandalkan sebagai aplikasi darurat sungguhan**, tetapi
-penghalang teknisnya sudah hilang. Yang tersisa sebagian besar bukan
-soal kode, melainkan uji lapangan dan kepatuhan hukum.
+**Belum layak dijanjikan sebagai pengganti layanan darurat sungguhan.**
+Phase 1 kini memiliki alur teknis server-confirmed dari tahan tombol sampai
+responder/timeline, tetapi keselamatan manusia masih bergantung pada operator,
+koneksi, perangkat, uji lapangan, dan kepatuhan hukum.
 
-358 tes lulus, build bersih, `npm audit` 0 kerentanan.
+Build dan suite otomatis harus dijalankan pada setiap rilis (`npm run build`,
+`npm test`); jangan mengandalkan angka tes historis sebagai bukti kesiapan.
+
+---
+
+## Deployment Phase 1 di Fly.io
+
+`Dockerfile`, `fly.toml`, health check `/api/health`, persistent volume
+`/data`, dan panduan backup tersedia di [FLY-IO.md](FLY-IO.md). Konfigurasi
+mempertahankan satu Machine selalu hidup untuk menghindari cold start SOS.
+
+Ini bukan HA multi-region: satu volume SQLite dan broker SSE in-memory adalah
+batas sadar Phase 1. Volume Fly bukan backup; operator wajib menjalankan backup
+enkripsi di luar Fly dan latihan restore.
 
 ---
 
@@ -19,11 +33,17 @@ Ketiganya dulu menjadi alasan utama aplikasi ini belum boleh dipakai.
 | Dulu | Sekarang |
 |---|---|
 | Data hanya di `localStorage`, tidak sampai ke HP lain | Server Hono + SQLite; peringatan, pendaftaran, ronda, dan langganan tersimpan terpusat |
-| Peringatan tidak berbunyi bila aplikasi tertutup | Web Push + service worker; satpam otomatis aktif saat berada di area |
+| Peringatan tidak berbunyi bila aplikasi tertutup | Web Push + service worker tersedia, tetapi delivery tetap best effort dan harus diuji per perangkat |
 | Sandi disimpan apa adanya | bcrypt, tidak pernah dikirim balik ke klien |
+| Alarm bisa tergandakan / status bebas diubah | Idempotency key, state machine server, audit dan timeline immutable |
+| Pembaruan antar-HP mengandalkan polling | SSE terautentikasi per tenant; klien mengambil ulang state RBAC-filtered |
 
 Yang juga sudah tersambung ke server: status peringatan, utas pesan
-insiden, foto bukti, letak rumah warga, dan gambar QRIS.
+insiden, foto bukti, letak rumah warga, dan gambar QRIS. Saat
+`WJW_DATA_ENCRYPTION_KEY` tersedia, snapshot/profil medis dan blob SOS sensitif
+(foto/audio bukti, jejak lokasi, pesan, responders, serta daftar penerima)
+dienkripsi AES-256-GCM; record SOS JSON lama yang valid dimigrasikan saat boot.
+Startup produksi gagal bila secret kuncinya tidak ada.
 
 ---
 
@@ -39,8 +59,11 @@ Ini yang paling menentukan, dan tidak bisa digantikan oleh tes.
 
 ### 2. Tidak ada jalur cadangan saat internet mati
 
-Bila jaringan padam, peringatan tidak sampai ke mana pun. Untuk aplikasi
-darurat, perlu dipertimbangkan SMS atau WhatsApp sebagai cadangan.
+Bila jaringan padam, peringatan **tidak boleh diklaim terkirim** dan aplikasi
+secara eksplisit memberi tahu warga bahwa SOS belum sampai server. Ini lebih
+aman daripada membuat laporan lokal palsu, tetapi tetap berarti layanan perlu
+SOP cadangan nyata: telepon, SMS, HT/pos satpam, atau WhatsApp yang dikelola
+komunitas.
 
 ### 3. Kepatuhan UU PDP No. 27/2022
 
@@ -48,7 +71,26 @@ Aplikasi menyimpan data lokasi dan kesehatan (golongan darah, alergi,
 riwayat penyakit). Perlu kebijakan privasi tertulis dan persetujuan yang
 tercatat — bukan sekadar tombol di Pengaturan.
 
-### 4. Pembatasan laju — sudah ada, tetapi sederhana
+### 4. Enkripsi at-rest belum mencakup seluruh lokasi operasional
+
+Enkripsi aplikasi kini menutup blob SOS yang paling kaya isi: snapshot,
+foto/audio bukti, track, pesan, responders, dan daftar penerima. Namun ini
+**bukan enkripsi penuh basis data**. Kolom relasional yang masih plaintext
+mencakup setidaknya `reports.at_lat/at_lng`, `members.last_lat/last_lng`,
+`members.home_lat/home_lng`, alamat rumah, dan koordinat log ronda. Kolom ini
+masih diperlukan oleh implementasi saat ini untuk memilih warga terdekat atau
+operasi lapangan cepat.
+
+Keputusan saat ini adalah **tidak** mengenkripsi kolom itu secara tambal-sulam:
+melakukannya tanpa indeks kandidat spasial yang aman akan memaksa server
+mendekripsi semua warga tenant setiap ada SOS, mengorbankan hitungan detik yang
+justru dibutuhkan pada darurat dan tidak memenuhi target skala. Sebelum mengaku
+perlindungan at-rest menyeluruh, diperlukan migrasi privasi tersendiri yang
+mencakup blob koordinat presisi terenkripsi, indeks sel kasar/tenant-scoped atau
+PostGIS untuk memilih kandidat tanpa membuka semua titik, TTL posisi terbaru,
+retensi/penghapusan bukti, migrasi dual-read teruji, dan prosedur rotasi kunci.
+
+### 5. Pembatasan laju — sudah ada, tetapi sederhana
 
 Login dan pendaftaran kini dibatasi per alamat IP (`server/ratelimit.ts`).
 Batasnya sengaja longgar, karena satu RW berbagi satu alamat publik:
@@ -65,10 +107,13 @@ Yang perlu diketahui tentang batas ini:
 
 Bisa disetel lewat `.env`: `WJW_RATE_LOGIN_MAX`, `WJW_RATE_REGISTER_MAX`.
 
-### 5. Perubahan luring belum dikirim ulang
+### 6. Perubahan luring rutin bukan antrean terjamin
 
-Bila aplikasi dipakai saat jaringan mati, perubahan tersimpan di
-perangkat tetapi tidak otomatis menyusul ke server saat tersambung lagi.
+Cache layar dapat bertahan di perangkat, tetapi perubahan rutin belum memiliki
+outbox/transaksi sinkronisasi penuh. Khusus SOS, ini sengaja **bukan** antrean:
+insiden harus dibalas server pada saat warga memicunya, atau UI menyatakan belum
+terkirim. Jangan membangun fungsi finansial/administrasi kritis di atas cache
+luring sebelum outbox, konflik, dan auditnya dirancang.
 
 ---
 
@@ -155,9 +200,10 @@ Yang boleh menulis: pelapor, penerima peringatan, satpam, dan pengurus —
 sama seperti yang boleh menutup peringatan. Anggota lingkungan lain
 ditolak.
 
-Status peringatan juga tersimpan di server: "Saya menuju lokasi" dan
-"Tandai selesai" menulis lewat `/api/alerts/:id/ack` dan
-`/api/alerts/:id/close`.
+Status peringatan juga tersimpan di server: "Saya menuju lokasi" menulis
+lewat `/api/alerts/:id/respond`; status `ON_SITE`, `RESOLVED`, dan
+`CANCELLED` lewat `/api/alerts/:id/status`. Endpoint `/ack` dan `/close`
+dipertahankan hanya untuk aplikasi lama.
 
 **Foto bukti** juga sudah tersimpan di server lewat
 `POST /api/alerts/:id/attachments`, dengan izin yang sama. Gambar

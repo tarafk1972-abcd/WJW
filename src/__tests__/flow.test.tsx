@@ -64,8 +64,8 @@ describe('Warga Jaga Warga', () => {
     await registerFirstResident(user)
 
     await waitFor(() => expect(window.location.hash).toBe('#/app'))
-    // /app is now the one-screen panic view; the greeting lives on the feed tab
-    expect(await screen.findByRole('button', { name: 'DARURAT' })).toBeTruthy()
+    // /app is the category-first panic view; greeting lives on the feed tab.
+    expect(await screen.findByRole('button', { name: 'Darurat medis' })).toBeTruthy()
     await user.click(screen.getByRole('link', { name: /Beranda/i }))
     expect(await screen.findByText(/Apa kabar hari ini, Budi\?/i)).toBeTruthy()
 

@@ -4,8 +4,6 @@ import {
   addAttachment,
   addIncidentMessage,
   addReport,
-  respondToReport,
-  updateReport,
 } from '../lib/db'
 import { alertApi } from '../lib/api'
 import { silenceWhileResponding } from '../lib/dutyPush'
@@ -13,6 +11,7 @@ import { apiMode, mutate } from '../lib/sync'
 import { fmtDateTime, timeAgo } from '../lib/format'
 import {
   CATEGORY_META,
+  INCIDENT_STATUS_META,
   REPORT_CATEGORIES,
   TIP_CATEGORIES,
   statusChip,
@@ -516,11 +515,19 @@ function ReportDetail({
   const iAmResponding = report.responders.includes(me.id)
   const isMine = report.authorId === me.id
   const showAuthor = !report.anonymous || isMine || canHandle
+  const terminal = report.incidentStatus
+    ? ['RESOLVED', 'CLOSED', 'CANCELLED'].includes(report.incidentStatus)
+    : report.status === 'resolved'
 
   return (
     <>
       <div className="row" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 6 }}>
         <span className={`chip ${statusChip(report.status)}`}>{t(statusKey(report.status))}</span>
+        {report.kind === 'sos' && report.incidentStatus && (
+          <span className={`chip ${INCIDENT_STATUS_META[report.incidentStatus].chip}`}>
+            {INCIDENT_STATUS_META[report.incidentStatus].label}
+          </span>
+        )}
         {report.kind === 'sos' && (
           <span className="chip chip-danger">
             <Icon name="siren" size={11} /> {t('sos')}
@@ -595,36 +602,67 @@ function ReportDetail({
         )}
       </div>
 
-      {/* emergency profile is surfaced to responders on panic alerts */}
-      {report.kind === 'sos' && canHandle && author?.emergency && (
+      {/* Snapshot profil saat SOS dibuat — bukan profil yang bisa berubah sesudahnya. */}
+      {report.kind === 'sos' && canHandle && report.snapshot && (
         <div className="card card-tight" style={{ marginTop: 10 }}>
           <div className="tiny strong" style={{ marginBottom: 6 }}>
             <Icon name="heart" size={12} /> {t('emergencyProfile')}
           </div>
-          {author.emergency.bloodType && (
+          {report.snapshot.bloodType && (
             <div className="row-between">
               <span className="muted">{t('bloodType')}</span>
-              <span className="strong">{author.emergency.bloodType}</span>
+              <span className="strong">{report.snapshot.bloodType}</span>
             </div>
           )}
-          {author.emergency.allergies && (
+          {report.snapshot.allergies && (
             <div className="row-between">
               <span className="muted">{t('allergies')}</span>
-              <span className="strong">{author.emergency.allergies}</span>
+              <span className="strong">{report.snapshot.allergies}</span>
             </div>
           )}
-          {author.emergency.conditions && (
+          {report.snapshot.conditions && (
             <div className="row-between">
               <span className="muted">{t('conditions')}</span>
-              <span className="strong">{author.emergency.conditions}</span>
+              <span className="strong">{report.snapshot.conditions}</span>
             </div>
           )}
-          {author.emergency.contactPhone && (
-            <a className="btn btn-sm btn-ghost" style={{ marginTop: 8 }} href={`tel:${author.emergency.contactPhone}`}>
-              <Icon name="phone" size={13} /> {author.emergency.contactName || t('contactName')}
+          {report.snapshot.contactPhone && (
+            <a className="btn btn-sm btn-ghost" style={{ marginTop: 8 }} href={`tel:${report.snapshot.contactPhone}`}>
+              <Icon name="phone" size={13} /> {report.snapshot.contactName || t('contactName')}
             </a>
           )}
         </div>
+      )}
+
+      {report.kind === 'sos' && report.timeline && report.timeline.length > 0 && (
+        <>
+          <div className="section-title" style={{ marginTop: 16 }}>
+            Timeline insiden
+          </div>
+          <div className="col" style={{ gap: 7 }}>
+            {report.timeline.map((entry) => {
+              const actor = entry.actorId ? db.members.find((member) => member.id === entry.actorId) : null
+              const destination = entry.toStatus
+                ? INCIDENT_STATUS_META[entry.toStatus]?.label ?? entry.toStatus
+                : null
+              return (
+                <div key={entry.id} className="status-row">
+                  <span className="ic" style={{ background: 'var(--surface-2)', color: 'var(--text-2)' }}>
+                    <Icon name="clock" size={14} />
+                  </span>
+                  <span className="grow">
+                    <span className="strong" style={{ display: 'block' }}>
+                      {destination ?? 'Pembaruan insiden'}
+                    </span>
+                    <span className="tiny">
+                      {actor?.name ?? 'Sistem'} · {timeAgo(entry.createdAt, lang)}
+                    </span>
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </>
       )}
 
       {/* two-way updates */}
@@ -654,7 +692,7 @@ function ReportDetail({
         })}
       </div>
 
-      {report.status !== 'resolved' && (
+      {!terminal && (
         <div className="row" style={{ gap: 8, marginBottom: 12 }}>
           <input
             className="input grow"
@@ -725,22 +763,16 @@ function ReportDetail({
         </div>
       )}
 
-      {canHandle && report.status !== 'resolved' && (
-        <div className="btn-row">
+      {canHandle && !terminal && (
+        <div className="btn-row" style={{ flexWrap: 'wrap' }}>
           {!iAmResponding && (
             <button
               className="btn btn-ghost"
               onClick={async () => {
-                // Sama seperti di atas: server harus ikut tahu, kalau tidak
-                // status "Ditangani" hilang lagi pada sinkronisasi berikutnya.
-                if (apiMode()) await mutate(() => alertApi.ack(report.id))
-                respondToReport(me.id, report.id)
-                /*
-                 * Satu-satunya jalan meredam notifikasi tugas: satpam yang
-                 * sedang menuju lokasi tidak perlu terus dibunyikan oleh
-                 * peringatan yang sama. Di luar ini, tidak ada tombol untuk
-                 * mematikannya.
-                 */
+                const ok = await mutate(() => alertApi.respond(report.id))
+                if (!ok) return toast(t('errOffline'), 'err')
+                // Satpam yang benar-benar sudah mengambil insiden boleh
+                // meredam pengingat tugas; bukan tombol mematikan darurat.
                 if (me.role === 'satpam') silenceWhileResponding()
                 toast(t('responding'))
               }}
@@ -748,22 +780,28 @@ function ReportDetail({
               <Icon name="route" size={15} /> {t('iAmResponding')}
             </button>
           )}
+
+          {report.kind === 'sos' && report.incidentStatus === 'RESPONDING' && (
+            <button
+              className="btn btn-ghost"
+              onClick={async () => {
+                const ok = await mutate(() => alertApi.status(report.id, 'ON_SITE'))
+                if (!ok) return toast(t('errOffline'), 'err')
+                toast('Status diperbarui: satpam sudah di lokasi.')
+              }}
+            >
+              <Icon name="pin" size={15} /> Sudah di lokasi
+            </button>
+          )}
+
           <button
             className="btn btn-primary"
             onClick={async () => {
-              /*
-               * Tulis ke server lebih dulu, bukan hanya ke cache.
-               *
-               * Sebelumnya perubahan hanya disimpan di perangkat, jadi
-               * status sempat berubah "Selesai" lalu dikembalikan menjadi
-               * "Ditangani" oleh sinkronisasi berikutnya — server tidak
-               * pernah tahu peringatan itu sudah ditutup.
-               */
-              if (apiMode()) {
-                const ok = await mutate(() => alertApi.close(report.id, false))
-                if (!ok) return toast(t('errOffline'), 'err')
-              }
-              updateReport(me.id, report.id, { status: 'resolved' })
+              const ok =
+                report.kind === 'sos'
+                  ? await mutate(() => alertApi.status(report.id, 'RESOLVED'))
+                  : await mutate(() => alertApi.close(report.id, false))
+              if (!ok) return toast(t('errOffline'), 'err')
               toast(t('statusResolved'))
               onClose()
             }}

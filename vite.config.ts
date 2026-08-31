@@ -23,13 +23,19 @@ logger.error = (msg, opts) => {
  * yang kemarin memakan waktu berjam-jam: apakah yang berjalan di
  * peramban ini benar-benar kode terbaru?
  */
-const stamp = new Date().toLocaleString('id-ID', {
+const waktuBuild = new Date().toLocaleString('id-ID', {
   day: 'numeric',
   month: 'short',
   hour: '2-digit',
   minute: '2-digit',
   timeZone: 'Asia/Jakarta',
 })
+
+// CI mengisinya dengan commit sumber APK. Dengan begitu foto layar dari HP
+// cukup untuk membedakan APK lama dari artefak yang baru dibuat; build lokal
+// tetap sederhana dan hanya menampilkan waktu.
+const revisiBuild = process.env.VITE_BUILD_REVISION?.trim().slice(0, 12)
+const stamp = revisiBuild ? `${waktuBuild} · ${revisiBuild}` : waktuBuild
 
 /*
  * HTTPS untuk pengujian di Wi-Fi (dinyalakan oleh `npm run dev:https`).

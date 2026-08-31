@@ -6,6 +6,18 @@ export type MemberStatus = 'pending' | 'active' | 'rejected' | 'suspended'
 
 export type PlanStatus = 'trial' | 'active' | 'expired' | 'suspended'
 
+/** Mandat admin operasional; terpisah dari role admin umum di tenant. */
+export type ManagementScope = 'map_patrol' | 'dues' | 'patrol_schedule'
+
+export interface ManagementResponsibility {
+  communityId: string
+  scope: ManagementScope
+  memberId: string
+  assignedBy: string | null
+  assignedAt: number
+  defaulted: boolean
+}
+
 export type LatLng = { lat: number; lng: number }
 
 export interface Community {
@@ -23,6 +35,11 @@ export interface Community {
   language: Lang
   plan: PlanStatus
   planName: 'trial' | 'monthly' | 'yearly'
+  /** Paket SaaS WJW, terpisah dari periode invoice serta iuran warga. */
+  subscriptionTier?: 'FREE' | 'COMMUNITY' | 'PROFESSIONAL' | 'ENTERPRISE'
+  subscriptionStatus?: PlanStatus
+  /** Slug wildcard tenant, mis. rw05 pada rw05.wjw.example.id. */
+  subdomain?: string
   trialEndsAt: number
   paidUntil: number | null
   suspendedReason?: string
@@ -57,6 +74,29 @@ export interface Member {
 /** 'sos' = panic button, 'incident' = normal report, 'tip' = (optionally anonymous) intel */
 export type ReportKind = 'sos' | 'incident' | 'tip'
 export type ReportStatus = 'open' | 'ack' | 'resolved'
+
+/** State machine kanonis insiden darurat. CANCELLED khusus alarm palsu. */
+export type IncidentStatus =
+  | 'NEW'
+  | 'ACKNOWLEDGED'
+  | 'RESPONDING'
+  | 'ON_SITE'
+  | 'RESOLVED'
+  | 'CLOSED'
+  | 'CANCELLED'
+
+export interface IncidentTimelineEntry {
+  id: string
+  incidentId: string
+  communityId: string
+  actorId: string | null
+  kind: string
+  fromStatus: IncidentStatus | null
+  toStatus: IncidentStatus | null
+  detail: string
+  createdAt: number
+}
+
 export type ReportCategory =
   | 'theft'
   | 'suspicious'
@@ -139,6 +179,7 @@ export interface Recipient {
   phone: string
   kind: ContactKind
   memberId: string | null
+  /** Waktu server menetapkan penerima; bukan bukti push sampai ke perangkat. */
   deliveredAt: number
   /** Set when that person acknowledges they are on the way. */
   acknowledgedAt: number | null
@@ -164,6 +205,8 @@ export interface Report {
   at: LatLng | null
   address: string
   status: ReportStatus
+  /** Lifecycle server-side yang immutable-audited untuk laporan SOS. */
+  incidentStatus?: IncidentStatus
   createdAt: number
   handledBy: string | null
   handledAt: number | null
@@ -190,6 +233,8 @@ export interface Report {
   snapshot: ProfileSnapshot | null
   /** Everyone the alert was delivered to. */
   recipients: Recipient[]
+  /** Append-only server timeline. May be withheld for non-participants. */
+  timeline?: IncidentTimelineEntry[]
   /** Set when the caller cancels a false alarm. */
   cancelledAt: number | null
 }
@@ -261,6 +306,8 @@ export interface PatrolSchedule {
   endMinute: number
   /** Hari aktif 0=Minggu..6=Sabtu; kosong = setiap hari. */
   days: number[]
+  /** Kosong = seluruh tim; bila terisi, hanya satpam ini yang mendapat jadwal. */
+  assignedSatpamIds: string[]
   /** Toleransi keterlambatan (menit) sebelum ditandai "terlambat". */
   graceMin: number
   active: boolean
@@ -304,11 +351,14 @@ export interface Guest {
   purpose: string
   host: string
   plate: string
-  idCard: string
+  /** Hanya dipakai saat input lokal lama; tidak pernah disinkronkan ke cache browser. */
+  idCard?: string
   checkIn: number
   checkOut: number | null
   recordedBy: string
 }
+
+export type AnnouncementTarget = 'all' | 'rw' | 'rt' | 'block'
 
 export interface Announcement {
   id: string
@@ -316,6 +366,11 @@ export interface Announcement {
   authorId: string
   title: string
   body: string
+  /** Keamanan, Keuangan, Kegiatan, Umum, dll. */
+  category: string
+  /** Audiens dihitung server dari data KK RT/RW/blok. */
+  targetScope: AnnouncementTarget
+  targetValue: string
   pinned: boolean
   createdAt: number
 }
@@ -397,6 +452,9 @@ export interface DBShape {
   announcements: Announcement[]
   broadcasts: Broadcast[]
   contacts: TrustedContact[]
+  managementResponsibilities: ManagementResponsibility[]
+  /** Snapshot izin assignment dari server; UI hanya menggunakannya sebagai petunjuk. */
+  canAssignManagementResponsibilities: boolean
   checkpoints: Checkpoint[]
   schedules: PatrolSchedule[]
   patrolLogs: PatrolLog[]

@@ -1,12 +1,20 @@
 import bcrypt from 'bcryptjs'
 import Database from 'better-sqlite3'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  decryptSensitiveJson,
+  encryptSensitiveJson,
+  ensureSensitiveEncryptionConfigured,
+} from './crypto.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const ROOT = dirname(HERE)
+// tsx lokal menjalankan /app/server/db.ts, sementara image produksi memakai
+// /app/build/server/db.js. `.env` tetap dicari dari root proyek pada keduanya.
+const parent = dirname(HERE)
+const ROOT = existsSync(join(parent, 'package.json')) ? parent : dirname(parent)
 
 // Muat .env bila ada, tanpa dependensi tambahan. Nilai yang sudah ada di
 // environment tetap menang, agar bisa ditimpa saat menjalankan perintah.
@@ -22,6 +30,11 @@ try {
 } catch {
   // .env opsional — abaikan bila tidak ada
 }
+
+// Jangan mengizinkan deployment produksi menulis profil medis/snapshot
+// darurat tanpa enkripsi at-rest. Pengembangan dan tes lokal tetap boleh
+// tanpa kunci agar pemasangan awal mudah dijalankan.
+ensureSensitiveEncryptionConfigured()
 
 export const SUPERADMIN_EMAIL = 'tarafk1972@gmail.com'
 export const TRIAL_DAYS = 14
@@ -73,6 +86,121 @@ addColumn('members', 'home_accuracy', 'REAL')
 addColumn('members', 'home_set_at', 'INTEGER')
 /** 'register' | 'manual' — dari mana titik ini berasal. */
 addColumn('members', 'home_source', 'TEXT')
+
+// Evolusi Phase 1: laporan SOS lama tetap terbaca, tetapi semua laporan baru
+// memakai state machine insiden dan kunci idempotensi. Kolom payload juga
+// ditambahkan eksplisit agar deployment yang sangat lama dapat dimigrasi
+// sebelum blob SOS-nya dienkripsi di bawah.
+addColumn('reports', 'attachments', "TEXT NOT NULL DEFAULT '[]'")
+addColumn('reports', 'messages', "TEXT NOT NULL DEFAULT '[]'")
+addColumn('reports', 'responders', "TEXT NOT NULL DEFAULT '[]'")
+addColumn('reports', 'track', "TEXT NOT NULL DEFAULT '[]'")
+addColumn('reports', 'snapshot', 'TEXT')
+addColumn('reports', 'recipients', "TEXT NOT NULL DEFAULT '[]'")
+addColumn('reports', 'audio', 'TEXT')
+addColumn('reports', 'incident_status', "TEXT NOT NULL DEFAULT 'NEW'")
+addColumn('reports', 'idempotency_key', 'TEXT')
+// Jadwal lama tetap berlaku untuk seluruh satpam sampai Admin 3 menetapkan
+// personel spesifik. Kolom ini perlu migrasi eksplisit karena SQLite tidak
+// menerapkan DEFAULT dari CREATE TABLE pada tabel schedules yang sudah ada.
+addColumn('schedules', 'assigned_satpam_ids', "TEXT NOT NULL DEFAULT '[]'")
+// Pengumuman lama tetap menjadi "Umum untuk semua". Kolom ini tidak boleh
+// hanya ada pada schema baru karena banyak deployment sudah punya tabelnya.
+addColumn('announcements', 'category', "TEXT NOT NULL DEFAULT 'Umum'")
+addColumn('announcements', 'target_scope', "TEXT NOT NULL DEFAULT 'all'")
+addColumn('announcements', 'target_value', "TEXT NOT NULL DEFAULT ''")
+db.exec(
+  'CREATE INDEX IF NOT EXISTS idx_announcements_community_target ON announcements(community_id, target_scope, created_at DESC)',
+)
+// Paket WJW/masa trial dipisahkan dari tagihan iuran lingkungan maupun durasi
+// invoice monthly/yearly. Migrasi mempertahankan tenant lama sebagai FREE.
+addColumn('communities', 'subscription_tier', "TEXT NOT NULL DEFAULT 'FREE'")
+addColumn('communities', 'subscription_status', "TEXT NOT NULL DEFAULT 'trial'")
+addColumn('communities', 'subdomain', "TEXT NOT NULL DEFAULT ''")
+db.exec(
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_communities_subdomain ON communities(lower(subdomain)) WHERE subdomain <> ''",
+)
+// Tenant yang pada versi lama sudah disuspensi mempertahankan blokirnya.
+db.exec("UPDATE communities SET subscription_status='suspended' WHERE plan='suspended'")
+db.exec(
+  `UPDATE reports
+   SET incident_status = CASE status
+     WHEN 'ack' THEN 'RESPONDING'
+     WHEN 'resolved' THEN 'RESOLVED'
+     ELSE 'NEW'
+   END
+   WHERE incident_status IS NULL OR incident_status = ''`,
+)
+db.exec(
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_idempotency
+   ON reports(author_id, idempotency_key) WHERE idempotency_key IS NOT NULL`,
+)
+
+// Buku tamu versi lama menyimpan nomor identitas sebagai teks. Nilai itu tidak
+// lagi dikirim ke browser dan, saat kunci tersedia (wajib di produksi),
+// dienkripsi sekali pada boot tanpa mengubah data operasional lainnya.
+const legacyGuestIdentities = db
+  .prepare("SELECT id,id_card FROM guests WHERE id_card<>'' AND id_card NOT LIKE 'enc:v1:%'")
+  .all() as { id: string; id_card: string }[]
+if (legacyGuestIdentities.length) {
+  const migrateGuestIdentity = db.prepare('UPDATE guests SET id_card=? WHERE id=?')
+  const migrate = db.transaction(() => {
+    for (const guest of legacyGuestIdentities)
+      migrateGuestIdentity.run(encryptSensitiveJson({ idCard: guest.id_card }), guest.id)
+  })
+  migrate()
+}
+
+/*
+ * Bukti, koordinat jejak, pesan, dan roster penerima SOS pernah disimpan
+ * sebagai JSON plaintext. Saat kunci tersedia (wajib produksi), pindahkan
+ * seluruh blob JSON lama sekali di boot. Kolom relasional seperti status dan
+ * waktu tetap terbaca untuk operasi tanpa membuka isi sensitifnya.
+ */
+const SOS_SENSITIVE_COLUMNS = ['attachments', 'messages', 'responders', 'track', 'recipients', 'snapshot', 'audio'] as const
+type SosSensitiveColumn = (typeof SOS_SENSITIVE_COLUMNS)[number]
+if (process.env.WJW_DATA_ENCRYPTION_KEY) {
+  type SosSensitiveRow = Record<SosSensitiveColumn, string | null> & {
+    id: string
+    migration_rowid: number
+  }
+  // Jangan `.all()` seluruh bukti foto historis pada boot. Batch kecil
+  // menjaga memori Machine tetap terkendali ketika database telah tumbuh.
+  const selectSosBatch = db.prepare(
+    `SELECT rowid AS migration_rowid,id,${SOS_SENSITIVE_COLUMNS.join(',')}
+     FROM reports WHERE kind='sos' AND rowid>? ORDER BY rowid LIMIT ?`,
+  )
+  const migrateSos = db.prepare(
+    `UPDATE reports SET ${SOS_SENSITIVE_COLUMNS.map((column) => `${column}=?`).join(',')} WHERE id=?`,
+  )
+  const migrateBatch = db.transaction((rows: SosSensitiveRow[]) => {
+    for (const report of rows) {
+      let changed = false
+      const values = SOS_SENSITIVE_COLUMNS.map((column) => {
+        const stored = report[column]
+        if (!stored || stored.startsWith('enc:v1:')) return stored
+        try {
+          // Audio lama berupa data URL, sedangkan enam kolom lain JSON.
+          const encrypted = encryptSensitiveJson(column === 'audio' ? stored : JSON.parse(stored))
+          changed ||= encrypted !== stored
+          return encrypted
+        } catch {
+          // JSON korup sudah tidak dapat diproyeksikan versi lama juga. Jangan
+          // menimpa/menghapusnya saat migrasi otomatis; akses tetap fail-closed.
+          return stored
+        }
+      })
+      if (changed) migrateSos.run(...values, report.id)
+    }
+  })
+  let lastRowId = 0
+  while (true) {
+    const batch = selectSosBatch.all(lastRowId, 8) as SosSensitiveRow[]
+    if (!batch.length) break
+    migrateBatch(batch)
+    lastRowId = batch[batch.length - 1].migration_rowid
+  }
+}
 
 export function uid(prefix = ''): string {
   return prefix + randomBytes(9).toString('base64url')
@@ -155,8 +283,8 @@ export interface MemberRow {
   join_note: string
 }
 
-/** Bentuk anggota yang aman dikirim ke klien — tanpa hash sandi. */
-export function publicMember(m: MemberRow) {
+/** Field anggota umum — sengaja tanpa profil medis dan hash sandi. */
+function memberPublicFields(m: MemberRow) {
   return {
     id: m.id,
     communityId: m.community_id,
@@ -173,27 +301,56 @@ export function publicMember(m: MemberRow) {
     decidedBy: m.decided_by,
     rejectedReason: m.rejected_reason ?? undefined,
     invitedBy: m.invited_by,
-    emergency: m.emergency ? JSON.parse(m.emergency) : undefined,
     joinMethod: m.join_method ?? undefined,
     joinCode: m.join_code,
     joinNote: m.join_note,
   }
 }
 
+/** Bentuk anggota sendiri yang aman dikirim ke klien — tanpa hash sandi. */
+export function publicMember(m: MemberRow) {
+  return {
+    ...memberPublicFields(m),
+    emergency: m.emergency ? decryptSensitiveJson(m.emergency) ?? undefined : undefined,
+  }
+}
+
 /**
- * Anggota lain hanya boleh melihat data yang perlu — nomor telepon tetap
- * ditampilkan karena dipakai untuk menghubungi saat darurat, tetapi profil
- * medis hanya untuk pemiliknya, satpam dan admin.
+ * Anggota lain hanya menerima data yang benar-benar perlu. Nomor HP warga
+ * biasa, email, alamat rumah, dan profil medis tidak boleh masuk ke cache
+ * ponsel tetangga hanya karena `/api/state` memuat daftar anggota. Nomor HP
+ * admin/satpam tetap tersedia bagi warga untuk koordinasi keadaan darurat.
+ *
+ * Bahkan admin/satpam tidak menerima profil medis warga secara massal. Data
+ * medis hanya dibuka dari snapshot SOS untuk insiden yang boleh mereka tangani
+ * (lihat `mapReport`), sehingga ponsel petugas tidak menyimpan seluruh riwayat
+ * kesehatan tenant ketika tidak ada keadaan darurat.
  */
 export function visibleMember(m: MemberRow, viewer: MemberRow) {
-  const pub = publicMember(m)
-  const privileged =
+  const pub = memberPublicFields(m)
+  const operationalViewer =
     viewer.id === m.id ||
     viewer.role === 'admin' ||
     viewer.role === 'satpam' ||
     viewer.role === 'superadmin'
-  if (!privileged) delete (pub as { emergency?: unknown }).emergency
-  return pub
+  if (!operationalViewer) {
+    return {
+      ...pub,
+      // Pengurus/petugas jaga adalah kontak operasional yang boleh dihubungi
+      // semua anggota aktif; data warga lain tidak dibagikan.
+      phone: m.role === 'admin' || m.role === 'satpam' ? m.phone : '',
+      email: '',
+      house: '',
+    }
+  }
+  return {
+    ...pub,
+    // Hanya pemilik profil yang mendapatkannya lewat daftar anggota. Snapshot
+    // SOS yang berwenang diproyeksikan terpisah dan tidak bergantung pada ini.
+    ...(viewer.id === m.id && m.emergency
+      ? { emergency: decryptSensitiveJson(m.emergency) ?? undefined }
+      : {}),
+  }
 }
 
 export function audit(

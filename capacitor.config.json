@@ -6,6 +6,7 @@
     "allowMixedContent": false
   },
   "server": {
+    "hostname": "localhost",
     "androidScheme": "https"
   },
   "plugins": {

@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc -b && tsc -p server/tsconfig.json --noEmit",
+    "build:server": "tsc -p server/tsconfig.build.json && node server/copy-schema.mjs",
+    "start": "node build/server/index.js",
     "preview": "vite preview",
     "lint": "oxlint",
     "test": "vitest run",

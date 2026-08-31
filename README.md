@@ -48,45 +48,54 @@ lengkap dan cara mengatasinya bila menunya tak muncul ada di
 
 Untuk membuat berkas APK, lihat [docs/BUAT-APK.md](docs/BUAT-APK.md).
 
-## MVP (Versi 1) — satu layar, satu tombol
+## Phase 1 — alur tanggap darurat yang utuh
 
-Layar utama aplikasi (`/app`) hanya berisi **satu tombol merah besar**. Ditahan
-2 detik (cincin progres), lalu peringatan langsung terkirim membawa:
+Prioritas rilis ini adalah **satu alur keselamatan yang dapat dibuktikan
+ujung-ke-ujung**, bukan menambah modul administrasi yang rapuh:
 
-| Data | Catatan |
+1. Warga aktif masuk dan melengkapi profil darurat.
+2. Di `/app`, warga memilih kategori (medis, kebakaran, pencurian, dan lain-lain).
+3. Tombol kategori wajib ditahan **1,5 detik** dengan progres visual.
+4. Setelah tahan berhasil, muncul **jendela pembatalan lima detik**. Tidak ada
+   pengiriman pada ketukan singkat atau pembatalan.
+5. Setelah hitung mundur, aplikasi mencoba GPS cepat lalu mengirim `POST /api/alerts`
+   dengan idempotency key. **Pesan sukses hanya ditampilkan setelah server membalas.**
+   Bila jaringan/server tidak dapat dijangkau, layar tegas menyatakan darurat
+   *belum terkirim*; tidak dibuat alarm lokal palsu.
+6. Server membekukan profil saat kejadian, menentukan penerima dari tenant yang
+   sama, menulis audit/timeline, dan memberi sinyal real-time SSE.
+7. Satpam/Admin/penerima berwenang memilih **“Saya menuju lokasi”**; pelapor melihat
+   responder. Petugas dapat menandai **di lokasi**, pesan, foto bukti, lalu selesai.
+8. State kanonis adalah `NEW → ACKNOWLEDGED → RESPONDING → ON_SITE → RESOLVED`
+   (atau `CANCELLED` untuk alarm palsu). Perpindahan ilegal ditolak server.
+
+Lokasi presisi, snapshot medis, chat, foto, daftar penerima, dan timeline hanya
+masuk ke state pelapor atau penanggap berwenang. Dengan
+`WJW_DATA_ENCRYPTION_KEY`, snapshot serta blob SOS sensitif (foto/audio bukti,
+jejak lokasi, pesan, responders, dan daftar penerima) disimpan AES-256-GCM dan
+record lama yang valid dimigrasikan saat boot. Ini **bukan** klaim bahwa seluruh
+SQLite telah terenkripsi: koordinat operasional relasional masih memerlukan
+migrasi privasi khusus. Seluruh perubahan juga dibatasi `community_id` di backend.
+Real-time memakai SSE autentikasi-header sebagai jalur utama, bukan polling.
+
+> **Tidak ada integrasi polisi / layanan darurat.** WJW tidak menghubungi
+> 110/112/911. Alarm mengalir ke jaringan komunitas yang telah ditentukan;
+> pengguna tetap perlu menghubungi layanan resmi bila situasi memerlukannya.
+
+### Fase berikutnya
+
+Setelah simulasi lapangan Phase 1 lolos, perluasan dilakukan berurutan:
+
+| Fase | Fokus |
 | --- | --- |
-| Lokasi GPS | Diambil sebelum peringatan dikirim, berikut akurasi (±m). |
-| Lokasi langsung | `watchPosition` terus mengirim titik selama peringatan aktif; bisa dihentikan kapan saja. |
-| Profil pengguna | Nama, HP, alamat, golongan darah, alergi, riwayat penyakit, kontak keluarga — dibekukan saat peringatan dibuat. |
-| Jenis darurat | Opsional, dipilih **setelah** peringatan terkirim agar tidak memperlambat. |
-| Rekaman suara 15 detik | Otomatis mulai setelah peringatan keluar. Mikrofon ditolak ≠ peringatan gagal. |
-| Foto/video | Opsional, dilampirkan saat kejadian berlangsung (maks 8 MB). |
-| Waktu kejadian | Dicatat otomatis. |
+| 2 | Laporan mencurigakan, siaran & konfirmasi keselamatan, patroli, pengunjung |
+| 3 | Data warga, iuran/keuangan, surat, keluhan, pengumuman |
+| 4 | Voting, kampanye/donasi, arisan dan rukun kematian |
+| 5 | Bantuan AI serta administrasi SaaS dan observabilitas skala besar |
 
-### Dikirim ke siapa
-
-- Keluarga
-- Teman terpercaya
-- Responder komunitas terverifikasi
-- Satpam
-- Relawan
-
-Kelola di **Jaringan bantuan saya** (`/app/network`). Keluarga & teman bersifat
-pribadi per anggota; responder & relawan komunitas harus **diverifikasi admin**
-sebelum menerima peringatan. Penerima bisa menekan *"Saya menuju lokasi"*, dan
-pengirim melihat siapa saja yang sudah merespons.
-
-> **Tidak ada integrasi polisi / layanan darurat.** Aplikasi ini sengaja tidak
-> menghubungi 110/112/911 — itu menimbulkan kerumitan operasional dan regulasi.
-> Peringatan hanya mengalir ke jaringan warga. Pengguna diingatkan lewat catatan
-> tetap di layar utama untuk menghubungi pihak berwenang sendiri bila perlu.
-
-### Pengaman alarm palsu
-
-Tahan 2 detik, dan setelah terkirim tersedia **"Alarm palsu — batalkan"** serta
-**"Saya sudah aman"**. Frame animasi yang tertinggal tidak bisa memicu
-peringatan (dijaga session token + diuji).
-
+Panduan operasi/deploy Fly.io dan backup ada di
+[docs/FLY-IO.md](docs/FLY-IO.md); checklist risiko sebelum dipakai sungguhan ada
+di [docs/KESIAPAN-PRODUKSI.md](docs/KESIAPAN-PRODUKSI.md).
 
 ## Cara gabung atau buat lingkungan
 
@@ -191,8 +200,10 @@ Tekan **“Isi data contoh”** di layar awal untuk membuat lingkungan contoh
 src/
   lib/     types.ts  db.ts (data + aturan bisnis)  i18n.ts  store.tsx  format.ts  seed.ts
   ui/      Icon.tsx  MapView.tsx  Sheet.tsx  Toast.tsx
-  lib/     capture.ts (rekam suara 15 dtk + GPS langsung)
-  ui/      BigSOS.tsx (tombol merah utama)  PanicGrid.tsx  Countdown.tsx
+  lib/     capture.ts (GPS satu kali + pembaruan lokasi saat SOS aktif)
+           realtime.ts (SSE fetch-stream terautentikasi)
+  ui/      PanicGrid.tsx (tahan 1,5 dtk)  Countdown.tsx (batal 5 dtk)
+           BigSOS.tsx (komponen kompatibilitas lama)
            SafetyCheck.tsx  QrCode.tsx  QrScanner.tsx
   pages/   Landing  Register  Login  Pending  AppShell  Home  Reports
            MapPage  Guests  Patrol  Admin  Settings  Billing  Support  Console

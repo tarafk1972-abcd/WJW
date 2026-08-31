@@ -1,1 +1,13 @@
-fly.toml
+node_modules
+.git
+.env
+.env.*
+!.env.example
+dist
+build
+coverage
+*.log
+server/data
+docs/preview
+.vscode
+.idea

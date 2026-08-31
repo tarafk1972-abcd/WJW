@@ -9,6 +9,7 @@
  * menentukan hasil akhir — termasuk penolakan izin.
  */
 import { api, ApiError, getToken } from './api'
+import { startRealtime } from './realtime'
 import { loadDB, saveDB } from './db'
 import type { DBShape } from './types'
 
@@ -17,7 +18,10 @@ export function apiMode(): boolean {
   return !!getToken()
 }
 
-let syncing: Promise<void> | null = null
+// Sinkronisasi digabung hanya untuk token yang sama. Jika pengguna berganti
+// akun cepat pada perangkat bersama, respons tenant lama tidak boleh menimpa
+// cache tenant baru atau membuat sync baru menunggu request lama.
+let syncing: { token: string; promise: Promise<void> } | null = null
 let lastError: string | null = null
 
 /**
@@ -44,6 +48,8 @@ interface StatePayload {
   communities?: Record<string, unknown>[]
   members?: Record<string, unknown>[]
   reports?: Record<string, unknown>[]
+  managementResponsibilities?: Record<string, unknown>[]
+  canAssignManagementResponsibilities?: boolean
   checkpoints?: Record<string, unknown>[]
   schedules?: Record<string, unknown>[]
   patrolLogs?: Record<string, unknown>[]
@@ -60,20 +66,31 @@ interface StatePayload {
  * Aman dipanggil berulang; panggilan bersamaan digabung menjadi satu.
  */
 export function syncState(): Promise<void> {
-  if (!apiMode()) return Promise.resolve()
-  if (syncing) return syncing
+  const token = getToken()
+  if (!token) {
+    locationWanted = false
+    lastError = null
+    return Promise.resolve()
+  }
+  if (syncing?.token === token) return syncing.promise
 
-  syncing = (async () => {
+  let task!: Promise<void>
+  task = (async () => {
     try {
       const s = (await api.get('/state')) as StatePayload
-      const db = loadDB()
+      // Pengguna mungkin logout atau masuk ke tenant lain saat request lama
+      // berjalan. Jangan pernah tulis respons tersebut ke perangkat baru.
+      if (token !== getToken()) return
 
+      const db = loadDB()
       const next: DBShape = {
         ...db,
         communities: (s.communities ??
           (s.community ? [s.community] : [])) as unknown as DBShape['communities'],
         members: (s.members ?? []) as unknown as DBShape['members'],
         reports: (s.reports ?? []) as unknown as DBShape['reports'],
+        managementResponsibilities: (s.managementResponsibilities ?? []) as unknown as DBShape['managementResponsibilities'],
+        canAssignManagementResponsibilities: s.canAssignManagementResponsibilities === true,
         checkpoints: (s.checkpoints ?? []) as unknown as DBShape['checkpoints'],
         schedules: (s.schedules ?? []) as unknown as DBShape['schedules'],
         patrolLogs: (s.patrolLogs ?? []) as unknown as DBShape['patrolLogs'],
@@ -97,15 +114,18 @@ export function syncState(): Promise<void> {
       saveDB(next)
       lastError = null
     } catch (e) {
-      lastError = e instanceof ApiError ? e.code : 'errOffline'
-      // Gagal sinkron tidak boleh menjatuhkan aplikasi — UI tetap memakai
-      // cache terakhir agar tombol darurat tetap bisa dipakai.
+      // Jangan biarkan kegagalan token/request lama menyalakan indikator
+      // offline pada sesi yang sudah berganti.
+      if (token === getToken()) lastError = e instanceof ApiError ? e.code : 'errOffline'
+      // Gagal sinkron tidak boleh menjatuhkan aplikasi — UI boleh membaca
+      // cache terakhir. Jalur SOS sendiri tetap wajib menunggu konfirmasi API
+      // dan akan berkata belum terkirim bila koneksi gagal.
     } finally {
-      syncing = null
+      if (syncing?.promise === task) syncing = null
     }
   })()
-
-  return syncing
+  syncing = { token, promise: task }
+  return task
 }
 
 /**
@@ -126,7 +146,24 @@ export async function mutate(fn: () => Promise<unknown>): Promise<boolean> {
   }
 }
 
-/** Mulai polling berkala; kembalikan fungsi penghenti. */
+/**
+ * Jalur real-time utama. Server hanya mengirim sinyal kecil, lalu klien
+ * mengambil state lewat endpoint yang menerapkan tenant isolation/RBAC.
+ * Tidak ada polling berkala sebagai mekanisme utama.
+ */
+export function startRealtimeSync(onUpdate?: () => void): () => void {
+  if (!apiMode()) return () => {}
+  return startRealtime({
+    onSignal: () => {
+      void syncState().then(onUpdate)
+    },
+  })
+}
+
+/**
+ * Fallback lama untuk integrasi lokal yang belum mendukung streaming.
+ * AppProvider produksi tidak memakainya; SSE di atas adalah jalur utama.
+ */
 export function startPolling(ms = 8000): () => void {
   if (!apiMode()) return () => {}
   void syncState()

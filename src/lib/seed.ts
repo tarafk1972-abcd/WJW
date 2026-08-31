@@ -116,6 +116,7 @@ export function seedDemo(): string | null {
     startMinute: 22 * 60,
     endMinute: 23 * 60,
     days: [],
+    assignedSatpamIds: [ids['Pak Joko'], ids['Pak Rahmat']].filter(Boolean),
     graceMin: 15,
   })
   addSchedule(aid, {
@@ -124,6 +125,7 @@ export function seedDemo(): string | null {
     startMinute: 2 * 60,
     endMinute: 3 * 60,
     days: [],
+    assignedSatpamIds: [ids['Pak Rahmat']].filter(Boolean),
     graceMin: 15,
   })
 

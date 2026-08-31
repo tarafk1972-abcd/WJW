@@ -37,7 +37,7 @@ function startOfToday() {
 
 /** Admin: menentukan titik ronda di peta dan mengatur jadwal ronda. */
 export default function Checkpoints() {
-  const { db, me, community, t, lang, isAdmin } = useApp()
+  const { db, me, community, t, lang, isAdmin, canManageScope } = useApp()
   const nav = useNavigate()
   const toast = useToast()
 
@@ -52,6 +52,9 @@ export default function Checkpoints() {
   const [end, setEnd] = useState('23:00')
   const [grace, setGrace] = useState(15)
   const [days, setDays] = useState<number[]>([])
+  const [satpamIds, setSatpamIds] = useState<string[]>([])
+  const canManagePoints = canManageScope('map_patrol')
+  const canManageSchedule = canManageScope('patrol_schedule')
 
   const checkpoints = useMemo(
     () => (community ? checkpointsOf(db, community.id) : []),
@@ -65,6 +68,24 @@ export default function Checkpoints() {
     () => (community ? logsForDay(db, community.id, startOfToday()) : []),
     [db, community],
   )
+  const guards = useMemo(
+    () =>
+      community
+        ? db.members.filter(
+            (member) =>
+              member.communityId === community.id && member.status === 'active' && member.role === 'satpam',
+          )
+        : [],
+    [db.members, community],
+  )
+  const coordinatorName = (scope: 'map_patrol' | 'patrol_schedule') => {
+    if (!community) return ''
+    const responsibility = db.managementResponsibilities.find(
+      (item) => item.communityId === community.id && item.scope === scope,
+    )
+    const memberId = responsibility?.memberId ?? community.createdBy
+    return db.members.find((member) => member.id === memberId)?.name ?? 'Pendiri komunitas'
+  }
 
   if (!me || !community) return null
   if (!isAdmin) {
@@ -78,10 +99,11 @@ export default function Checkpoints() {
     )
   }
 
-  const saveCheckpoint = () => {
+  const saveCheckpoint = async () => {
+    if (!canManagePoints) return toast('Titik pantau hanya dapat diubah oleh Admin 1.', 'err')
     if (!draft || !name.trim()) return toast(t('errRequired'), 'err')
     if (apiMode()) {
-      void mutate(() =>
+      const ok = await mutate(() =>
         adminApi.addCheckpoint({
           name: name.trim(),
           lat: draft.lat,
@@ -89,6 +111,7 @@ export default function Checkpoints() {
           radiusM: radius,
         }),
       )
+      if (!ok) return toast('Titik pantau belum tersimpan. Periksa penugasan Admin 1.', 'err')
     } else {
       addCheckpoint(me.id, {
         communityId: community.id,
@@ -103,7 +126,8 @@ export default function Checkpoints() {
     toast(t('checkpointSaved'))
   }
 
-  const saveSchedule = () => {
+  const saveSchedule = async () => {
+    if (!canManageSchedule) return toast('Jadwal satpam hanya dapat diubah oleh Admin 3.', 'err')
     if (!label.trim()) return toast(t('errRequired'), 'err')
     const payload = {
       label: label.trim(),
@@ -111,11 +135,17 @@ export default function Checkpoints() {
       endMinute: toMinutes(end),
       days,
       graceMin: grace,
+      satpamIds,
     }
-    if (apiMode()) void mutate(() => adminApi.addSchedule(payload))
-    else addSchedule(me.id, { communityId: community.id, ...payload })
+    if (apiMode()) {
+      const ok = await mutate(() => adminApi.addSchedule(payload))
+      if (!ok) return toast('Jadwal belum tersimpan. Periksa penugasan Admin 3.', 'err')
+    } else {
+      addSchedule(me.id, { communityId: community.id, ...payload })
+    }
     setLabel('')
     setDays([])
+    setSatpamIds([])
     setSchOpen(false)
     toast(t('scheduleSaved'))
   }
@@ -130,6 +160,15 @@ export default function Checkpoints() {
           <h2 style={{ fontSize: 20, fontWeight: 800 }}>{t('patrol')}</h2>
           <div className="tiny">{community.name}</div>
         </div>
+      </div>
+
+      <div className="banner banner-info" style={{ marginBottom: 12 }}>
+        <Icon name="users" size={17} />
+        <span>
+          <b>Admin 1</b>: peta & titik pantau — {coordinatorName('map_patrol')}
+          <br />
+          <b>Admin 3</b>: jadwal satpam — {coordinatorName('patrol_schedule')}
+        </span>
       </div>
 
       <div className="tabs" style={{ marginBottom: 14 }}>
@@ -149,7 +188,7 @@ export default function Checkpoints() {
         <>
           <div className="banner banner-info">
             <Icon name="info" size={17} />
-            <span>{t('tapMapToPlace')}</span>
+            <span>{canManagePoints ? t('tapMapToPlace') : 'Mode lihat: titik pantau dikelola oleh Admin 1.'}</span>
           </div>
 
           <MapView
@@ -162,7 +201,7 @@ export default function Checkpoints() {
             }
             zoom={17}
             area={community.area}
-            onMapClick={(p) => setDraft(p)}
+            onMapClick={canManagePoints ? (p) => setDraft(p) : undefined}
             markers={[
               ...checkpoints.map((c, i) => ({
                 id: c.id,
@@ -183,7 +222,7 @@ export default function Checkpoints() {
             ]}
           />
 
-          {draft && (
+          {draft && canManagePoints && (
             <div className="card" style={{ marginTop: 12 }}>
               <label className="field">
                 <span>{t('checkpointName')} *</span>
@@ -212,7 +251,7 @@ export default function Checkpoints() {
                 <button className="btn btn-ghost" onClick={() => setDraft(null)}>
                   {t('cancel')}
                 </button>
-                <button className="btn btn-primary" onClick={saveCheckpoint}>
+                <button className="btn btn-primary" onClick={() => void saveCheckpoint()}>
                   <Icon name="check" size={16} /> {t('save')}
                 </button>
               </div>
@@ -243,17 +282,23 @@ export default function Checkpoints() {
                     {c.radiusM} m · {c.lat.toFixed(5)}, {c.lng.toFixed(5)}
                   </div>
                 </div>
-                <button
-                  className="icon-btn"
-                  style={{ width: 32, height: 32 }}
-                  onClick={() => {
-                    removeCheckpoint(me.id, c.id)
-                    if (apiMode()) void mutate(() => adminApi.removeCheckpoint(c.id))
-                    toast(t('checkpointRemoved'))
-                  }}
-                >
-                  <Icon name="trash" size={15} />
-                </button>
+                {canManagePoints && (
+                  <button
+                    className="icon-btn"
+                    style={{ width: 32, height: 32 }}
+                    onClick={async () => {
+                      if (apiMode()) {
+                        const ok = await mutate(() => adminApi.removeCheckpoint(c.id))
+                        if (!ok) return toast('Titik pantau belum dihapus.', 'err')
+                      } else {
+                        removeCheckpoint(me.id, c.id)
+                      }
+                      toast(t('checkpointRemoved'))
+                    }}
+                  >
+                    <Icon name="trash" size={15} />
+                  </button>
+                )}
               </div>
             ))
           )}
@@ -263,9 +308,16 @@ export default function Checkpoints() {
       {/* ---------------- jadwal ---------------- */}
       {tab === 'schedule' && (
         <>
-          <button className="btn btn-primary" onClick={() => setSchOpen(true)}>
-            <Icon name="plus" size={16} /> {t('addSchedule')}
-          </button>
+          {canManageSchedule ? (
+            <button className="btn btn-primary" onClick={() => setSchOpen(true)}>
+              <Icon name="plus" size={16} /> {t('addSchedule')}
+            </button>
+          ) : (
+            <div className="banner banner-info">
+              <Icon name="info" size={17} />
+              <span>Mode lihat: jadwal patroli dikelola oleh Admin 3.</span>
+            </div>
+          )}
 
           <div className="section-title">{t('scheduleAdmin')}</div>
           {schedules.length === 0 ? (
@@ -293,17 +345,32 @@ export default function Checkpoints() {
                   <div className="tiny">
                     {t('graceMinutes')}: {s.graceMin}
                   </div>
+                  <div className="tiny">
+                    Petugas:{' '}
+                    {s.assignedSatpamIds?.length
+                      ? s.assignedSatpamIds
+                          .map((id) => guards.find((guard) => guard.id === id)?.name)
+                          .filter(Boolean)
+                          .join(', ')
+                      : 'seluruh tim satpam'}
+                  </div>
                 </div>
-                <button
-                  className="icon-btn"
-                  style={{ width: 32, height: 32 }}
-                  onClick={() => {
-                    removeSchedule(me.id, s.id)
-                    if (apiMode()) void mutate(() => adminApi.removeSchedule(s.id))
-                  }}
-                >
-                  <Icon name="trash" size={15} />
-                </button>
+                {canManageSchedule && (
+                  <button
+                    className="icon-btn"
+                    style={{ width: 32, height: 32 }}
+                    onClick={async () => {
+                      if (apiMode()) {
+                        const ok = await mutate(() => adminApi.removeSchedule(s.id))
+                        if (!ok) return toast('Jadwal belum dihapus.', 'err')
+                      } else {
+                        removeSchedule(me.id, s.id)
+                      }
+                    }}
+                  >
+                    <Icon name="trash" size={15} />
+                  </button>
+                )}
               </div>
             ))
           )}
@@ -465,7 +532,41 @@ export default function Checkpoints() {
             ))}
           </div>
         </div>
-        <button className="btn btn-primary" onClick={saveSchedule}>
+        <div className="field">
+          <span>Petugas satpam</span>
+          <div className="tiny" style={{ marginBottom: 7 }}>
+            Kosong berarti jadwal berlaku untuk seluruh tim satpam.
+          </div>
+          {guards.length === 0 ? (
+            <div className="banner banner-warn">
+              <Icon name="info" size={15} />
+              <span>Belum ada akun Satpam aktif untuk dijadwalkan.</span>
+            </div>
+          ) : (
+            <div className="col" style={{ gap: 7 }}>
+              {guards.map((guard) => (
+                <label key={guard.id} className="item" style={{ cursor: 'pointer', padding: '9px 10px' }}>
+                  <input
+                    type="checkbox"
+                    checked={satpamIds.includes(guard.id)}
+                    onChange={() =>
+                      setSatpamIds((current) =>
+                        current.includes(guard.id)
+                          ? current.filter((id) => id !== guard.id)
+                          : [...current, guard.id],
+                      )
+                    }
+                  />
+                  <span className="grow strong" style={{ marginLeft: 8 }}>
+                    {guard.name}
+                  </span>
+                  <span className="tiny">{guard.house}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+        <button className="btn btn-primary" onClick={() => void saveSchedule()}>
           <Icon name="check" size={16} /> {t('save')}
         </button>
       </Sheet>

@@ -44,26 +44,64 @@ export interface ScheduleLike {
   start_minute: number
   end_minute: number
   days: string
+  /** Kosong = semua satpam; diisi = hanya satpam yang ditunjuk. */
+  assigned_satpam_ids?: string
   grace_min: number
   active: number
 }
 
-/** Jadwal yang berlaku pada waktu tertentu; menangani lintas tengah malam. */
+function numberArray(raw: string): number[] | null {
+  try {
+    const value: unknown = JSON.parse(raw || '[]')
+    return Array.isArray(value) && value.every((item) => Number.isInteger(item) && item >= 0 && item <= 6)
+      ? (value as number[])
+      : null
+  } catch {
+    return null
+  }
+}
+
+function stringArray(raw: string | undefined): string[] | null {
+  try {
+    const value: unknown = JSON.parse(raw || '[]')
+    return Array.isArray(value) && value.every((item) => typeof item === 'string')
+      ? (value as string[])
+      : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Jadwal yang berlaku pada waktu tertentu; menangani lintas tengah malam.
+ * `satpamId` opsional agar admin tetap dapat melihat status semua jadwal,
+ * sedangkan satpam hanya dapat memperoleh jadwal yang memang ditugaskan.
+ */
 export function activeSchedule(
   schedules: ScheduleLike[],
   at: number,
+  satpamId?: string,
 ): { schedule: ScheduleLike; late: boolean } | null {
   const mins = minutesOfDay(at)
   const day = new Date(at).getDay()
 
   for (const sc of schedules) {
     if (!sc.active) continue
-    const days: number[] = JSON.parse(sc.days || '[]')
-    if (days.length && !days.includes(day)) continue
+    const days = numberArray(sc.days)
+    const assignees = stringArray(sc.assigned_satpam_ids)
+    // Data jadwal rusak tidak boleh menjatuhkan endpoint patrol atau tiba-tiba
+    // diterapkan kepada satpam yang salah.
+    if (!days || !assignees) continue
+    if (satpamId && assignees.length && !assignees.includes(satpamId)) continue
 
     const overnight = sc.end_minute <= sc.start_minute
     const end = overnight ? sc.end_minute + 1440 : sc.end_minute
-    const nowMin = overnight && mins < sc.start_minute ? mins + 1440 : mins
+    const afterMidnight = overnight && mins < sc.start_minute
+    const nowMin = afterMidnight ? mins + 1440 : mins
+    // Jam 01.00 Selasa untuk shift Senin 23.00–02.00 masih memakai hari
+    // Senin, bukan hari kalender Selasa.
+    const scheduleDay = afterMidnight ? (day + 6) % 7 : day
+    if (days.length && !days.includes(scheduleDay)) continue
 
     if (nowMin >= sc.start_minute && nowMin <= end) {
       return { schedule: sc, late: nowMin > sc.start_minute + sc.grace_min }

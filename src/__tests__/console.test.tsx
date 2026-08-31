@@ -5,13 +5,15 @@
  * perangkat baru itu berarti nol di semua kolom — yang mudah disalahbaca
  * sebagai "belum ada lingkungan" padahal artinya "tidak terhubung".
  */
-import { render, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, render, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../App'
 import { setToken } from '../lib/api'
 import { invalidateCache, loadDB, setSession } from '../lib/db'
 
 vi.mock('../ui/MapView', () => ({ MapView: () => <div />, pinIcon: () => null }))
+
+afterEach(() => cleanup())
 
 function signInLocalSuperadmin() {
   const db = loadDB()
@@ -22,6 +24,9 @@ function signInLocalSuperadmin() {
 
 describe('konsol tanpa server', () => {
   beforeEach(() => {
+    // Pastikan perubahan hash berikutnya tidak mengirim event ke HashRouter
+    // dari render test sebelumnya di luar act().
+    cleanup()
     localStorage.clear()
     invalidateCache()
     setToken(null)
@@ -32,7 +37,7 @@ describe('konsol tanpa server', () => {
     signInLocalSuperadmin()
     window.location.hash = '#/console'
     render(<App />)
-    await new Promise((r) => setTimeout(r, 100))
+    await waitFor(() => expect(document.body.textContent).toContain('Konsol Superadmin'))
 
     const txt = document.body.textContent ?? ''
     // Angka nol memang benar untuk perangkat kosong…
@@ -52,6 +57,7 @@ describe('konsol tanpa server', () => {
  */
 describe('konsol terhubung tetapi kosong', () => {
   beforeEach(() => {
+    cleanup()
     localStorage.clear()
     invalidateCache()
     setToken(null)

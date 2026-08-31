@@ -2,12 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useApp } from '../lib/store'
 
 /** Hold duration for the main emergency button. */
-export const SOS_HOLD_MS = 2000
+export const SOS_HOLD_MS = 1500
 
 /**
  * The single large red button of the MVP.
  *
- * Requires a deliberate 2-second hold (with a progress ring) so a pocket tap
+ * Requires a deliberate 1.5-second hold (with a progress ring) so a pocket tap
  * cannot mobilise someone's whole safety network. A released hold can never
  * fire: queued animation frames check a session token before completing.
  */

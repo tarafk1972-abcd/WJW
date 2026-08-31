@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
-import { billingApi, type InvoiceDto } from '../lib/api'
+import { billingApi, superadminApi, type InvoiceDto } from '../lib/api'
 import { apiMode } from '../lib/sync'
 import {
   closeTicket,
@@ -23,7 +23,7 @@ import type { Community, Ticket } from '../lib/types'
 type Tab = 'overview' | 'communities' | 'payments' | 'tickets' | 'audit'
 
 export default function Console() {
-  const { db, me, t, lang, signOut, isSuperadmin } = useApp()
+  const { db, me, t, lang, signOut, isSuperadmin, reload } = useApp()
   const nav = useNavigate()
   const toast = useToast()
   const [tab, setTab] = useState<Tab>('overview')
@@ -33,6 +33,27 @@ export default function Console() {
   const [pendingBills, setPendingBills] = useState<
     (InvoiceDto & { communityName: string; memberName: string; memberEmail: string })[]
   >([])
+  const [serviceMetrics, setServiceMetrics] = useState<{
+    tenants: number
+    residents: number
+    revenue: number
+    pendingVerifications: number
+    active: number
+    trial: number
+    suspended: number
+    expired: number
+  } | null>(null)
+  const [creatingTenant, setCreatingTenant] = useState(false)
+
+  const loadServiceOverview = useCallback(async () => {
+    if (!apiMode()) return
+    try {
+      const result = await superadminApi.overview()
+      setServiceMetrics(result.metrics)
+    } catch {
+      setServiceMetrics(null)
+    }
+  }, [])
 
   const loadBills = useCallback(async () => {
     if (!apiMode()) return
@@ -46,7 +67,8 @@ export default function Console() {
 
   useEffect(() => {
     void loadBills()
-  }, [loadBills])
+    void loadServiceOverview()
+  }, [loadBills, loadServiceOverview])
 
   useEffect(() => {
     if (!me || me.role !== 'superadmin') nav('/', { replace: true })
@@ -55,6 +77,21 @@ export default function Console() {
   const stats = useMemo(() => {
     const states = db.communities.map((c) => planState(c).status)
     const verified = db.payments.filter((p) => p.status === 'verified')
+    // Pada server, angka SaaS berasal dari query konsol khusus—bukan cache
+    // browser dan bukan iuran lingkungan. Mode lokal tetap memakai data demo.
+    if (apiMode() && serviceMetrics) {
+      return {
+        total: serviceMetrics.tenants,
+        active: serviceMetrics.active,
+        trial: serviceMetrics.trial,
+        expired: serviceMetrics.expired + serviceMetrics.suspended,
+        users: serviceMetrics.residents,
+        admins: db.members.filter((m) => m.role === 'admin').length,
+        revenue: serviceMetrics.revenue,
+        pendingPayments: serviceMetrics.pendingVerifications,
+        openTickets: db.tickets.filter((x) => x.status !== 'closed').length,
+      }
+    }
     return {
       total: db.communities.length,
       active: states.filter((s) => s === 'active').length,
@@ -66,7 +103,7 @@ export default function Console() {
       pendingPayments: db.payments.filter((p) => p.status === 'pending').length,
       openTickets: db.tickets.filter((x) => x.status !== 'closed').length,
     }
-  }, [db])
+  }, [db, serviceMetrics])
 
   if (!me || !isSuperadmin) return null
 
@@ -74,6 +111,34 @@ export default function Console() {
   const liveDetail = detail
     ? db.communities.find((c) => c.id === detail.id) ?? detail
     : null
+
+  const createTenant = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    setCreatingTenant(true)
+    try {
+      await superadminApi.createTenant({
+        name: String(form.get('name') ?? ''),
+        address: String(form.get('address') ?? ''),
+        city: String(form.get('city') ?? ''),
+        subdomain: String(form.get('subdomain') ?? ''),
+        tier: String(form.get('tier') ?? 'FREE') as 'FREE' | 'COMMUNITY' | 'PROFESSIONAL' | 'ENTERPRISE',
+        adminName: String(form.get('adminName') ?? ''),
+        adminPhone: String(form.get('adminPhone') ?? ''),
+        adminEmail: String(form.get('adminEmail') ?? ''),
+        adminPassword: String(form.get('adminPassword') ?? ''),
+        adminHouse: String(form.get('adminHouse') ?? ''),
+      })
+      event.currentTarget.reset()
+      await reload()
+      await loadServiceOverview()
+      toast('Tenant dan admin aktif berhasil dibuat.')
+    } catch {
+      toast('Tenant belum dapat dibuat. Periksa data, slug, dan akun admin.', 'err')
+    } finally {
+      setCreatingTenant(false)
+    }
+  }
 
   return (
     <div className="shell">
@@ -235,8 +300,30 @@ export default function Console() {
           </>
         )}
 
-        {tab === 'communities' &&
-          (db.communities.length === 0 ? (
+        {tab === 'communities' && (
+          <>
+            {apiMode() && (
+              <details className="card" style={{ marginBottom: 12 }}>
+                <summary className="strong">Buat tenant dan admin</summary>
+                <p className="muted" style={{ fontSize: 13, marginTop: 6 }}>
+                  Tenant baru dimulai dengan uji coba 14 hari. Paket WJW berbeda dari iuran lingkungan.
+                </p>
+                <form onSubmit={(event) => void createTenant(event)} style={{ marginTop: 10 }}>
+                  <label><span className="label">Nama tenant</span><input className="input" name="name" required maxLength={80} /></label>
+                  <div className="form-grid"><label><span className="label">Kota</span><input className="input" name="city" defaultValue="Bandung" maxLength={80} /></label><label><span className="label">Subdomain</span><input className="input" name="subdomain" required pattern="[a-z0-9-]+" maxLength={32} placeholder="rw05-melati" /></label></div>
+                  <label><span className="label">Alamat tenant</span><input className="input" name="address" maxLength={160} /></label>
+                  <label><span className="label">Paket WJW</span><select className="input" name="tier" defaultValue="FREE"><option value="FREE">FREE</option><option value="COMMUNITY">COMMUNITY</option><option value="PROFESSIONAL">PROFESSIONAL</option><option value="ENTERPRISE">ENTERPRISE</option></select></label>
+                  <div className="divider" />
+                  <div className="strong" style={{ fontSize: 14 }}>Admin pertama</div>
+                  <label><span className="label">Nama</span><input className="input" name="adminName" required maxLength={80} /></label>
+                  <div className="form-grid"><label><span className="label">Email</span><input className="input" name="adminEmail" required type="email" /></label><label><span className="label">No. HP</span><input className="input" name="adminPhone" required inputMode="tel" /></label></div>
+                  <label><span className="label">Alamat/rumah admin</span><input className="input" name="adminHouse" required maxLength={160} /></label>
+                  <label><span className="label">Sandi awal (minimal 8)</span><input className="input" name="adminPassword" required type="password" minLength={8} autoComplete="new-password" /></label>
+                  <button type="submit" className="btn btn-primary" disabled={creatingTenant}><Icon name="plus" size={16} /> {creatingTenant ? 'Membuat…' : 'Buat tenant'}</button>
+                </form>
+              </details>
+            )}
+          {db.communities.length === 0 ? (
             <div className="empty">
               <span className="em">🏘️</span>
               {t('none')}
@@ -281,7 +368,9 @@ export default function Console() {
                 </button>
               )
             })
-          ))}
+          )}
+          </>
+        )}
 
         {tab === 'payments' && apiMode() && (
           <>
@@ -522,6 +611,26 @@ export default function Console() {
                 <span className="strong">{planState(liveDetail).status}</span>
               </div>
               <div className="divider" />
+              <div className="row-between" style={{ gap: 8 }}>
+                <span className="muted">Paket WJW</span>
+                {apiMode() ? (
+                  <select
+                    className="input"
+                    style={{ width: 150, padding: '7px 8px' }}
+                    defaultValue={liveDetail.subscriptionTier ?? 'FREE'}
+                    onChange={(event) => {
+                      const tier = event.target.value as 'FREE' | 'COMMUNITY' | 'PROFESSIONAL' | 'ENTERPRISE'
+                      void superadminApi.setSubscription(liveDetail.id, { tier })
+                        .then(async () => { await reload(); await loadServiceOverview(); toast('Paket tenant diperbarui.') })
+                        .catch(() => toast('Paket belum dapat diperbarui.', 'err'))
+                    }}
+                  >
+                    <option>FREE</option><option>COMMUNITY</option><option>PROFESSIONAL</option><option>ENTERPRISE</option>
+                  </select>
+                ) : <span className="strong">{liveDetail.subscriptionTier ?? 'FREE'}</span>}
+              </div>
+              {liveDetail.subdomain && <><div className="divider" /><div className="row-between"><span className="muted">Subdomain tenant</span><span className="strong">{liveDetail.subdomain}</span></div></>}
+              <div className="divider" />
               <div className="row-between">
                 <span className="muted">{t('trial')}</span>
                 <span className="strong">{fmtDate(liveDetail.trialEndsAt, lang)}</span>
@@ -566,21 +675,46 @@ export default function Console() {
               <button
                 className="btn btn-ghost btn-sm grow"
                 onClick={() => {
-                  extendTrial(me.id, liveDetail.id, 14)
-                  toast(t('extendTrial'))
+                  if (!apiMode()) {
+                    extendTrial(me.id, liveDetail.id, 14)
+                    toast(t('extendTrial'))
+                    return
+                  }
+                  void superadminApi
+                    .setSubscription(liveDetail.id, { extendTrialDays: 14 })
+                    .then(async () => {
+                      await reload()
+                      await loadServiceOverview()
+                      toast(t('extendTrial'))
+                    })
+                    .catch(() => toast('Masa uji belum dapat diperpanjang.', 'err'))
                 }}
               >
                 <Icon name="gift" size={14} /> {t('extendTrial')}
               </button>
               <button
                 className="btn btn-ghost btn-sm grow"
-                onClick={() =>
-                  setCommunityPlan(
-                    me.id,
-                    liveDetail.id,
-                    liveDetail.plan === 'suspended' ? 'trial' : 'suspended',
-                  )
-                }
+                onClick={() => {
+                  const activate = liveDetail.plan === 'suspended'
+                  if (!apiMode()) {
+                    setCommunityPlan(me.id, liveDetail.id, activate ? 'trial' : 'suspended')
+                    return
+                  }
+                  const reason = activate ? '' : (prompt('Alasan penangguhan tenant (opsional)') ?? '')
+                  void superadminApi
+                    .setSubscription(liveDetail.id, { status: activate ? 'active' : 'suspended', reason })
+                    .then(async () => {
+                      await reload()
+                      await loadServiceOverview()
+                      toast(
+                        activate
+                          ? 'Penangguhan dicabut; status mengikuti masa trial atau langganan yang masih berlaku.'
+                          : 'Tenant ditangguhkan.',
+                        activate ? 'ok' : 'info',
+                      )
+                    })
+                    .catch(() => toast('Status tenant belum dapat diubah.', 'err'))
+                }}
               >
                 <Icon name="lock" size={14} />{' '}
                 {t(

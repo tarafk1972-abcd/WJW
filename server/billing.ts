@@ -191,7 +191,7 @@ export function verifyPayment(
   const paidUntil = base + days * DAY
 
   db.prepare(
-    "UPDATE communities SET paid_until=?, plan='active', plan_name=? WHERE id=?",
+    "UPDATE communities SET paid_until=?, plan='active', plan_name=?, subscription_status='active' WHERE id=?",
   ).run(paidUntil, inv.plan, inv.community_id)
 
   db.prepare(

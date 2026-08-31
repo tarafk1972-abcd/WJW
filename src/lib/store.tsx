@@ -7,7 +7,13 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { authApi, getToken } from './api'
+import {
+  AUTH_CHANGED_EVENT,
+  SESSION_EXPIRED_EVENT,
+  authApi,
+  getToken,
+  setToken,
+} from './api'
 import {
   communityById,
   getSessionId,
@@ -15,18 +21,18 @@ import {
   loadDB,
   memberById,
   planState,
-  setSession,
+  resetDB,
   storeLang,
 } from './db'
 import {
   apiMode,
   isLocationWanted,
   lastSyncError,
-  startPolling,
+  startRealtimeSync,
   syncState,
 } from './sync'
 import { DEFAULT_LANG, translate, type Key } from './i18n'
-import type { Community, DBShape, Lang, Member } from './types'
+import type { Community, DBShape, Lang, ManagementScope, Member } from './types'
 
 interface Ctx {
   db: DBShape
@@ -41,6 +47,10 @@ interface Ctx {
   isAdmin: boolean
   isSuperadmin: boolean
   isSatpam: boolean
+  /** Hak tulis mandat operasional, diputuskan dari assignment server. */
+  canManageScope: (scope: ManagementScope) => boolean
+  /** Pendiri komunitas/superadmin boleh menunjuk Admin 1/2/3. */
+  canAssignManagementResponsibilities: boolean
   /** true bila aplikasi terhubung ke server (bukan mode lokal saja). */
   online: boolean
   /** Kode error sinkronisasi terakhir, mis. 'errOffline'. */
@@ -63,25 +73,53 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Sinkronisasi pertama harus selesai sebelum UI memutuskan pengguna
   // belum login — kalau tidak, layar akan salah mengalihkan ke halaman depan.
+  const [token, setTokenState] = useState<string | null>(() => getToken())
   const [booted, setBooted] = useState(() => !getToken())
 
+  // `storage` hanya datang dari tab lain. API dispatch event ini di tab yang
+  // sama agar login/daftar langsung memulai SSE tanpa reload halaman.
   useEffect(() => {
-    if (!apiMode()) {
+    const updateToken = () => setTokenState(getToken())
+    const expire = () => {
+      // Token invalid tidak boleh meninggalkan state SOS/tamu pada perangkat
+      // bersama. Bahasa perangkat tetap dipertahankan oleh resetDB.
+      resetDB()
+      updateToken()
+      refresh()
+    }
+    window.addEventListener(AUTH_CHANGED_EVENT, updateToken)
+    window.addEventListener(SESSION_EXPIRED_EVENT, expire)
+    window.addEventListener('storage', updateToken)
+    return () => {
+      window.removeEventListener(AUTH_CHANGED_EVENT, updateToken)
+      window.removeEventListener(SESSION_EXPIRED_EVENT, expire)
+      window.removeEventListener('storage', updateToken)
+    }
+  }, [refresh])
+
+  useEffect(() => {
+    if (!token) {
       setBooted(true)
       return
     }
+    setBooted(false)
     let alive = true
     void syncState().then(() => {
       if (!alive) return
       setBooted(true)
       refresh()
     })
-    const stop = startPolling()
+    // SSE memberi tahu dalam hitungan detik saat ada insiden/pesan/status
+    // baru. State tetap ditarik dari API agar otorisasi server selalu berlaku.
+    const stop = startRealtimeSync(refresh)
+    const onOnline = () => void syncState().then(refresh)
+    window.addEventListener('online', onOnline)
     return () => {
       alive = false
       stop()
+      window.removeEventListener('online', onOnline)
     }
-  }, [refresh])
+  }, [refresh, token])
 
   const reload = useCallback(async () => {
     await syncState()
@@ -117,6 +155,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [db, me, tick],
   )
 
+  const isAdmin = me?.role === 'admin' || me?.role === 'superadmin'
+  const isSuperadmin = me?.role === 'superadmin'
+  const isSatpam = me?.role === 'satpam'
+  const localCanAssignResponsibilities =
+    !!me && !!community && (isSuperadmin || (me.role === 'admin' && community.createdBy === me.id))
+  // Pada mode server, jadikan jawaban server sebagai petunjuk UI. Otorisasi
+  // write tetap diperiksa ulang endpoint agar cache/peramban tidak dipercaya.
+  const canAssignManagementResponsibilities = apiMode()
+    ? db.canAssignManagementResponsibilities
+    : localCanAssignResponsibilities
+  const canManageScope = useCallback(
+    (scope: ManagementScope) => {
+      if (!me || !community) return false
+      if (me.role === 'superadmin') return true
+      if (me.role !== 'admin') return false
+      const assigned = db.managementResponsibilities.find(
+        (responsibility) =>
+          responsibility.communityId === community.id && responsibility.scope === scope,
+      )
+      // Selaras dengan fallback backend untuk tenant yang belum menetapkan
+      // pemegang mandat eksplisit: pendiri memegangnya lebih dulu.
+      return assigned ? assigned.memberId === me.id : community.createdBy === me.id
+    },
+    [db.managementResponsibilities, me, community],
+  )
+
   // Member language wins over the device default once signed in.
   const lang: Lang = me?.language ?? langState
 
@@ -132,8 +196,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   const signOut = useCallback(() => {
-    if (apiMode()) void authApi.logout()
-    setSession(null)
+    // Mulai revoke sesi saat token masih tersedia, lalu hapus token/cache
+    // segera. Dengan begitu layar perangkat bersama tidak menahan data SOS,
+    // tamu, maupun daftar warga sambil request logout berjalan.
+    if (getToken()) void authApi.logout()
+    setToken(null)
+    resetDB()
     refresh()
   }, [refresh])
 
@@ -151,9 +219,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     syncError: lastSyncError(),
     locationWanted: isLocationWanted(),
     reload,
-    isAdmin: me?.role === 'admin' || me?.role === 'superadmin',
-    isSuperadmin: me?.role === 'superadmin',
-    isSatpam: me?.role === 'satpam',
+    isAdmin,
+    isSuperadmin,
+    isSatpam,
+    canManageScope,
+    canAssignManagementResponsibilities,
   }
 
   // Tampilkan layar tunggu singkat, bukan halaman kosong yang menyesatkan.
