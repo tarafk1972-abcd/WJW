@@ -1,8 +1,19 @@
 import { db, now, uid } from './db.js'
 import { listBillableHouseholdHeads } from './population.js'
 
-export const DUES_STATUSES = ['unpaid', 'awaiting_verification', 'paid', 'overdue'] as const
+export const DUES_STATUSES = ['unpaid', 'awaiting_verification', 'paid', 'overdue', 'waived'] as const
 export type DuesStatus = (typeof DUES_STATUSES)[number]
+
+/**
+ * Cara pembayaran. Kosong berarti tagihan belum dibayar sama sekali.
+ * `cash` hanya bisa ditetapkan pengurus: uangnya diterima di luar aplikasi,
+ * jadi tidak ada klaim warga yang perlu diverifikasi.
+ */
+export const DUES_METHODS = ['', 'transfer', 'cash'] as const
+export type DuesMethod = (typeof DUES_METHODS)[number]
+
+/** Status yang masih menunggu penyelesaian, dipakai sebagai penjaga transisi. */
+const OPEN_STATUSES = "('unpaid','overdue','awaiting_verification')"
 
 export interface DuesSettings {
   communityId: string
@@ -23,6 +34,7 @@ export interface DuesInvoice {
   amount: number
   dueAt: number
   status: DuesStatus
+  method: DuesMethod
   reference: string
   paymentNote: string
   verifierNote: string
@@ -41,6 +53,10 @@ export interface DuesSummary {
   paidInvoices: number
   awaitingVerification: number
   overdue: number
+  /** Jumlah tagihan yang dibebaskan pengurus; uangnya memang tidak ditagih. */
+  waived: number
+  /** Bagian dari `paid` yang diterima tunai, bukan lewat rekening. */
+  paidCash: number
 }
 
 type DuesRow = {
@@ -52,6 +68,7 @@ type DuesRow = {
   amount: number
   due_at: number
   status: DuesStatus
+  method: DuesMethod
   reference: string
   payment_note: string
   verifier_note: string
@@ -94,6 +111,7 @@ export function mapDuesInvoice(row: DuesRow): DuesInvoice {
     amount: row.amount,
     dueAt: row.due_at,
     status: row.status,
+    method: row.method ?? '',
     reference: row.reference,
     paymentNote: row.payment_note,
     verifierNote: row.verifier_note,
@@ -198,12 +216,17 @@ export function duesSummary(communityId: string, memberId?: string): DuesSummary
     .prepare(
       `SELECT
         count(*) AS invoices,
-        coalesce(sum(amount), 0) AS billed,
+        -- Tagihan yang dibebaskan tidak pernah menjadi hak tagih, jadi tidak
+        -- masuk 'billed' maupun 'outstanding'. Kalau ikut dihitung, laporan
+        -- kas akan menampilkan tunggakan yang tidak pernah ada.
+        coalesce(sum(CASE WHEN status='waived' THEN 0 ELSE amount END), 0) AS billed,
         coalesce(sum(CASE WHEN status='paid' THEN amount ELSE 0 END), 0) AS paid,
-        coalesce(sum(CASE WHEN status!='paid' THEN amount ELSE 0 END), 0) AS outstanding,
+        coalesce(sum(CASE WHEN status IN ('paid','waived') THEN 0 ELSE amount END), 0) AS outstanding,
         coalesce(sum(CASE WHEN status='paid' THEN 1 ELSE 0 END), 0) AS paid_invoices,
         coalesce(sum(CASE WHEN status='awaiting_verification' THEN 1 ELSE 0 END), 0) AS awaiting_verification,
-        coalesce(sum(CASE WHEN status='overdue' THEN 1 ELSE 0 END), 0) AS overdue
+        coalesce(sum(CASE WHEN status='overdue' THEN 1 ELSE 0 END), 0) AS overdue,
+        coalesce(sum(CASE WHEN status='waived' THEN 1 ELSE 0 END), 0) AS waived,
+        coalesce(sum(CASE WHEN status='paid' AND method='cash' THEN amount ELSE 0 END), 0) AS paid_cash
        FROM dues_invoices ${where}`,
     )
     .get(communityId, ...(memberId ? [memberId] : [])) as {
@@ -214,6 +237,8 @@ export function duesSummary(communityId: string, memberId?: string): DuesSummary
     paid_invoices: number
     awaiting_verification: number
     overdue: number
+    waived: number
+    paid_cash: number
   }
   return {
     billed: row.billed,
@@ -223,6 +248,8 @@ export function duesSummary(communityId: string, memberId?: string): DuesSummary
     paidInvoices: row.paid_invoices,
     awaitingVerification: row.awaiting_verification,
     overdue: row.overdue,
+    waived: row.waived,
+    paidCash: row.paid_cash,
   }
 }
 
@@ -320,11 +347,88 @@ export function claimDuesInvoice(input: {
   const result = db
     .prepare(
       `UPDATE dues_invoices
-       SET status='awaiting_verification', payment_note=?, claimed_at=?,
+       SET status='awaiting_verification', method='transfer', payment_note=?, claimed_at=?,
            verifier_note='', verified_by=NULL, paid_at=NULL
        WHERE id=? AND member_id=? AND status IN ('unpaid','overdue')`,
     )
     .run(input.paymentNote, at, invoice.id, input.memberId)
+  if (result.changes !== 1) throw new Error('invalid_dues_state')
+  return getDuesInvoice(invoice.id)
+}
+
+/**
+ * Pengurus menerima uang tunai langsung. Tidak lewat klaim warga karena tidak
+ * ada bukti transfer yang bisa diperiksa: yang bertanggung jawab adalah orang
+ * yang menekan tombolnya, dan itulah yang dicatat di `verified_by`.
+ */
+export function markDuesInvoicePaidCash(input: {
+  invoiceId: string
+  actorId: string
+  note: string
+}): DuesInvoice | null {
+  const invoice = getDuesInvoice(input.invoiceId)
+  if (!invoice) return null
+  if (invoice.status === 'paid' || invoice.status === 'waived') throw new Error('invalid_dues_state')
+
+  const at = now()
+  // Sama seperti claim/verify: syarat status ikut ke dalam SQL supaya dua
+  // pengurus tidak bisa sama-sama merasa berhasil menutup tagihan yang sama.
+  const result = db
+    .prepare(
+      `UPDATE dues_invoices
+       SET status='paid', method='cash', verifier_note=?, paid_at=?, verified_by=?
+       WHERE id=? AND status IN ${OPEN_STATUSES}`,
+    )
+    .run(input.note, at, input.actorId, invoice.id)
+  if (result.changes !== 1) throw new Error('invalid_dues_state')
+  return getDuesInvoice(invoice.id)
+}
+
+/**
+ * Membebaskan tagihan: rumah kosong, keluarga sedang berduka, atau warga tidak
+ * mampu bulan itu. Berbeda dari menghapus tagihan — barisnya tetap ada berikut
+ * alasannya, sehingga bisa dipertanggungjawabkan di rapat warga.
+ */
+export function waiveDuesInvoice(input: {
+  invoiceId: string
+  actorId: string
+  note: string
+}): DuesInvoice | null {
+  const invoice = getDuesInvoice(input.invoiceId)
+  if (!invoice) return null
+  if (invoice.status === 'paid') throw new Error('invalid_dues_state')
+
+  const result = db
+    .prepare(
+      `UPDATE dues_invoices
+       SET status='waived', method='', verifier_note=?, verified_by=?, paid_at=NULL, claimed_at=NULL
+       WHERE id=? AND status IN ${OPEN_STATUSES}`,
+    )
+    .run(input.note, input.actorId, invoice.id)
+  if (result.changes !== 1) throw new Error('invalid_dues_state')
+  return getDuesInvoice(invoice.id)
+}
+
+/**
+ * Batalkan pembebasan yang salah tekan. Sengaja hanya dari `waived`: menarik
+ * kembali tagihan yang sudah dinyatakan lunas akan membuat catatan kas
+ * berselisih dengan uang yang benar-benar sudah diterima.
+ */
+export function restoreDuesInvoice(input: {
+  invoiceId: string
+  actorId: string
+}): DuesInvoice | null {
+  const invoice = getDuesInvoice(input.invoiceId)
+  if (!invoice) return null
+  if (invoice.status !== 'waived') throw new Error('invalid_dues_state')
+
+  const at = now()
+  const next = invoice.dueAt < at ? 'overdue' : 'unpaid'
+  const result = db
+    .prepare(
+      "UPDATE dues_invoices SET status=?, verifier_note='', verified_by=? WHERE id=? AND status='waived'",
+    )
+    .run(next, input.actorId, invoice.id)
   if (result.changes !== 1) throw new Error('invalid_dues_state')
   return getDuesInvoice(invoice.id)
 }

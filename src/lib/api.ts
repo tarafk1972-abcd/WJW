@@ -268,7 +268,10 @@ export const publicApi = {
     }>(`/invites/${encodeURIComponent(code)}`),
 }
 
-export type DuesInvoiceStatus = 'unpaid' | 'awaiting_verification' | 'paid' | 'overdue'
+export type DuesInvoiceStatus = 'unpaid' | 'awaiting_verification' | 'paid' | 'overdue' | 'waived'
+
+/** Kosong = belum dibayar. 'cash' hanya bisa ditetapkan pengurus. */
+export type DuesMethod = '' | 'transfer' | 'cash'
 
 export interface DuesInvoiceDto {
   id: string
@@ -279,6 +282,7 @@ export interface DuesInvoiceDto {
   amount: number
   dueAt: number
   status: DuesInvoiceStatus
+  method: DuesMethod
   reference: string
   paymentNote: string
   verifierNote: string
@@ -310,6 +314,8 @@ export interface DuesSummaryDto {
   paidInvoices: number
   awaitingVerification: number
   overdue: number
+  waived: number
+  paidCash: number
 }
 
 export const duesApi = {
@@ -336,6 +342,11 @@ export const duesApi = {
     api.post<{ invoice: DuesInvoiceDto }>(`/dues/${id}/claim`, { paymentNote }),
   verify: (id: string, approve: boolean, note = '') =>
     api.post<{ invoice: DuesInvoiceDto }>(`/dues/${id}/verify`, { approve, note }),
+  cash: (id: string, note = '') =>
+    api.post<{ invoice: DuesInvoiceDto }>(`/dues/${id}/cash`, { note }),
+  waive: (id: string, note: string) =>
+    api.post<{ invoice: DuesInvoiceDto }>(`/dues/${id}/waive`, { note }),
+  restore: (id: string) => api.post<{ invoice: DuesInvoiceDto }>(`/dues/${id}/restore`, {}),
 }
 
 export interface InvoiceDto {

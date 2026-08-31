@@ -37,6 +37,9 @@ import {
 import {
   claimDuesInvoice,
   duesSummary,
+  markDuesInvoicePaidCash,
+  restoreDuesInvoice,
+  waiveDuesInvoice,
   generateDuesInvoices,
   getDuesInvoice,
   getDuesSettings,
@@ -3075,6 +3078,38 @@ app.put('/api/dues/settings', auth, active, async (c) => {
   return c.json({ settings })
 })
 
+/** Rp 150.000 — dipakai di badan notifikasi iuran agar nominalnya terbaca jelas. */
+function rupiah(amount: number): string {
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    maximumFractionDigits: 0,
+  }).format(amount)
+}
+
+/** 10 Sep 2026, mengikuti zona waktu server (Asia/Jakarta di produksi). */
+function tanggalSingkat(at: number): string {
+  return new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(at))
+}
+
+/**
+ * Siapa yang harus tahu ada klaim pembayaran masuk. Penanggung jawab scope
+ * 'dues' didahulukan; kalau belum ditunjuk, jatuh ke pendiri komunitas supaya
+ * klaim warga tidak menganggur tanpa ada yang memeriksa.
+ */
+function duesManagerIds(communityId: string): string[] {
+  const responsible = listManagementResponsibilities(communityId)
+    .filter((item) => item.scope === 'dues' && item.memberId)
+    .map((item) => item.memberId as string)
+  if (responsible.length) return responsible
+  const founders = db
+    .prepare(
+      "SELECT id FROM members WHERE community_id=? AND role='admin' AND status='active'",
+    )
+    .all(communityId) as { id: string }[]
+  return founders.map((row) => row.id)
+}
+
 app.post('/api/dues/invoices/generate', auth, active, async (c) => {
   const me = c.get('me')
   if (!me.community_id || !canManageScope(me, 'dues')) return bad(c, 'forbidden', 403)
@@ -3089,6 +3124,18 @@ app.post('/api/dues/invoices/generate', auth, active, async (c) => {
     })
     audit(me.community_id, me.id, 'dues.invoice.generate', `${body.period} · ${result.created} baru`)
     publishCommunityEvent(me.community_id, 'dues.updated', body.period ?? '')
+    // Tagihan yang terbit diam-diam adalah tagihan yang terlewat. Hanya yang
+    // benar-benar baru yang diberitahukan, supaya menerbitkan ulang periode
+    // yang sama tidak membanjiri warga dengan notifikasi berulang.
+    const fresh = result.invoices.filter((invoice) => invoice.status === 'unpaid' && invoice.claimedAt === null)
+    for (const invoice of fresh) {
+      void pushToMembers([invoice.memberId], {
+        title: invoice.label,
+        body: `${rupiah(invoice.amount)} · jatuh tempo ${tanggalSingkat(invoice.dueAt)}`,
+        url: '#/app/dues',
+        tag: `dues-${invoice.id}`,
+      })
+    }
     return c.json(result, 201)
   } catch (error) {
     const code = error instanceof Error ? error.message : 'errUnknown'
@@ -3110,6 +3157,12 @@ app.post('/api/dues/:id/claim', auth, active, async (c) => {
     if (!updated) return bad(c, 'forbidden', 403)
     audit(me.community_id, me.id, 'dues.invoice.claim', invoice.reference)
     publishCommunityEvent(me.community_id!, 'dues.updated', invoice.id)
+    void pushToMembers(duesManagerIds(invoice.communityId), {
+      title: 'Konfirmasi pembayaran iuran',
+      body: `${me.name} menyatakan sudah membayar ${invoice.reference}. Menunggu verifikasi.`,
+      url: '#/app/dues',
+      tag: `dues-claim-${invoice.id}`,
+    })
     return c.json({ invoice: updated })
   } catch (error) {
     return bad(c, error instanceof Error ? error.message : 'errUnknown', 409)
@@ -3134,6 +3187,97 @@ app.post('/api/dues/:id/verify', auth, active, async (c) => {
     })
     if (!updated) return bad(c, 'not_found', 404)
     audit(me.community_id, me.id, body.approve ? 'dues.invoice.verify' : 'dues.invoice.reject', invoice.reference)
+    publishCommunityEvent(me.community_id, 'dues.updated', invoice.id)
+    void pushToMembers([invoice.memberId], {
+      title: body.approve ? 'Pembayaran iuran diterima' : 'Konfirmasi pembayaran ditolak',
+      body: body.approve
+        ? `${invoice.label} ${invoice.period} lunas. Terima kasih.`
+        : (updated.verifierNote || 'Hubungi pengurus untuk penjelasan.'),
+      url: '#/app/dues',
+      tag: `dues-${invoice.id}`,
+    })
+    return c.json({ invoice: updated })
+  } catch (error) {
+    return bad(c, error instanceof Error ? error.message : 'errUnknown', 409)
+  }
+})
+
+/**
+ * Iuran yang dibayar tunai ke pengurus. Tidak ada tahap verifikasi karena
+ * tidak ada bukti transfer untuk diperiksa — pengurus yang menekan tombol ini
+ * yang bertanggung jawab, dan namanya tercatat di audit.
+ */
+app.post('/api/dues/:id/cash', auth, active, async (c) => {
+  const me = c.get('me')
+  if (!me.community_id || !canManageScope(me, 'dues')) return bad(c, 'forbidden', 403)
+  const invoiceId = c.req.param('id')
+  if (!invoiceId) return bad(c, 'not_found', 404)
+  const invoice = getDuesInvoice(invoiceId)
+  if (!invoice || invoice.communityId !== me.community_id) return bad(c, 'forbidden', 403)
+  const body = (await c.req.json().catch(() => ({}))) as { note?: string }
+  try {
+    const updated = markDuesInvoicePaidCash({
+      invoiceId: invoice.id,
+      actorId: me.id,
+      note: (body.note ?? '').trim().slice(0, 500),
+    })
+    if (!updated) return bad(c, 'not_found', 404)
+    audit(me.community_id, me.id, 'dues.invoice.cash', `${invoice.reference} · ${invoice.amount}`)
+    publishCommunityEvent(me.community_id, 'dues.updated', invoice.id)
+    void pushToMembers([invoice.memberId], {
+      title: 'Pembayaran tunai dicatat',
+      body: `${invoice.label} ${invoice.period} ditandai lunas oleh pengurus.`,
+      url: '#/app/dues',
+      tag: `dues-${invoice.id}`,
+    })
+    return c.json({ invoice: updated })
+  } catch (error) {
+    return bad(c, error instanceof Error ? error.message : 'errUnknown', 409)
+  }
+})
+
+/** Bebaskan tagihan berikut alasannya; barisnya tetap ada untuk laporan. */
+app.post('/api/dues/:id/waive', auth, active, async (c) => {
+  const me = c.get('me')
+  if (!me.community_id || !canManageScope(me, 'dues')) return bad(c, 'forbidden', 403)
+  const invoiceId = c.req.param('id')
+  if (!invoiceId) return bad(c, 'not_found', 404)
+  const invoice = getDuesInvoice(invoiceId)
+  if (!invoice || invoice.communityId !== me.community_id) return bad(c, 'forbidden', 403)
+  const body = (await c.req.json().catch(() => ({}))) as { note?: string }
+  const note = (body.note ?? '').trim().slice(0, 500)
+  // Alasan diwajibkan: pembebasan iuran adalah keputusan yang harus bisa
+  // dijelaskan kepada warga lain yang tetap membayar.
+  if (note.length < 3) return bad(c, 'dues_waive_reason_required')
+  try {
+    const updated = waiveDuesInvoice({ invoiceId: invoice.id, actorId: me.id, note })
+    if (!updated) return bad(c, 'not_found', 404)
+    audit(me.community_id, me.id, 'dues.invoice.waive', `${invoice.reference} · ${note}`)
+    publishCommunityEvent(me.community_id, 'dues.updated', invoice.id)
+    void pushToMembers([invoice.memberId], {
+      title: 'Iuran dibebaskan',
+      body: `${invoice.label} ${invoice.period}: ${note}`,
+      url: '#/app/dues',
+      tag: `dues-${invoice.id}`,
+    })
+    return c.json({ invoice: updated })
+  } catch (error) {
+    return bad(c, error instanceof Error ? error.message : 'errUnknown', 409)
+  }
+})
+
+/** Batalkan pembebasan yang salah tekan; tagihan kembali berlaku. */
+app.post('/api/dues/:id/restore', auth, active, (c) => {
+  const me = c.get('me')
+  if (!me.community_id || !canManageScope(me, 'dues')) return bad(c, 'forbidden', 403)
+  const invoiceId = c.req.param('id')
+  if (!invoiceId) return bad(c, 'not_found', 404)
+  const invoice = getDuesInvoice(invoiceId)
+  if (!invoice || invoice.communityId !== me.community_id) return bad(c, 'forbidden', 403)
+  try {
+    const updated = restoreDuesInvoice({ invoiceId: invoice.id, actorId: me.id })
+    if (!updated) return bad(c, 'not_found', 404)
+    audit(me.community_id, me.id, 'dues.invoice.restore', invoice.reference)
     publishCommunityEvent(me.community_id, 'dues.updated', invoice.id)
     return c.json({ invoice: updated })
   } catch (error) {

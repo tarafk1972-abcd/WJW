@@ -5,6 +5,7 @@ import {
   duesApi,
   type DuesInvoiceDto,
   type DuesInvoiceStatus,
+  type DuesMethod,
   type DuesSettingsDto,
   type DuesSummaryDto,
 } from '../lib/api'
@@ -31,6 +32,8 @@ const emptySummary: DuesSummaryDto = {
   paidInvoices: 0,
   awaitingVerification: 0,
   overdue: 0,
+  waived: 0,
+  paidCash: 0,
 }
 
 function currentPeriod(): string {
@@ -46,9 +49,18 @@ function statusView(status: DuesInvoiceStatus): { label: string; chip: string } 
       return { label: 'Menunggu verifikasi', chip: 'chip-info' }
     case 'overdue':
       return { label: 'Terlambat', chip: 'chip-danger' }
+    case 'waived':
+      return { label: 'Dibebaskan', chip: 'chip-muted' }
     default:
       return { label: 'Belum bayar', chip: 'chip-warn' }
   }
+}
+
+/** Label cara bayar; kosong tidak ditampilkan agar kartu tidak ramai. */
+function methodLabel(method: DuesMethod): string {
+  if (method === 'cash') return 'Tunai'
+  if (method === 'transfer') return 'Transfer'
+  return ''
 }
 
 function apiMessage(error: unknown): string {
@@ -58,6 +70,7 @@ function apiMessage(error: unknown): string {
   if (error.code === 'invalid_dues_state') return 'Status tagihan sudah berubah. Muat ulang data.'
   if (error.code === 'invalid_period') return 'Periode tagihan tidak valid.'
   if (error.code === 'no_members') return 'Pilih minimal satu penerima tagihan.'
+  if (error.code === 'dues_waive_reason_required') return 'Tulis alasan pembebasan minimal 3 huruf.'
   if (error.code === 'invalid_member') return 'Ada penerima yang bukan anggota aktif tenant ini.'
   return 'Terjadi gangguan. Silakan coba lagi.'
 }
@@ -86,6 +99,10 @@ export default function Dues() {
   const [selectedMembers, setSelectedMembers] = useState<string[]>([])
   const [paymentNote, setPaymentNote] = useState('')
   const [verifyNote, setVerifyNote] = useState('')
+  const [cashing, setCashing] = useState<DuesInvoiceDto | null>(null)
+  const [cashNote, setCashNote] = useState('')
+  const [waiving, setWaiving] = useState<DuesInvoiceDto | null>(null)
+  const [waiveNote, setWaiveNote] = useState('')
 
   const load = useCallback(async () => {
     if (!apiMode()) {
@@ -216,6 +233,51 @@ export default function Dues() {
     }
   }
 
+  const markCash = async () => {
+    if (!cashing) return
+    setBusy(true)
+    try {
+      await duesApi.cash(cashing.id, cashNote.trim())
+      setCashing(null)
+      setCashNote('')
+      toast('Pembayaran tunai dicatat.')
+      await load()
+    } catch (error) {
+      toast(apiMessage(error), 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const waive = async () => {
+    if (!waiving) return
+    setBusy(true)
+    try {
+      await duesApi.waive(waiving.id, waiveNote.trim())
+      setWaiving(null)
+      setWaiveNote('')
+      toast('Tagihan dibebaskan.')
+      await load()
+    } catch (error) {
+      toast(apiMessage(error), 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const restore = async (invoice: DuesInvoiceDto) => {
+    setBusy(true)
+    try {
+      await duesApi.restore(invoice.id)
+      toast('Pembebasan dibatalkan; tagihan berlaku lagi.')
+      await load()
+    } catch (error) {
+      toast(apiMessage(error), 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="page">
       <div className="row" style={{ marginBottom: 14 }}>
@@ -303,6 +365,17 @@ export default function Dues() {
                   <span>{summary.awaitingVerification} pembayaran menunggu verifikasi Admin 2.</span>
                 </div>
               )}
+
+              {/* Pemisahan tunai vs rekening: yang tunai ada di tangan pengurus,
+                  bukan di rekening kas. Menyamakan keduanya membuat selisih kas
+                  baru ketahuan saat rapat. */}
+              {(summary.paidCash > 0 || summary.waived > 0) && (
+                <div className="tiny" style={{ marginTop: 10 }}>
+                  {summary.paidCash > 0 && <>Diterima tunai: {fmtMoney(summary.paidCash, lang)}</>}
+                  {summary.paidCash > 0 && summary.waived > 0 && ' · '}
+                  {summary.waived > 0 && <>{summary.waived} tagihan dibebaskan</>}
+                </div>
+              )}
             </>
           ) : (
             <div className="banner banner-info" style={{ marginTop: 12 }}>
@@ -342,6 +415,7 @@ export default function Dues() {
                     )}
                     <div className="tiny">
                       {invoice.period} · jatuh tempo {fmtDate(invoice.dueAt, lang)} · {invoice.reference}
+                      {methodLabel(invoice.method) ? ` · ${methodLabel(invoice.method)}` : ''}
                     </div>
                     {invoice.paymentNote && data.canManage && (
                       <div className="tiny" style={{ marginTop: 4 }}>Catatan warga: {invoice.paymentNote}</div>
@@ -372,6 +446,43 @@ export default function Dues() {
                         }}
                       >
                         Verifikasi pembayaran
+                      </button>
+                    )}
+                    {/* Tunai & pembebasan tersedia selama tagihan belum lunas,
+                        termasuk saat menunggu verifikasi: warga bisa saja
+                        akhirnya membayar langsung ke pengurus. */}
+                    {data.canManage && invoice.status !== 'paid' && invoice.status !== 'waived' && (
+                      <div className="btn-row" style={{ marginTop: 8 }}>
+                        <button
+                          className="btn btn-sm btn-ghost grow"
+                          disabled={busy}
+                          onClick={() => {
+                            setCashNote('')
+                            setCashing(invoice)
+                          }}
+                        >
+                          <Icon name="check" size={14} /> Terima tunai
+                        </button>
+                        <button
+                          className="btn btn-sm btn-ghost grow"
+                          disabled={busy}
+                          onClick={() => {
+                            setWaiveNote('')
+                            setWaiving(invoice)
+                          }}
+                        >
+                          Bebaskan
+                        </button>
+                      </div>
+                    )}
+                    {data.canManage && invoice.status === 'waived' && (
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        style={{ marginTop: 8 }}
+                        disabled={busy}
+                        onClick={() => void restore(invoice)}
+                      >
+                        Batalkan pembebasan
                       </button>
                     )}
                   </div>
@@ -470,6 +581,56 @@ export default function Dues() {
             <Icon name="check" size={16} /> Tandai lunas
           </button>
         </div>
+      </Sheet>
+
+      <Sheet
+        open={!!cashing}
+        onClose={() => !busy && setCashing(null)}
+        title="Terima pembayaran tunai"
+        subtitle={cashing ? `${cashing.reference} · ${fmtMoney(cashing.amount, lang)}` : ''}
+      >
+        <p className="tiny" style={{ marginBottom: 12 }}>
+          Gunakan ini bila warga menyerahkan uang langsung kepada pengurus. Tagihan
+          langsung berstatus lunas tanpa verifikasi, dan nama Anda tercatat sebagai
+          penerimanya.
+        </p>
+        <label className="field">
+          <span>Catatan penerimaan (opsional)</span>
+          <textarea
+            className="textarea"
+            value={cashNote}
+            onChange={(event) => setCashNote(event.target.value)}
+            placeholder="Contoh: diterima Ketua RT di pos ronda."
+          />
+        </label>
+        <button className="btn btn-primary" disabled={busy} onClick={() => void markCash()}>
+          <Icon name="check" size={16} /> Tandai lunas tunai
+        </button>
+      </Sheet>
+
+      <Sheet
+        open={!!waiving}
+        onClose={() => !busy && setWaiving(null)}
+        title="Bebaskan tagihan"
+        subtitle={waiving ? `${waiving.reference} · ${fmtMoney(waiving.amount, lang)}` : ''}
+      >
+        <p className="tiny" style={{ marginBottom: 12 }}>
+          Tagihan tidak dihapus, hanya dinyatakan tidak perlu dibayar. Nominalnya
+          dikeluarkan dari tunggakan maupun target kas, dan alasannya tersimpan
+          untuk dipertanggungjawabkan.
+        </p>
+        <label className="field">
+          <span>Alasan pembebasan</span>
+          <textarea
+            className="textarea"
+            value={waiveNote}
+            onChange={(event) => setWaiveNote(event.target.value)}
+            placeholder="Contoh: rumah kosong sejak Juli, atau keputusan rapat warga 12 Agustus."
+          />
+        </label>
+        <button className="btn btn-primary" disabled={busy || waiveNote.trim().length < 3} onClick={() => void waive()}>
+          <Icon name="check" size={16} /> Bebaskan tagihan ini
+        </button>
       </Sheet>
     </div>
   )
