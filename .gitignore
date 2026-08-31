@@ -41,3 +41,9 @@ android/
 
 # Sertifikat pengujian HTTPS lokal — jangan pernah di-commit
 .cert/
+
+*.key
+*.pem
+*.tar.gz
+*.diff
+WJW/
