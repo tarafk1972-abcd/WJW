@@ -268,16 +268,20 @@ export function populationOverview(me: MemberRow): PopulationView {
   }
 }
 
-export function listBillableHouseholdHeads(communityId: string): { id: string; name: string; house: string }[] {
+export function listBillableHouseholdHeads(
+  communityId: string,
+): { id: string; name: string; house: string; householdId: string }[] {
   ensurePopulationHouseholds()
+  // householdId ikut dikirim karena nominal khusus menempel pada rumah, bukan
+  // pada akun kepala keluarganya yang sewaktu-waktu bisa berganti.
   return db
     .prepare(
-      `SELECT m.id,m.name,h.address AS house
+      `SELECT m.id,m.name,h.address AS house,h.id AS householdId
        FROM households h JOIN members m ON m.id=h.head_member_id
        WHERE h.community_id=? AND m.status='active' AND m.role IN ('warga','satpam','admin')
        ORDER BY h.block,h.rw,h.rt,h.address,m.name`,
     )
-    .all(communityId) as { id: string; name: string; house: string }[]
+    .all(communityId) as { id: string; name: string; house: string; householdId: string }[]
 }
 
 export function setHouseholdHead(me: MemberRow, householdId: string, memberId: unknown): HouseholdView {

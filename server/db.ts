@@ -121,6 +121,12 @@ addColumn('communities', 'subdomain', "TEXT NOT NULL DEFAULT ''")
 // Iuran: cara bayar dicatat agar rekap kas tidak menyamakan uang tunai yang
 // diterima pengurus dengan transfer yang masuk rekening.
 addColumn('dues_invoices', 'method', "TEXT NOT NULL DEFAULT ''")
+
+// Penerbitan bulanan otomatis; mati secara bawaan supaya tenant lama tidak
+// tiba-tiba menerbitkan tagihan tanpa diminta.
+addColumn('dues_settings', 'auto_monthly', 'INTEGER NOT NULL DEFAULT 0')
+// Membedakan iuran rutin dari tagihan insidental (kerja bakti, 17 Agustus).
+addColumn('dues_invoices', 'kind', "TEXT NOT NULL DEFAULT 'monthly'")
 db.exec(
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_communities_subdomain ON communities(lower(subdomain)) WHERE subdomain <> ''",
 )

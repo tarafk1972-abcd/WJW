@@ -37,7 +37,11 @@ import {
 import {
   claimDuesInvoice,
   duesSummary,
+  generateSpecialInvoices,
+  listDuesHouseAmounts,
   markDuesInvoicePaidCash,
+  setDuesHouseAmount,
+  startDuesScheduler,
   restoreDuesInvoice,
   waiveDuesInvoice,
   generateDuesInvoices,
@@ -3025,6 +3029,7 @@ app.get('/api/dues', auth, active, (c) => {
 
   return c.json({
     settings: getDuesSettings(me.community_id),
+    houseAmounts: canManage ? listDuesHouseAmounts(me.community_id) : [],
     // Warga hanya menerima agregat tagihannya sendiri; total kas dan
     // tunggakan tetangga adalah rincian operasional khusus Admin 2.
     summary: duesSummary(me.community_id, canManage ? undefined : me.id),
@@ -3049,6 +3054,7 @@ app.put('/api/dues/settings', auth, active, async (c) => {
     amount?: number
     dueDay?: number
     paymentInstructions?: string
+    autoMonthly?: boolean
   }
   const label = (body.label ?? '').trim().slice(0, 100)
   const amount = Number(body.amount)
@@ -3072,8 +3078,14 @@ app.put('/api/dues/settings', auth, active, async (c) => {
     amount,
     dueDay,
     paymentInstructions,
+    autoMonthly: body.autoMonthly === true,
   })
-  audit(me.community_id, me.id, 'dues.settings.update', `${label} · ${amount} · tgl ${dueDay}`)
+  audit(
+    me.community_id,
+    me.id,
+    'dues.settings.update',
+    `${label} · ${amount} · tgl ${dueDay}${settings.autoMonthly ? ' · otomatis' : ''}`,
+  )
   publishCommunityEvent(me.community_id, 'dues.updated', 'settings')
   return c.json({ settings })
 })
@@ -3140,6 +3152,74 @@ app.post('/api/dues/invoices/generate', auth, active, async (c) => {
   } catch (error) {
     const code = error instanceof Error ? error.message : 'errUnknown'
     const status = code === 'invalid_member' || code === 'invalid_household_head' ? 422 : 400
+    return bad(c, code, status)
+  }
+})
+
+/** Nominal khusus satu rumah. Kirim amount null untuk mengembalikannya ke nominal umum. */
+app.put('/api/dues/houses/:householdId/amount', auth, active, async (c) => {
+  const me = c.get('me')
+  if (!me.community_id || !canManageScope(me, 'dues')) return bad(c, 'forbidden', 403)
+  const householdId = c.req.param('householdId')
+  if (!householdId) return bad(c, 'not_found', 404)
+  const body = (await c.req.json().catch(() => ({}))) as { amount?: number | null; note?: string }
+  const amount = body.amount === null || body.amount === undefined ? null : Number(body.amount)
+  try {
+    setDuesHouseAmount({
+      communityId: me.community_id,
+      householdId,
+      actorId: me.id,
+      amount,
+      note: (body.note ?? '').trim().slice(0, 200),
+    })
+    audit(
+      me.community_id,
+      me.id,
+      'dues.house.amount',
+      amount === null ? `${householdId} · kembali ke nominal umum` : `${householdId} · ${amount}`,
+    )
+    publishCommunityEvent(me.community_id, 'dues.updated', 'houseAmount')
+    return c.json({ houseAmounts: listDuesHouseAmounts(me.community_id) })
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'errUnknown'
+    return bad(c, code, code === 'not_found' ? 404 : 400)
+  }
+})
+
+/** Tagihan insidental: kerja bakti, perbaikan gapura, dan sejenisnya. */
+app.post('/api/dues/invoices/special', auth, active, async (c) => {
+  const me = c.get('me')
+  if (!me.community_id || !canManageScope(me, 'dues')) return bad(c, 'forbidden', 403)
+  const body = (await c.req.json().catch(() => ({}))) as {
+    title?: string
+    amount?: number
+    dueAt?: number
+    memberIds?: string[]
+  }
+  const memberIds = Array.isArray(body.memberIds) ? body.memberIds.filter((id) => typeof id === 'string') : []
+  try {
+    const result = generateSpecialInvoices({
+      communityId: me.community_id,
+      actorId: me.id,
+      title: body.title ?? '',
+      amount: Number(body.amount),
+      dueAt: Number(body.dueAt),
+      memberIds,
+    })
+    audit(me.community_id, me.id, 'dues.invoice.special', `${body.title} · ${result.created} tagihan`)
+    publishCommunityEvent(me.community_id, 'dues.updated', 'special')
+    for (const invoice of result.invoices) {
+      void pushToMembers([invoice.memberId], {
+        title: invoice.label,
+        body: `${rupiah(invoice.amount)} · jatuh tempo ${tanggalSingkat(invoice.dueAt)}`,
+        url: '#/app/dues',
+        tag: `dues-${invoice.id}`,
+      })
+    }
+    return c.json(result, 201)
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'errUnknown'
+    const status = code === 'invalid_household_head' ? 422 : 400
     return bad(c, code, status)
   }
 })
@@ -3876,6 +3956,22 @@ app.get('*', (c) => {
 // aplikasi diuji lewat app.fetch() tanpa menyentuh jaringan.
 if (process.env.WJW_NO_LISTEN !== '1') {
   startRenewalScheduler()
+  // Iuran rutin terbit sendiri untuk tenant yang mengaktifkannya.
+  startDuesScheduler(6 * 60 * 60 * 1000, (results) => {
+    for (const item of results) {
+      audit(item.communityId, 'system', 'dues.invoice.auto', `${item.period} · ${item.created} tagihan`)
+      publishCommunityEvent(item.communityId, 'dues.updated', item.period)
+      // Tagihan otomatis yang terbit diam-diam adalah tagihan yang terlewat.
+      for (const invoice of item.invoices) {
+        void pushToMembers([invoice.memberId], {
+          title: invoice.label,
+          body: `${rupiah(invoice.amount)} · jatuh tempo ${tanggalSingkat(invoice.dueAt)}`,
+          url: '#/app/dues',
+          tag: `dues-${invoice.id}`,
+        })
+      }
+    }
+  })
   const port = Number(process.env.PORT ?? 8787)
   serve({ fetch: app.fetch, hostname: '0.0.0.0', port }, (info) => {
     console.log(`[WJW] API berjalan di http://0.0.0.0:${info.port}`)

@@ -206,6 +206,19 @@ CREATE TABLE IF NOT EXISTS dues_settings (
   updated_at           INTEGER NOT NULL
 );
 
+-- Nominal khusus per rumah. Menempel pada rumah, bukan pada akun, supaya
+-- kesepakatan tetap berlaku ketika kepala keluarganya berganti.
+CREATE TABLE IF NOT EXISTS dues_house_amounts (
+  household_id  TEXT PRIMARY KEY REFERENCES households(id) ON DELETE CASCADE,
+  community_id  TEXT NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+  amount        INTEGER NOT NULL,
+  note          TEXT NOT NULL DEFAULT '',
+  updated_by    TEXT NOT NULL REFERENCES members(id),
+  updated_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dues_house_amounts_community
+  ON dues_house_amounts(community_id);
+
 CREATE TABLE IF NOT EXISTS dues_invoices (
   id               TEXT PRIMARY KEY,
   community_id     TEXT NOT NULL REFERENCES communities(id) ON DELETE CASCADE,

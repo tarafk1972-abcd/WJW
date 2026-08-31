@@ -273,6 +273,9 @@ export type DuesInvoiceStatus = 'unpaid' | 'awaiting_verification' | 'paid' | 'o
 /** Kosong = belum dibayar. 'cash' hanya bisa ditetapkan pengurus. */
 export type DuesMethod = '' | 'transfer' | 'cash'
 
+/** `monthly` = iuran rutin; `special` = tagihan insidental. */
+export type DuesKind = 'monthly' | 'special'
+
 export interface DuesInvoiceDto {
   id: string
   communityId: string
@@ -282,6 +285,7 @@ export interface DuesInvoiceDto {
   amount: number
   dueAt: number
   status: DuesInvoiceStatus
+  kind: DuesKind
   method: DuesMethod
   reference: string
   paymentNote: string
@@ -296,12 +300,20 @@ export interface DuesInvoiceDto {
   memberHouse?: string
 }
 
+export interface DuesHouseAmountDto {
+  householdId: string
+  amount: number
+  note: string
+  updatedAt: number
+}
+
 export interface DuesSettingsDto {
   communityId: string
   label: string
   amount: number
   dueDay: number
   paymentInstructions: string
+  autoMonthly: boolean
   updatedBy: string
   updatedAt: number
 }
@@ -325,13 +337,15 @@ export const duesApi = {
       summary: DuesSummaryDto
       canManage: boolean
       invoices: DuesInvoiceDto[]
-      members: { id: string; name: string; house: string }[]
+      members: { id: string; name: string; house: string; householdId: string }[]
+      houseAmounts: DuesHouseAmountDto[]
     }>('/dues'),
   saveSettings: (body: {
     label: string
     amount: number
     dueDay: number
     paymentInstructions: string
+    autoMonthly: boolean
   }) => api.put<{ settings: DuesSettingsDto }>('/dues/settings', body),
   generate: (period: string, memberIds: string[]) =>
     api.post<{ created: number; existing: number; invoices: DuesInvoiceDto[] }>(
@@ -347,6 +361,18 @@ export const duesApi = {
   waive: (id: string, note: string) =>
     api.post<{ invoice: DuesInvoiceDto }>(`/dues/${id}/waive`, { note }),
   restore: (id: string) => api.post<{ invoice: DuesInvoiceDto }>(`/dues/${id}/restore`, {}),
+  setHouseAmount: (householdId: string, amount: number | null, note = '') =>
+    api.put<{ houseAmounts: DuesHouseAmountDto[] }>(`/dues/houses/${householdId}/amount`, {
+      amount,
+      note,
+    }),
+  special: (title: string, amount: number, dueAt: number, memberIds: string[]) =>
+    api.post<{ created: number; invoices: DuesInvoiceDto[] }>('/dues/invoices/special', {
+      title,
+      amount,
+      dueAt,
+      memberIds,
+    }),
 }
 
 export interface InvoiceDto {

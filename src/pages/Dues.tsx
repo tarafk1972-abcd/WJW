@@ -5,6 +5,7 @@ import {
   duesApi,
   type DuesInvoiceDto,
   type DuesInvoiceStatus,
+  type DuesHouseAmountDto,
   type DuesMethod,
   type DuesSettingsDto,
   type DuesSummaryDto,
@@ -21,7 +22,8 @@ type DuesData = {
   summary: DuesSummaryDto
   canManage: boolean
   invoices: DuesInvoiceDto[]
-  members: { id: string; name: string; house: string }[]
+  members: { id: string; name: string; house: string; householdId: string }[]
+  houseAmounts: DuesHouseAmountDto[]
 }
 
 const emptySummary: DuesSummaryDto = {
@@ -71,6 +73,8 @@ function apiMessage(error: unknown): string {
   if (error.code === 'invalid_period') return 'Periode tagihan tidak valid.'
   if (error.code === 'no_members') return 'Pilih minimal satu penerima tagihan.'
   if (error.code === 'dues_waive_reason_required') return 'Tulis alasan pembebasan minimal 3 huruf.'
+  if (error.code === 'invalid_dues_title') return 'Nama tagihan minimal 3 huruf.'
+  if (error.code === 'invalid_dues_settings') return 'Nominal harus antara Rp1.000 dan Rp50.000.000.'
   if (error.code === 'invalid_member') return 'Ada penerima yang bukan anggota aktif tenant ini.'
   return 'Terjadi gangguan. Silakan coba lagi.'
 }
@@ -103,6 +107,14 @@ export default function Dues() {
   const [cashNote, setCashNote] = useState('')
   const [waiving, setWaiving] = useState<DuesInvoiceDto | null>(null)
   const [waiveNote, setWaiveNote] = useState('')
+  const [autoMonthly, setAutoMonthly] = useState(false)
+  const [housesOpen, setHousesOpen] = useState(false)
+  const [houseDraft, setHouseDraft] = useState<Record<string, string>>({})
+  const [specialOpen, setSpecialOpen] = useState(false)
+  const [specialTitle, setSpecialTitle] = useState('')
+  const [specialAmount, setSpecialAmount] = useState('50000')
+  const [specialDue, setSpecialDue] = useState('')
+  const [specialMembers, setSpecialMembers] = useState<string[]>([])
 
   const load = useCallback(async () => {
     if (!apiMode()) {
@@ -128,6 +140,8 @@ export default function Dues() {
   const summary = data?.summary ?? emptySummary
   const invoices = data?.invoices ?? []
   const members = data?.members ?? []
+  const houseAmounts = data?.houseAmounts ?? []
+  const houseAmountOf = new Map(houseAmounts.map((item) => [item.householdId, item.amount]))
   const collectionRate = summary.billed > 0 ? Math.round((summary.paid / summary.billed) * 100) : 0
 
   const openSettings = () => {
@@ -135,6 +149,7 @@ export default function Dues() {
     setAmount(String(settings?.amount ?? 150000))
     setDueDay(String(settings?.dueDay ?? 10))
     setInstructions(settings?.paymentInstructions ?? '')
+    setAutoMonthly(settings?.autoMonthly ?? false)
     setSettingsOpen(true)
   }
 
@@ -164,6 +179,7 @@ export default function Dues() {
         amount: nominal,
         dueDay: jatuhTempo,
         paymentInstructions: instructions.trim(),
+        autoMonthly,
       })
       setSettingsOpen(false)
       toast('Pengaturan iuran disimpan.')
@@ -257,6 +273,51 @@ export default function Dues() {
       setWaiving(null)
       setWaiveNote('')
       toast('Tagihan dibebaskan.')
+      await load()
+    } catch (error) {
+      toast(apiMessage(error), 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const saveHouseAmount = async (householdId: string) => {
+    const teks = (houseDraft[householdId] ?? '').replace(/[^0-9]/g, '')
+    const nominal = teks === '' ? null : Number(teks)
+    if (nominal !== null && (!Number.isInteger(nominal) || nominal < 1000)) {
+      toast('Nominal minimal Rp1.000, atau kosongkan untuk memakai nominal umum.', 'err')
+      return
+    }
+    setBusy(true)
+    try {
+      await duesApi.setHouseAmount(householdId, nominal)
+      toast(nominal === null ? 'Rumah ini kembali memakai nominal umum.' : 'Nominal khusus disimpan.')
+      await load()
+    } catch (error) {
+      toast(apiMessage(error), 'err')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const createSpecial = async () => {
+    const nominal = Number(specialAmount.replace(/[^0-9]/g, ''))
+    const jatuhTempo = specialDue ? new Date(`${specialDue}T12:00:00`).getTime() : 0
+    if (specialTitle.trim().length < 3 || !Number.isInteger(nominal) || nominal < 1000 || !jatuhTempo) {
+      toast('Isi nama tagihan, nominal, dan tanggal jatuh tempo.', 'err')
+      return
+    }
+    if (!specialMembers.length) {
+      toast('Pilih minimal satu penerima tagihan.', 'err')
+      return
+    }
+    setBusy(true)
+    try {
+      const result = await duesApi.special(specialTitle.trim(), nominal, jatuhTempo, specialMembers)
+      setSpecialOpen(false)
+      setSpecialTitle('')
+      setSpecialMembers([])
+      toast(`${result.created} tagihan insidental diterbitkan.`)
       await load()
     } catch (error) {
       toast(apiMessage(error), 'err')
@@ -359,6 +420,45 @@ export default function Dues() {
                 </button>
               </div>
 
+              <div className="btn-row" style={{ marginTop: 8 }}>
+                <button
+                  className="btn btn-sm btn-ghost grow"
+                  disabled={!settings}
+                  onClick={() => {
+                    setHouseDraft(
+                      Object.fromEntries(
+                        members.map((member) => [
+                          member.householdId,
+                          houseAmountOf.has(member.householdId)
+                            ? String(houseAmountOf.get(member.householdId))
+                            : '',
+                        ]),
+                      ),
+                    )
+                    setHousesOpen(true)
+                  }}
+                >
+                  Nominal khusus per rumah
+                </button>
+                <button
+                  className="btn btn-sm btn-ghost grow"
+                  onClick={() => {
+                    setSpecialTitle('')
+                    setSpecialDue('')
+                    setSpecialMembers([])
+                    setSpecialOpen(true)
+                  }}
+                >
+                  Tagihan insidental
+                </button>
+              </div>
+
+              {settings?.autoMonthly && (
+                <div className="tiny" style={{ marginTop: 8 }}>
+                  Iuran rutin terbit otomatis setiap awal bulan.
+                </div>
+              )}
+
               {summary.awaitingVerification > 0 && (
                 <div className="banner banner-warn" style={{ marginTop: 12 }}>
                   <Icon name="info" size={17} />
@@ -405,7 +505,10 @@ export default function Dues() {
                   <div className="grow">
                     <div className="row-between" style={{ gap: 8 }}>
                       <span className="strong truncate">{invoice.label}</span>
-                      <span className={`chip ${status.chip}`}>{status.label}</span>
+                      <span className="row" style={{ gap: 5 }}>
+                        {invoice.kind === 'special' && <span className="chip chip-info">Insidental</span>}
+                        <span className={`chip ${status.chip}`}>{status.label}</span>
+                      </span>
                     </div>
                     {data.canManage && (
                       <div className="tiny truncate">
@@ -511,6 +614,20 @@ export default function Dues() {
         <label className="field">
           <span>Instruksi pembayaran</span>
           <textarea className="textarea" value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="Contoh: Transfer ke rekening kas lingkungan lalu tulis nomor referensi." />
+        </label>
+        <label className="item" style={{ cursor: 'pointer', marginBottom: 12 }}>
+          <input
+            type="checkbox"
+            checked={autoMonthly}
+            onChange={(event) => setAutoMonthly(event.target.checked)}
+          />
+          <span className="grow" style={{ marginLeft: 8 }}>
+            <span className="strong">Terbitkan otomatis tiap bulan</span>
+            <span className="tiny" style={{ display: 'block' }}>
+              Tagihan untuk semua kepala keluarga terbit sendiri di awal bulan, lengkap
+              dengan notifikasi. Tidak pernah menerbitkan dua kali untuk periode yang sama.
+            </span>
+          </span>
         </label>
         <button className="btn btn-primary" disabled={busy} onClick={() => void saveSettings()}>
           <Icon name="check" size={16} /> Simpan pengaturan
@@ -630,6 +747,122 @@ export default function Dues() {
         </label>
         <button className="btn btn-primary" disabled={busy || waiveNote.trim().length < 3} onClick={() => void waive()}>
           <Icon name="check" size={16} /> Bebaskan tagihan ini
+        </button>
+      </Sheet>
+
+      <Sheet
+        open={housesOpen}
+        onClose={() => !busy && setHousesOpen(false)}
+        title="Nominal khusus per rumah"
+        subtitle="Kosongkan untuk memakai nominal umum"
+      >
+        <p className="tiny" style={{ marginBottom: 12 }}>
+          Berlaku untuk iuran rutin yang diterbitkan setelah ini. Tagihan yang
+          sudah terbit tidak ikut berubah. Tagihan insidental selalu memakai
+          nominal yang Anda ketik saat menerbitkannya.
+        </p>
+        <div className="col" style={{ gap: 9, maxHeight: '52vh', overflowY: 'auto' }}>
+          {members.map((member) => (
+            <div key={member.householdId} className="item" style={{ padding: '9px 10px' }}>
+              <div className="grow">
+                <div className="strong truncate">{member.house || member.name}</div>
+                <div className="tiny truncate">{member.name}</div>
+                <div className="row" style={{ gap: 6, marginTop: 6 }}>
+                  <input
+                    className="input"
+                    inputMode="numeric"
+                    placeholder={settings ? String(settings.amount) : 'nominal umum'}
+                    value={houseDraft[member.householdId] ?? ''}
+                    onChange={(event) =>
+                      setHouseDraft((current) => ({
+                        ...current,
+                        [member.householdId]: event.target.value,
+                      }))
+                    }
+                  />
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    disabled={busy}
+                    onClick={() => void saveHouseAmount(member.householdId)}
+                  >
+                    Simpan
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Sheet>
+
+      <Sheet
+        open={specialOpen}
+        onClose={() => !busy && setSpecialOpen(false)}
+        title="Tagihan insidental"
+        subtitle="Sekali jalan, di luar iuran rutin bulanan"
+      >
+        <label className="field">
+          <span>Nama tagihan</span>
+          <input
+            className="input"
+            value={specialTitle}
+            onChange={(event) => setSpecialTitle(event.target.value)}
+            placeholder="Contoh: Perbaikan gapura"
+          />
+        </label>
+        <label className="field">
+          <span>Nominal per rumah (Rp)</span>
+          <input
+            className="input"
+            inputMode="numeric"
+            value={specialAmount}
+            onChange={(event) => setSpecialAmount(event.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span>Jatuh tempo</span>
+          <input
+            className="input"
+            type="date"
+            value={specialDue}
+            onChange={(event) => setSpecialDue(event.target.value)}
+          />
+        </label>
+        <div className="row-between" style={{ marginBottom: 8 }}>
+          <span className="strong">Penerima ({specialMembers.length})</span>
+          <button
+            className="link-btn tiny"
+            onClick={() =>
+              setSpecialMembers(
+                specialMembers.length === members.length ? [] : members.map((member) => member.id),
+              )
+            }
+          >
+            {specialMembers.length === members.length ? 'Kosongkan semua' : 'Pilih semua'}
+          </button>
+        </div>
+        <div className="col" style={{ gap: 7, maxHeight: '34vh', overflowY: 'auto', marginBottom: 14 }}>
+          {members.map((member) => (
+            <label key={member.id} className="item" style={{ cursor: 'pointer', padding: '9px 10px' }}>
+              <input
+                type="checkbox"
+                checked={specialMembers.includes(member.id)}
+                onChange={() =>
+                  setSpecialMembers((current) =>
+                    current.includes(member.id)
+                      ? current.filter((id) => id !== member.id)
+                      : [...current, member.id],
+                  )
+                }
+              />
+              <span className="grow truncate" style={{ marginLeft: 8 }}>
+                {member.name}
+                {member.house ? ` · ${member.house}` : ''}
+              </span>
+            </label>
+          ))}
+        </div>
+        <button className="btn btn-primary" disabled={busy} onClick={() => void createSpecial()}>
+          <Icon name="check" size={16} /> Terbitkan tagihan insidental
         </button>
       </Sheet>
     </div>

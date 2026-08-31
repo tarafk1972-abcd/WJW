@@ -21,9 +21,15 @@ export interface DuesSettings {
   amount: number
   dueDay: number
   paymentInstructions: string
+  /** Terbitkan tagihan bulanan tanpa diminta, pada tanggal 1 tiap bulan. */
+  autoMonthly: boolean
   updatedBy: string
   updatedAt: number
 }
+
+/** `monthly` = iuran rutin; `special` = tagihan insidental sekali jalan. */
+export const DUES_KINDS = ['monthly', 'special'] as const
+export type DuesKind = (typeof DUES_KINDS)[number]
 
 export interface DuesInvoice {
   id: string
@@ -34,6 +40,7 @@ export interface DuesInvoice {
   amount: number
   dueAt: number
   status: DuesStatus
+  kind: DuesKind
   method: DuesMethod
   reference: string
   paymentNote: string
@@ -68,6 +75,7 @@ type DuesRow = {
   amount: number
   due_at: number
   status: DuesStatus
+  kind: DuesKind
   method: DuesMethod
   reference: string
   payment_note: string
@@ -85,6 +93,7 @@ type SettingsRow = {
   amount: number
   due_day: number
   payment_instructions: string
+  auto_monthly: number
   updated_by: string
   updated_at: number
 }
@@ -96,6 +105,7 @@ function mapSettings(row: SettingsRow): DuesSettings {
     amount: row.amount,
     dueDay: row.due_day,
     paymentInstructions: row.payment_instructions,
+    autoMonthly: !!row.auto_monthly,
     updatedBy: row.updated_by,
     updatedAt: row.updated_at,
   }
@@ -111,6 +121,7 @@ export function mapDuesInvoice(row: DuesRow): DuesInvoice {
     amount: row.amount,
     dueAt: row.due_at,
     status: row.status,
+    kind: row.kind ?? 'monthly',
     method: row.method ?? '',
     reference: row.reference,
     paymentNote: row.payment_note,
@@ -137,17 +148,19 @@ export function saveDuesSettings(input: {
   amount: number
   dueDay: number
   paymentInstructions: string
+  autoMonthly: boolean
 }): DuesSettings {
   const at = now()
   db.prepare(
     `INSERT INTO dues_settings
-     (community_id,label,amount,due_day,payment_instructions,updated_by,updated_at)
-     VALUES (?,?,?,?,?,?,?)
+     (community_id,label,amount,due_day,payment_instructions,auto_monthly,updated_by,updated_at)
+     VALUES (?,?,?,?,?,?,?,?)
      ON CONFLICT(community_id) DO UPDATE SET
        label=excluded.label,
        amount=excluded.amount,
        due_day=excluded.due_day,
        payment_instructions=excluded.payment_instructions,
+       auto_monthly=excluded.auto_monthly,
        updated_by=excluded.updated_by,
        updated_at=excluded.updated_at`,
   ).run(
@@ -156,6 +169,7 @@ export function saveDuesSettings(input: {
     input.amount,
     input.dueDay,
     input.paymentInstructions,
+    input.autoMonthly ? 1 : 0,
     input.actorId,
     at,
   )
@@ -165,6 +179,7 @@ export function saveDuesSettings(input: {
     amount: input.amount,
     dueDay: input.dueDay,
     paymentInstructions: input.paymentInstructions,
+    autoMonthly: input.autoMonthly,
     updatedBy: input.actorId,
     updatedAt: at,
   }
@@ -272,11 +287,19 @@ export function generateDuesInvoices(input: {
   const ids = [...new Set(input.memberIds)].slice(0, 500)
   if (!ids.length) throw new Error('no_members')
 
+  // Nominal khusus menimpa nominal umum, per rumah.
+  const overrides = new Map(
+    listDuesHouseAmounts(input.communityId).map((item) => [item.householdId, item.amount]),
+  )
+
   // Satu alamat/KK memiliki satu penerima iuran. Jangan biarkan admin
   // menerbitkan dua tagihan hanya karena ayah dan anak sama-sama punya akun.
   const billable = listBillableHouseholdHeads(input.communityId)
   const byId = new Map(billable.map((member) => [member.id, member]))
-  const residents = ids.map((id) => byId.get(id)).filter(Boolean) as { id: string }[]
+  const residents = ids.map((id) => byId.get(id)).filter(Boolean) as {
+    id: string
+    householdId: string
+  }[]
   if (residents.length !== ids.length) throw new Error('invalid_household_head')
 
   let created = 0
@@ -306,7 +329,7 @@ export function generateDuesInvoices(input: {
         resident.id,
         input.period,
         settings.label,
-        settings.amount,
+        overrides.get(resident.householdId) ?? settings.amount,
         dueAt,
         reference(),
         now(),
@@ -325,6 +348,125 @@ export function generateDuesInvoices(input: {
       )
     : []
   return { created, existing, invoices }
+}
+
+/* ---------------- tagihan insidental ---------------- */
+
+/**
+ * Tagihan sekali jalan: kerja bakti, perbaikan gapura, syukuran 17 Agustus.
+ * Nominalnya seragam dan ditentukan saat itu juga — nominal khusus per rumah
+ * sengaja tidak berlaku, karena patungan semacam ini biasanya rata.
+ *
+ * `period` diberi imbuhan acak agar satu warga dapat menerima beberapa tagihan
+ * insidental dalam bulan yang sama tanpa menabrak UNIQUE(community,member,period).
+ */
+export function generateSpecialInvoices(input: {
+  communityId: string
+  actorId: string
+  title: string
+  amount: number
+  dueAt: number
+  memberIds: string[]
+}): { created: number; invoices: DuesInvoice[] } {
+  const title = input.title.trim().slice(0, 100)
+  if (title.length < 3) throw new Error('invalid_dues_title')
+  if (!Number.isInteger(input.amount) || input.amount < 1_000 || input.amount > 50_000_000) {
+    throw new Error('invalid_dues_settings')
+  }
+  if (!Number.isFinite(input.dueAt) || input.dueAt <= 0) throw new Error('invalid_period')
+
+  const ids = [...new Set(input.memberIds)].slice(0, 500)
+  if (!ids.length) throw new Error('no_members')
+
+  const billable = listBillableHouseholdHeads(input.communityId)
+  const byId = new Map(billable.map((member) => [member.id, member]))
+  const residents = ids.map((id) => byId.get(id)).filter(Boolean) as { id: string }[]
+  if (residents.length !== ids.length) throw new Error('invalid_household_head')
+
+  const at = now()
+  const period = `${new Date(input.dueAt).toISOString().slice(0, 7)}#${uid().slice(0, 5).toUpperCase()}`
+  const invoiceIds: string[] = []
+  const create = db.transaction(() => {
+    const insert = db.prepare(
+      `INSERT INTO dues_invoices
+       (id,community_id,member_id,period,label,amount,due_at,status,reference,
+        payment_note,verifier_note,created_at,generated_by,kind,method)
+       VALUES (?,?,?,?,?,?,?,'unpaid',?,'','',?,?,'special','')`,
+    )
+    for (const resident of residents) {
+      const id = uid('di_')
+      insert.run(
+        id,
+        input.communityId,
+        resident.id,
+        period,
+        title,
+        input.amount,
+        input.dueAt,
+        reference(),
+        at,
+        input.actorId,
+      )
+      invoiceIds.push(id)
+    }
+  })
+  create()
+
+  const marks = invoiceIds.map(() => '?').join(',')
+  const invoices = (
+    db.prepare(`SELECT * FROM dues_invoices WHERE id IN (${marks})`).all(...invoiceIds) as DuesRow[]
+  ).map(mapDuesInvoice)
+  return { created: invoices.length, invoices }
+}
+
+/* ---------------- nominal khusus per rumah ---------------- */
+
+export interface DuesHouseAmount {
+  householdId: string
+  amount: number
+  note: string
+  updatedAt: number
+}
+
+export function listDuesHouseAmounts(communityId: string): DuesHouseAmount[] {
+  const rows = db
+    .prepare('SELECT household_id,amount,note,updated_at FROM dues_house_amounts WHERE community_id=?')
+    .all(communityId) as { household_id: string; amount: number; note: string; updated_at: number }[]
+  return rows.map((row) => ({
+    householdId: row.household_id,
+    amount: row.amount,
+    note: row.note,
+    updatedAt: row.updated_at,
+  }))
+}
+
+/** Nominal `null` menghapus kekhususan; rumah itu kembali memakai nominal umum. */
+export function setDuesHouseAmount(input: {
+  communityId: string
+  householdId: string
+  actorId: string
+  amount: number | null
+  note: string
+}): void {
+  const owned = db
+    .prepare('SELECT id FROM households WHERE id=? AND community_id=?')
+    .get(input.householdId, input.communityId) as { id: string } | undefined
+  if (!owned) throw new Error('not_found')
+
+  if (input.amount === null) {
+    db.prepare('DELETE FROM dues_house_amounts WHERE household_id=?').run(input.householdId)
+    return
+  }
+  if (!Number.isInteger(input.amount) || input.amount < 1_000 || input.amount > 50_000_000) {
+    throw new Error('invalid_dues_settings')
+  }
+  db.prepare(
+    `INSERT INTO dues_house_amounts (household_id,community_id,amount,note,updated_by,updated_at)
+     VALUES (?,?,?,?,?,?)
+     ON CONFLICT(household_id) DO UPDATE SET
+       amount=excluded.amount, note=excluded.note,
+       updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
+  ).run(input.householdId, input.communityId, input.amount, input.note, input.actorId, now())
 }
 
 export function getDuesInvoice(id: string): DuesInvoice | null {
@@ -463,4 +605,87 @@ export function verifyDuesInvoice(input: {
   // Admin 2 tidak dapat menutup pengajuan yang sama dengan hasil berbeda.
   if (result.changes !== 1) throw new Error('invalid_dues_state')
   return getDuesInvoice(invoice.id)
+}
+
+/* ---------------- penerbitan bulanan otomatis ---------------- */
+
+/** Periode berjalan dalam waktu setempat server (Asia/Jakarta di produksi). */
+export function periodOf(at: number): string {
+  const d = new Date(at)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+export interface AutoDuesResult {
+  communityId: string
+  period: string
+  created: number
+  /** Tagihan yang baru terbit, supaya pemanggil dapat mengirim notifikasi. */
+  invoices: DuesInvoice[]
+}
+
+/**
+ * Terbitkan iuran rutin untuk setiap tenant yang mengaktifkannya. Aman
+ * dijalankan berkali-kali: UNIQUE(community,member,period) membuat tagihan
+ * yang sudah ada dilewati, bukan digandakan.
+ *
+ * Hanya kepala keluarga yang ditagih — sama persis dengan penerbitan manual,
+ * supaya hasil otomatis tidak pernah berbeda dari yang dikerjakan pengurus.
+ */
+export function runAutoMonthlyDues(at = now()): AutoDuesResult[] {
+  const period = periodOf(at)
+  const rows = db
+    .prepare(
+      `SELECT community_id FROM dues_settings
+       WHERE auto_monthly=1 AND amount>0`,
+    )
+    .all() as { community_id: string }[]
+
+  const out: AutoDuesResult[] = []
+  for (const row of rows) {
+    const heads = listBillableHouseholdHeads(row.community_id)
+    if (!heads.length) continue
+    try {
+      const result = generateDuesInvoices({
+        communityId: row.community_id,
+        // Penerbitan otomatis tidak punya pelaku manusia; dicatat atas nama
+        // penanggung jawab terakhir yang menyimpan pengaturan iuran.
+        actorId: getDuesSettings(row.community_id)?.updatedBy ?? heads[0]!.id,
+        period,
+        memberIds: heads.map((head) => head.id),
+      })
+      if (result.created > 0) {
+        // Hanya yang benar-benar baru; invoices juga memuat tagihan lama yang
+        // sudah ada untuk periode itu, dan warga tidak boleh diberi tahu dua kali.
+        const fresh = result.invoices.filter((invoice) => invoice.createdAt >= at - 60_000)
+        out.push({ communityId: row.community_id, period, created: result.created, invoices: fresh })
+      }
+    } catch {
+      // Satu tenant bermasalah tidak boleh menghentikan tenant lain.
+      continue
+    }
+  }
+  return out
+}
+
+/**
+ * Diperiksa tiap 6 jam, bukan tepat tengah malam: mesin Fly bisa restart kapan
+ * saja, dan pemeriksaan berkala membuat tagihan tetap terbit walau restartnya
+ * jatuh persis di pergantian bulan.
+ */
+export function startDuesScheduler(
+  intervalMs = 6 * 60 * 60 * 1000,
+  onRun?: (results: AutoDuesResult[]) => void,
+): () => void {
+  const tick = () => {
+    try {
+      const results = runAutoMonthlyDues()
+      if (results.length && onRun) onRun(results)
+    } catch {
+      // dibiarkan: penjadwal tidak boleh menjatuhkan proses server
+    }
+  }
+  tick()
+  const id = setInterval(tick, intervalMs)
+  id.unref?.()
+  return () => clearInterval(id)
 }
