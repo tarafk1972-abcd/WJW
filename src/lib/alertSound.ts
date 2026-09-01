@@ -50,24 +50,32 @@ function audio(): HTMLAudioElement | null {
 export function unlockAlertSound(): () => void {
   if (typeof window === 'undefined' || terbuka) return () => {}
 
-  const buka = () => {
-    const a = audio()
-    if (!a) return
-    const bisuSebelumnya = a.muted
-    a.muted = true
-    a.play()
-      .then(() => {
-        a.pause()
-        a.currentTime = 0
-        a.muted = bisuSebelumnya
-        terbuka = true
-        lepas()
-      })
-      .catch(() => {
-        // Belum diizinkan; biarkan pendengar menunggu sentuhan berikutnya.
-        a.muted = bisuSebelumnya
-      })
+const buka = () => {
+  const a = audio()
+  if (!a) return
+  const bisuSebelumnya = a.muted
+  a.muted = true
+  
+  // Handle cases where play() returns undefined (e.g., in jsdom)
+  const playPromise = a.play()
+  if (!playPromise) {
+    a.muted = bisuSebelumnya
+    return
   }
+  
+  playPromise
+    .then(() => {
+      a.pause()
+      a.currentTime = 0
+      a.muted = bisuSebelumnya
+      terbuka = true
+      lepas()
+    })
+    .catch(() => {
+      // Belum diizinkan; biarkan pendengar menunggu sentuhan berikutnya.
+      a.muted = bisuSebelumnya
+    })
+}
 
   const lepas = () => {
     window.removeEventListener('pointerdown', buka)
