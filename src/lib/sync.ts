@@ -163,8 +163,18 @@ export function startRealtimeSync(
   if (!apiMode()) return () => {}
   return startRealtime({
     onSignal: (signal) => {
-      onSignal?.(signal)
-      void syncState().then(onUpdate)
+      /*
+       * Sinyal diteruskan SETELAH state tersegarkan.
+       *
+       * Penerimanya perlu memeriksa isi laporan — siapa penulisnya, siapa
+       * penerimanya — dan pemeriksaan itu mustahil kalau laporannya belum
+       * ada di state lokal. Menunggu satu putaran sinkronisasi jauh lebih
+       * murah daripada membunyikan sirene ke orang yang salah.
+       */
+      void syncState().then(() => {
+        onUpdate?.()
+        onSignal?.(signal)
+      })
     },
   })
 }

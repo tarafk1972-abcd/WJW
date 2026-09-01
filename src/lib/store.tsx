@@ -125,6 +125,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (signal.type !== 'incident.created') return
       const kunci = signal.entityId ?? signal.id ?? ''
       if (kunci && sudahBerbunyi.has(kunci)) return
+
+      /*
+       * Sirene HANYA untuk penerima, tidak pernah untuk pemberi SOS.
+       *
+       * Orang yang menekan tombol panik bisa sedang bersembunyi. HP yang
+       * tiba-tiba meraung di tangannya membahayakan dia, bukan menolong.
+       *
+       * Jalur push sudah benar sejak awal — alertAudience mengecualikan
+       * penulis di setiap query. Yang perlu dijaga hanya jalur SSE ini,
+       * karena kejadian disiarkan ke satu lingkungan penuh.
+       */
+      const sayaId = getSessionId()
+      const laporan = loadDB().reports.find((r) => r.id === kunci)
+      // Tidak ada di state saya = bukan untuk saya.
+      if (!laporan || !sayaId) return
+      if (laporan.authorId === sayaId) return
+      const penerima = laporan.recipients ?? []
+      if (penerima.length && !penerima.some((p) => p.memberId === sayaId)) return
+
       if (kunci) sudahBerbunyi.add(kunci)
       playSosAlert()
     })
