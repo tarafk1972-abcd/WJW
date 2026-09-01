@@ -24,6 +24,7 @@ import {
   resetDB,
   storeLang,
 } from './db'
+import { playSosAlert, unlockAlertSound } from './alertSound'
 import {
   apiMode,
   isLocationWanted,
@@ -111,12 +112,42 @@ export function AppProvider({ children }: { children: ReactNode }) {
     })
     // SSE memberi tahu dalam hitungan detik saat ada insiden/pesan/status
     // baru. State tetap ditarik dari API agar otorisasi server selalu berlaku.
-    const stop = startRealtimeSync(refresh)
+    /*
+     * Sirene hanya untuk SOS. 'incident.created' memang hanya diterbitkan
+     * oleh POST /api/alerts — laporan biasa tidak lewat sana, jadi tidak ada
+     * risiko meraung-raung karena sandal hilang.
+     *
+     * entityId dicatat supaya sambungan SSE yang terhubung ulang dan
+     * mengirim sinyal yang sama tidak membunyikan sirene dua kali.
+     */
+    const sudahBerbunyi = new Set<string>()
+    const stop = startRealtimeSync(refresh, (signal) => {
+      if (signal.type !== 'incident.created') return
+      const kunci = signal.entityId ?? signal.id ?? ''
+      if (kunci && sudahBerbunyi.has(kunci)) return
+      if (kunci) sudahBerbunyi.add(kunci)
+      playSosAlert()
+    })
+    // Sentuhan pertama pengguna dipakai membuka kunci autoplay, jauh sebelum
+    // ada keadaan darurat.
+    const lepasKunci = unlockAlertSound()
+
+    /*
+     * Jalur kedua: push tiba saat aplikasi terbuka. SSE biasanya lebih dulu,
+     * tapi kalau sambungan sedang putus, pesan dari service worker inilah
+     * yang menyelamatkan — dan playSosAlert() aman dipanggil dua kali.
+     */
+    const dariSW = (e: MessageEvent) => {
+      if ((e.data as { kind?: string } | null)?.kind === 'sos-alert') playSosAlert()
+    }
+    navigator.serviceWorker?.addEventListener('message', dariSW)
     const onOnline = () => void syncState().then(refresh)
     window.addEventListener('online', onOnline)
     return () => {
       alive = false
       stop()
+      lepasKunci()
+      navigator.serviceWorker?.removeEventListener('message', dariSW)
       window.removeEventListener('online', onOnline)
     }
   }, [refresh, token])

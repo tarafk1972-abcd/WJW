@@ -9,7 +9,7 @@
  * menentukan hasil akhir — termasuk penolakan izin.
  */
 import { api, ApiError, getToken } from './api'
-import { startRealtime } from './realtime'
+import { startRealtime, type RealtimeSignal } from './realtime'
 import { loadDB, saveDB } from './db'
 import type { DBShape } from './types'
 
@@ -151,10 +151,19 @@ export async function mutate(fn: () => Promise<unknown>): Promise<boolean> {
  * mengambil state lewat endpoint yang menerapkan tenant isolation/RBAC.
  * Tidak ada polling berkala sebagai mekanisme utama.
  */
-export function startRealtimeSync(onUpdate?: () => void): () => void {
+export function startRealtimeSync(
+  onUpdate?: () => void,
+  /*
+   * Jenis sinyal ikut diteruskan supaya pemanggil bisa membedakan darurat
+   * dari perubahan biasa. Sebelumnya sinyalnya dibuang, sehingga tidak ada
+   * cara membunyikan sirene hanya untuk SOS.
+   */
+  onSignal?: (signal: RealtimeSignal) => void,
+): () => void {
   if (!apiMode()) return () => {}
   return startRealtime({
-    onSignal: () => {
+    onSignal: (signal) => {
+      onSignal?.(signal)
       void syncState().then(onUpdate)
     },
   })

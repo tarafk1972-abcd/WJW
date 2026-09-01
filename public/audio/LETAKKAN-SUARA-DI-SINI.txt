@@ -1,0 +1,15 @@
+Taruh berkas sirene SOS di folder ini dengan nama:
+
+    sos-alert.mp3
+
+Aplikasi memanggilnya lewat /audio/sos-alert.mp3.
+
+Saran teknis:
+  - Panjang 2-4 detik. Berkas ini DIULANG terus selama sirene aktif,
+    jadi klip pendek lebih baik daripada rekaman panjang.
+  - Ukuran di bawah 200 KB. Berkas ini ikut masuk APK dan ikut diunduh
+    setiap pemasangan aplikasi.
+  - Format mp3 mono 128 kbps sudah lebih dari cukup untuk sirene.
+
+Kalau berkas ini tidak ada, aplikasi TIDAK error: peringatan darurat
+tetap muncul dan HP tetap bergetar, hanya tanpa suara.

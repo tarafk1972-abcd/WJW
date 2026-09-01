@@ -14,10 +14,21 @@
  * dengan layer CARTO. Saat APK baru dibuka, worker ini langsung mengambil
  * alih dan menghapus salinan lama sebelum layar peta dipakai.
  */
-const CACHE = 'wjw-shell-v3'
+const CACHE = 'wjw-shell-v4'
 
 /** Berkas yang membuat aplikasi bisa terbuka tanpa jaringan. */
-const SHELL = ['./', './index.html', './manifest.webmanifest', './favicon.svg']
+const SHELL = [
+  './',
+  './index.html',
+  './manifest.webmanifest',
+  './favicon.svg',
+  /*
+   * Sirene ikut disimpan. Peringatan darurat justru paling sering datang
+   * saat sinyal buruk — suara yang harus diunduh dulu adalah suara yang
+   * terlambat berbunyi.
+   */
+  './audio/sos-alert.mp3',
+]
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -141,7 +152,20 @@ self.addEventListener('push', (event) => {
       : [],
   }
 
-  event.waitUntil(self.registration.showNotification(title, options))
+  /*
+   * Suara notifikasi Android ditentukan oleh channel sistem dan tidak bisa
+   * diganti dari sini. Tapi kalau aplikasi kebetulan sedang TERBUKA, halaman
+   * bisa membunyikan sirene sendiri — jadi beri tahu dia.
+   */
+  const beriTahuHalaman = self.clients
+    .matchAll({ type: 'window', includeUncontrolled: true })
+    .then((clients) => {
+      if (!urgent) return
+      for (const client of clients) client.postMessage({ kind: 'sos-alert' })
+    })
+    .catch(() => {})
+
+  event.waitUntil(Promise.all([self.registration.showNotification(title, options), beriTahuHalaman]))
 })
 
 self.addEventListener('notificationclick', (event) => {
