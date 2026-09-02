@@ -25,6 +25,7 @@ import {
   storeLang,
 } from './db'
 import { playSosAlert, unlockAlertSound } from './alertSound'
+import { initNativePush } from './nativePush'
 import {
   apiMode,
   isLocationWanted,
@@ -150,6 +151,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Sentuhan pertama pengguna dipakai membuka kunci autoplay, jauh sebelum
     // ada keadaan darurat.
     const lepasKunci = unlockAlertSound()
+
+    // Di dalam APK, sirene aplikasi-terbuka saja tidak cukup: HP satpam
+    // biasanya terkunci di saku. Pendaftaran FCM inilah yang membuat SOS
+    // berbunyi walau aplikasi tertutup. Di browser, panggilan ini tidak
+    // melakukan apa-apa.
+    void initNativePush()
 
     /*
      * Jalur kedua: push tiba saat aplikasi terbuka. SSE biasanya lebih dulu,

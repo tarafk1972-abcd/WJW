@@ -12,8 +12,10 @@
 # Mesin GitHub sudah punya JDK dan Android SDK, jadi APK bisa dibuat
 # tanpa memasang apa pun di komputer Anda.
 #
-# Cara memakai: buka tab Actions di GitHub -> "Build APK" -> Run workflow.
-# Hasilnya diunduh dari bagian Artifacts pada halaman jalannya workflow.
+# Cara memakai: tab Actions -> "Build APK" -> Run workflow.
+# Hasilnya diunduh dari bagian Artifacts di halaman jalannya workflow.
+#
+# Berkas asalnya: docs/workflow/apk.yml
 
 name: Build APK
 
@@ -45,10 +47,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
@@ -110,6 +112,15 @@ jobs:
         # Periksa ulang bila kelak versinya dinaikkan.
         run: npm i --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
 
+      - name: Pasang plugin notifikasi native
+        # DISIMPAN ke package.json dengan sengaja (tanpa --no-save):
+        # `npx cap sync` menemukan plugin dengan membaca dependencies di
+        # package.json. Dipasang dengan --no-save, plugin ini ada di disk
+        # tetapi TIDAK PERNAH masuk ke APK — dan kegagalannya diam-diam.
+        # package.json di mesin CI ini dibuang setelah build, jadi repo Anda
+        # tidak ikut berubah.
+        run: npm i --save @capacitor/push-notifications@7
+
       - name: Periksa kerentanan bawaan Capacitor
         # Gagalkan bila versi yang dipasang ternyata membawa kerentanan
         # baru — lebih baik ketahuan di sini daripada di dalam APK.
@@ -127,6 +138,49 @@ jobs:
           "
           npx cap add android
           npx cap sync android
+
+      - name: Pasang Firebase dan suara sirene
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          # --- 1. Kredensial Firebase ---------------------------------
+          # Tanpa berkas ini, plugin push tetap terpasang tetapi perangkat
+          # tidak pernah mendapat token: notifikasi saat aplikasi tertutup
+          # tidak akan bekerja. Build sengaja TIDAK digagalkan supaya APK
+          # tetap bisa dibuat sebelum Firebase disiapkan.
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "::warning::Secret GOOGLE_SERVICES_JSON kosong — APK ini TIDAK akan menerima notifikasi saat aplikasi tertutup."
+            echo "APK tanpa FCM: notifikasi hanya muncul saat aplikasi terbuka." >> "$GITHUB_STEP_SUMMARY"
+          else
+            # Menerima isi JSON apa adanya maupun base64.
+            case "$GOOGLE_SERVICES_JSON" in
+              '{'*) printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json ;;
+              *)    printf '%s' "$GOOGLE_SERVICES_JSON" | base64 -d > android/app/google-services.json ;;
+            esac
+            # Gagalkan sekarang, bukan setelah 10 menit Gradle.
+            node -e "
+              const j = JSON.parse(require('fs').readFileSync('android/app/google-services.json','utf8'));
+              const id = j.client?.[0]?.client_info?.android_client_info?.package_name;
+              if (!id) { console.error('::error::google-services.json tidak memuat package_name.'); process.exit(1); }
+              if (id !== 'id.wargajagawarga.app') {
+                console.error('::error::google-services.json milik aplikasi ' + id + ', bukan id.wargajagawarga.app. Tambahkan aplikasi Android dengan nama paket itu di Firebase.');
+                process.exit(1);
+              }
+              console.log('google-services.json cocok untuk ' + id);
+            "
+          fi
+
+          # --- 2. Suara sirene ----------------------------------------
+          # Android mengambil suara notifikasi dari resource res/raw, bukan
+          # dari isi notifikasi. Nama resource wajib huruf kecil dan garis
+          # bawah: `sos-alert` DITOLAK saat kompilasi.
+          if [ -f public/audio/sos-alert.mp3 ]; then
+            mkdir -p android/app/src/main/res/raw
+            cp public/audio/sos-alert.mp3 android/app/src/main/res/raw/sos_alert.mp3
+            echo "Suara sirene dipasang: $(wc -c < android/app/src/main/res/raw/sos_alert.mp3) byte"
+          else
+            echo "::warning::public/audio/sos-alert.mp3 tidak ada — notifikasi darurat memakai suara bawaan HP."
+          fi
 
       - name: Tambahkan izin Android
         run: |

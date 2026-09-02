@@ -313,6 +313,18 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 );
 CREATE INDEX IF NOT EXISTS idx_push_member ON push_subscriptions(member_id);
 
+-- Token perangkat Android (APK). Jalur terpisah dari push_subscriptions:
+-- WebView tidak mendukung Web Push, jadi pengguna APK hanya bisa dijangkau
+-- lewat Firebase Cloud Messaging.
+CREATE TABLE IF NOT EXISTS fcm_tokens (
+  token      TEXT PRIMARY KEY,
+  member_id  TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+  platform   TEXT NOT NULL DEFAULT 'android',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fcm_member ON fcm_tokens(member_id);
+
 CREATE TABLE IF NOT EXISTS audit (
   id           TEXT PRIMARY KEY,
   community_id TEXT,

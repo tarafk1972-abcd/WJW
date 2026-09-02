@@ -137,10 +137,13 @@ import { runRenewalCheck, startRenewalScheduler } from './renewals.js'
 import {
   pushEnabled,
   pushToMembers,
+  removeFcmToken,
   removeSubscription,
+  saveFcmToken,
   saveSubscription,
   vapidPublicKey,
 } from './push.js'
+import { fcmEnabled } from './fcm.js'
 
 ensureSuperadmin()
 fixUnnamedCommunities()
@@ -589,7 +592,7 @@ app.get('/api/health', (c) => {
   }
 })
 
-app.get('/api/push/key', (c) => c.json({ key: vapidPublicKey() }))
+app.get('/api/push/key', (c) => c.json({ key: vapidPublicKey(), fcm: fcmEnabled }))
 
 /**
  * Server-Sent Events untuk perubahan tenant secara real-time.
@@ -3597,6 +3600,30 @@ app.post('/api/push/subscribe', auth, async (c) => {
 app.post('/api/push/unsubscribe', auth, async (c) => {
   const b = (await c.req.json()) as { endpoint?: string }
   if (b.endpoint) removeSubscription(b.endpoint)
+  return c.json({ ok: true })
+})
+
+/**
+ * Pendaftaran perangkat APK (Android) untuk notifikasi FCM.
+ *
+ * Jalur ini terpisah dari /api/push/subscribe karena WebView di dalam APK
+ * tidak mendukung Web Push sama sekali. Tanpa rute ini, warga pemakai APK
+ * tidak menerima notifikasi apa pun ketika aplikasi tertutup.
+ */
+app.post('/api/push/fcm/register', auth, async (c) => {
+  const me = c.get('me')
+  const b = (await c.req.json()) as { token?: string; platform?: string }
+  const token = (b.token ?? '').trim()
+  if (!token || token.length > 4096) return bad(c, 'errRequired')
+  const platform = b.platform === 'ios' ? 'ios' : 'android'
+  saveFcmToken(me.id, token, platform)
+  return c.json({ ok: true })
+})
+
+app.post('/api/push/fcm/unregister', auth, async (c) => {
+  const b = (await c.req.json()) as { token?: string }
+  const token = (b.token ?? '').trim()
+  if (token) removeFcmToken(token)
   return c.json({ ok: true })
 })
 

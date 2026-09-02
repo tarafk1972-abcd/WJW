@@ -1,5 +1,6 @@
 import webpush from 'web-push'
 import { db, now, uid } from './db.js'
+import { fcmEnabled, sendFcm } from './fcm.js'
 
 const PUBLIC = process.env.VAPID_PUBLIC_KEY ?? ''
 const PRIVATE = process.env.VAPID_PRIVATE_KEY ?? ''
@@ -37,6 +38,28 @@ export function removeSubscription(endpoint: string) {
   db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(endpoint)
 }
 
+/**
+ * Simpan token FCM sebuah perangkat Android.
+ *
+ * Token adalah kunci utamanya: satu HP yang berpindah akun harus berpindah
+ * pemilik, bukan menerima notifikasi dua warga sekaligus.
+ */
+export function saveFcmToken(memberId: string, token: string, platform = 'android') {
+  const at = now()
+  db.prepare(
+    `INSERT INTO fcm_tokens (token, member_id, platform, created_at, updated_at)
+     VALUES (?,?,?,?,?)
+     ON CONFLICT(token) DO UPDATE SET
+       member_id  = excluded.member_id,
+       platform   = excluded.platform,
+       updated_at = excluded.updated_at`,
+  ).run(token, memberId, platform, at, at)
+}
+
+export function removeFcmToken(token: string) {
+  db.prepare('DELETE FROM fcm_tokens WHERE token = ?').run(token)
+}
+
 export interface PushPayload {
   title: string
   body: string
@@ -56,6 +79,11 @@ export interface PushDispatchResult {
   /** Penolakan/error dari layanan Web Push. */
   failed: number
   enabled: boolean
+  /** Jumlah perangkat APK (Android) yang ditemukan untuk target ini. */
+  fcmTokens?: number
+  /** Diterima FCM. Terpisah dari `sent` agar dua jalur bisa dibedakan di log. */
+  fcmSent?: number
+  fcmFailed?: number
 }
 
 /**
@@ -75,14 +103,19 @@ export async function pushToMembers(
     subscriptions: 0,
     sent: 0,
     failed: 0,
-    enabled: pushEnabled,
+    enabled: pushEnabled || fcmEnabled,
   }
-  if (!pushEnabled || targets.length === 0) return empty
+  if (targets.length === 0) return empty
+  // Dua jalur berdiri sendiri: warga PWA lewat Web Push, warga APK lewat FCM.
+  // Cukup salah satunya aktif agar fungsi ini tetap berguna.
+  if (!pushEnabled && !fcmEnabled) return empty
 
   const marks = targets.map(() => '?').join(',')
-  const subs = db
-    .prepare(`SELECT * FROM push_subscriptions WHERE member_id IN (${marks})`)
-    .all(...targets) as {
+  const subs = (
+    pushEnabled
+      ? db.prepare(`SELECT * FROM push_subscriptions WHERE member_id IN (${marks})`).all(...targets)
+      : []
+  ) as {
     endpoint: string
     p256dh: string
     auth: string
@@ -108,5 +141,35 @@ export async function pushToMembers(
       }
     }),
   )
-  return { targets: targets.length, subscriptions: subs.length, sent, failed, enabled: true }
+  // Jalur kedua: perangkat APK. Dikerjakan setelah Web Push supaya kegagalan
+  // FCM tidak menunda notifikasi warga yang memakai browser.
+  let fcmTokens = 0
+  let fcmSent = 0
+  let fcmFailed = 0
+  if (fcmEnabled) {
+    const rows = db
+      .prepare(`SELECT token FROM fcm_tokens WHERE member_id IN (${marks})`)
+      .all(...targets) as { token: string }[]
+    fcmTokens = rows.length
+    if (fcmTokens > 0) {
+      const hasil = await sendFcm(
+        rows.map((r) => r.token),
+        payload,
+      )
+      fcmSent = hasil.sent
+      fcmFailed = hasil.failed
+      for (const mati of hasil.invalid) removeFcmToken(mati)
+    }
+  }
+
+  return {
+    targets: targets.length,
+    subscriptions: subs.length,
+    sent,
+    failed,
+    enabled: true,
+    fcmTokens,
+    fcmSent,
+    fcmFailed,
+  }
 }
