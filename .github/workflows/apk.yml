@@ -101,16 +101,24 @@ jobs:
         #   v7 -> 0 kerentanan
         #   v8 -> uuid moderate lewat xcode (GHSA-w5hq-g745-h8pq)
         # Periksa ulang bila kelak versinya dinaikkan.
-        run: npm i --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
-
-      - name: Pasang plugin notifikasi native
-        # DISIMPAN ke package.json dengan sengaja (tanpa --no-save):
-        # `npx cap sync` menemukan plugin dengan membaca dependencies di
-        # package.json. Dipasang dengan --no-save, plugin ini ada di disk
-        # tetapi TIDAK PERNAH masuk ke APK — dan kegagalannya diam-diam.
+        #
+        # SATU perintah, dan DISIMPAN ke package.json. Dua alasan, keduanya
+        # sudah pernah menggagalkan build ini:
+        #
+        #  1. `npx cap sync` menemukan plugin dengan MEMBACA package.json.
+        #     Dipasang --no-save, plugin ada di disk tetapi tidak pernah
+        #     masuk ke APK — dan gagalnya tanpa pesan apa pun.
+        #
+        #  2. `npm i --save` MENGHAPUS paket yang sebelumnya dipasang dengan
+        #     --no-save. Dipisah menjadi dua perintah, Capacitor ikut
+        #     terbuang dan `npx cap add android` gagal sebelum Gradle jalan.
+        #
         # package.json di mesin CI ini dibuang setelah build, jadi repo Anda
         # tidak ikut berubah.
-        run: npm i --save @capacitor/push-notifications@7
+        run: >-
+          npm i --save
+          @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
+          @capacitor/push-notifications@7
 
       - name: Periksa kerentanan bawaan Capacitor
         # Gagalkan bila versi yang dipasang ternyata membawa kerentanan
