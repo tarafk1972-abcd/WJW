@@ -14,8 +14,10 @@ const post = vi.fn()
 
 beforeEach(() => {
   vi.restoreAllMocks()
-  localStorage.clear()
   resetPresenceHeartbeat()
+  // `post` dibuat sekali di level modul; kosongkan supaya panggilan dari tes
+  // sebelumnya tidak terbawa ke tes berikutnya.
+  post.mockClear()
 })
 
 describe('pingPresence', () => {
