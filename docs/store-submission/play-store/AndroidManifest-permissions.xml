@@ -1,0 +1,57 @@
+<!--
+  Tempel blok ini ke android/app/src/main/AndroidManifest.xml
+  di dalam <manifest> sebelum <application>.
+  Setiap izin dijelaskan sehingga tidak ada izin yang mubazir.
+-->
+
+<!-- Internet + jaringan (wajib untuk memanggil API) -->
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+<!-- Lokasi — dipakai saat SOS aktif atau patroli aktif -->
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+<!-- Kamera — foto bukti pada insiden -->
+<uses-permission android:name="android.permission.CAMERA" />
+<uses-feature android:name="android.hardware.camera" android:required="false" />
+
+<!-- Mikrofon — rekaman audio bukti SOS (opsional) -->
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+<!-- Notifikasi — Android 13+ meminta ini secara eksplisit -->
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+<!-- Getar — feedback taktil saat panik & notifikasi -->
+<uses-permission android:name="android.permission.VIBRATE" />
+
+<!-- Wake lock — jaga layar tetap aktif saat insiden -->
+<uses-permission android:name="android.permission.WAKE_LOCK" />
+
+<!-- Buka aplikasi lain untuk kontak darurat / peta bila diperlukan -->
+<queries>
+  <intent>
+    <action android:name="android.intent.action.DIAL" />
+    <data android:scheme="tel" />
+  </intent>
+  <intent>
+    <action android:name="android.intent.action.VIEW" />
+    <data android:scheme="geo" />
+  </intent>
+</queries>
+
+<!--
+  Izin yang SENGAJA TIDAK DIMINTA (mengurangi risiko penolakan review):
+  - READ_CONTACTS  : WJW tidak membaca daftar kontak
+  - READ_EXTERNAL_STORAGE / READ_MEDIA_IMAGES : upload foto memakai Photo Picker
+  - FOREGROUND_SERVICE_LOCATION : belum ada layanan lokasi latar
+  - RECEIVE_BOOT_COMPLETED : tidak perlu jalan saat boot
+  - SYSTEM_ALERT_WINDOW : tidak ada overlay di atas aplikasi lain
+
+  Bila kelak Anda menambahkan @capacitor/geolocation dengan mode background,
+  Anda WAJIB tambahkan:
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+  dan menjelaskan penggunaannya di Data Safety + video demo.
+-->
