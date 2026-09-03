@@ -15,6 +15,7 @@ import { fmtDate, initials, timeAgo } from '../lib/format'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'
 import { QrCode } from '../ui/QrCode'
+import { SecurityPanel } from '../ui/SecurityPanel'
 import { Sheet } from '../ui/Sheet'
 import { useToast } from '../ui/Toast'
 import { ASSIGNABLE_ROLES, roleChip, roleKey } from '../lib/meta'
@@ -34,7 +35,9 @@ export default function Admin() {
   } = useApp()
   const nav = useNavigate()
   const toast = useToast()
-  const [tab, setTab] = useState<'pending' | 'members' | 'invites'>('pending')
+  const [tab, setTab] = useState<'pending' | 'members' | 'invites' | 'keamanan'>(
+    'pending',
+  )
   const [target, setTarget] = useState<Member | null>(null)
   const [pickRole, setPickRole] = useState<Exclude<Role, 'superadmin'>>('warga')
   const [rejecting, setRejecting] = useState(false)
@@ -299,7 +302,16 @@ export default function Admin() {
         <button className={tab === 'invites' ? 'on' : ''} onClick={() => setTab('invites')}>
           {t('invites')}
         </button>
+        {isAdmin && (
+          <button className={tab === 'keamanan' ? 'on' : ''} onClick={() => setTab('keamanan')}>
+            Keamanan
+          </button>
+        )}
       </div>
+
+      {tab === 'keamanan' && (
+        <SecurityPanel db={db} members={members} community={community} lang={lang} />
+      )}
 
       {tab === 'pending' &&
         (pending.length === 0 ? (

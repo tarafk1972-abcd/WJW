@@ -26,6 +26,7 @@ import {
 } from './db'
 import { playSosAlert, unlockAlertSound } from './alertSound'
 import { initNativePush } from './nativePush'
+import { startPresenceHeartbeat } from './heartbeat'
 import {
   apiMode,
   isLocationWanted,
@@ -169,10 +170,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     navigator.serviceWorker?.addEventListener('message', dariSW)
     const onOnline = () => void syncState().then(refresh)
     window.addEventListener('online', onOnline)
+
+    /*
+     * Denyut kehadiran: buktikan aplikasi terbuka & terhubung, dan beri
+     * jalur penyambungan ulang yang ringan. Inilah dasar "satpam aktif"
+     * di layar Admin, tanpa pernah mengirim GPS.
+     */
+    const lepasDenyut = startPresenceHeartbeat()
+
     return () => {
       alive = false
       stop()
       lepasKunci()
+      lepasDenyut()
       navigator.serviceWorker?.removeEventListener('message', dariSW)
       window.removeEventListener('online', onOnline)
     }

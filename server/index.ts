@@ -23,6 +23,7 @@ import {
   uid,
   verifyPassword,
   visibleMember,
+  presenceMember,
   type MemberRow,
 } from './db.js'
 import { decryptSensitiveJson, encryptSensitiveJson } from './crypto.js'
@@ -1296,6 +1297,26 @@ app.post('/api/auth/logout', auth, (c) => {
 
 app.get('/api/me', auth, (c) => c.json({ member: publicMember(c.get('me')) }))
 
+/**
+ * Denyut kehadiran — "aplikasi saya masih terbuka dan terhubung".
+ *
+ * Tidak mengirim GPS sama sekali, hanya stempel waktu yang membuktikan
+ * bahwa perangkat itu baru saja menunggu server. Nilai inilah yang dipakai
+ * Admin untuk melihat satpam mana yang aplikasinya sedang aktif, dan
+ * memberi aplikasi jalur ringan untuk menjalin ulang koneksi tanpa harus
+ * menunggu stream SSE.
+ *
+ * Dipanggil sendiri oleh aplikasi kira-kira sekali per menit selama
+ * digunakan, sehingga `last_seen_at` tetap segar tanpa permintaan berkala
+ * yang menyentuh lokasi.
+ */
+app.post('/api/me/presence', auth, active, (c) => {
+  const me = c.get('me')
+  const at = now()
+  db.prepare('UPDATE members SET last_seen_at=? WHERE id=?').run(at, me.id)
+  return c.json({ lastSeenAt: at })
+})
+
 /* ================= snapshot data ================= */
 
 /**
@@ -1342,7 +1363,11 @@ app.get('/api/state', auth, (c) => {
 
   const members = (
     db.prepare('SELECT * FROM members WHERE community_id=?').all(cid) as MemberRow[]
-  ).map((m) => visibleMember(m, me))
+  ).map((m) =>
+    me.role === 'admin' || me.role === 'superadmin'
+      ? presenceMember(m, me)
+      : visibleMember(m, me),
+  )
 
   // Timeline dibaca per tenant sekali lalu digabungkan ke setiap laporan;
   // hindari query N+1 ketika dashboard memuat banyak insiden.

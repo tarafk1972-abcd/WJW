@@ -62,6 +62,8 @@ export interface Member {
   decidedBy: string | null
   rejectedReason?: string
   invitedBy?: string | null
+  /** Stempel waktu terakhir aplikasi ini menyebut server (khusus admin utk satpam). */
+  lastSeenAt?: number | null
   emergency?: EmergencyProfile
   /** How this member asked to join, shown to the admin reviewing them. */
   joinMethod?: JoinMethod

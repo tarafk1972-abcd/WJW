@@ -291,6 +291,10 @@ export interface MemberRow {
   join_method: string | null
   join_code: string | null
   join_note: string
+  last_lat: number | null
+  last_lng: number | null
+  last_seen_at: number | null
+  last_accuracy: number | null
 }
 
 /** Field anggota umum — sengaja tanpa profil medis dan hash sandi. */
@@ -360,6 +364,26 @@ export function visibleMember(m: MemberRow, viewer: MemberRow) {
     ...(viewer.id === m.id && m.emergency
       ? { emergency: decryptSensitiveJson(m.emergency) ?? undefined }
       : {}),
+  }
+}
+
+/**
+ * Ubah poin ketersediaan detail kehadiran bagi pengurus.
+ *
+ * Untuk mencegah data kehadiran warga biasa tersebar ke cache semua
+ * perangkat, hanya pengurus (admin/superadmin) yang menerima `lastSeenAt`,
+ * dan hanya untuk anggota berperan satpam — orang yang memang ditugaskan
+ * menjaga lingkungan sehingga diharapkan hadir.
+ */
+export function presenceMember(m: MemberRow, viewer: MemberRow) {
+  const pub = memberPublicFields(m)
+  const canSeePresence = (viewer.role === 'admin' || viewer.role === 'superadmin') && m.role === 'satpam'
+  return {
+    ...pub,
+    ...(viewer.id === m.id && m.emergency
+      ? { emergency: decryptSensitiveJson(m.emergency) ?? undefined }
+      : {}),
+    ...(canSeePresence ? { lastSeenAt: m.last_seen_at ?? null } : {}),
   }
 }
 
