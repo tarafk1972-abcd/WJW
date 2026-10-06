@@ -5,6 +5,7 @@ import { SUPERADMIN_EMAIL, deviceId, login, setSession } from '../lib/db'
 import { syncState } from '../lib/sync'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'
+import { GoogleButton } from '../ui/GoogleButton'
 import { PasswordField } from '../ui/PasswordField'
 import { Sheet } from '../ui/Sheet'
 import type { Key } from '../lib/i18n'
@@ -113,6 +114,11 @@ export default function Login() {
         <button className="btn btn-primary" type="submit" disabled={busy}>
           <Icon name="lock" size={16} /> {busy ? t('loading') : t('login')}
         </button>
+
+        <div className="or-divider">
+          <span>{t('orSignInWith')}</span>
+        </div>
+        <GoogleButton align="stretch" />
 
         <p className="tiny center" style={{ marginTop: 14 }}>
           {t('noAccount')} <a onClick={() => nav('/register')}>{t('register')}</a>

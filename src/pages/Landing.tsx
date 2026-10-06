@@ -5,6 +5,7 @@ import { BUILD_STAMP } from '../lib/meta'
 import { seedDemo } from '../lib/seed'
 import { useApp } from '../lib/store'
 import { Icon } from '../ui/Icon'
+import { GoogleButton } from '../ui/GoogleButton'
 import type { Member } from '../lib/types'
 
 /**
@@ -177,6 +178,10 @@ export default function Landing() {
             <button className="btn btn-ghost" onClick={() => nav('/login')}>
               <Icon name="lock" size={16} /> {t('login')}
             </button>
+            <div className="or-divider">
+              <span>{t('orSignInWith')}</span>
+            </div>
+            <GoogleButton align="stretch" />
             {db.communities.length === 0 && (
               <>
                 {/*

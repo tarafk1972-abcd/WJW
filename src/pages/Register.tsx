@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router'
+import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { ApiError, authApi, publicApi } from '../lib/api'
 import { deviceId, lookupInvite, register, searchCommunities, setSession } from '../lib/db'
 import { markHomeOnRegister } from '../lib/presence'
@@ -28,6 +28,15 @@ export default function Register() {
   const nav = useNavigate()
   const toast = useToast()
   const { code: codeParam } = useParams<{ code: string }>()
+  const [searchParams] = useSearchParams()
+
+  // Email & nama dari "Masuk dengan Google" di mana belum ada akun. Ini
+  // hanya kenyamanan: pengguna tidak perlu mengetik ulang email yang sudah
+  // diverifikasi Google, dan isian email dibuat tidak dapat diedit agar
+  // tidak salah ketik saat mengisi formulir yang sama.
+  const googleEmail = searchParams.get('email') ?? ''
+  const googleName = searchParams.get('name') ?? ''
+  const fromGoogle = searchParams.get('google') === '1'
 
   const [step, setStep] = useState<Step>(codeParam ? 'community' : 'lang')
   const [path, setPath] = useState<Path>(codeParam ? 'invite' : 'invite')
@@ -55,9 +64,9 @@ export default function Register() {
   const [cCity, setCCity] = useState('')
 
   // profile
-  const [name, setName] = useState('')
+  const [name, setName] = useState(fromGoogle ? googleName : '')
   const [phone, setPhone] = useState('')
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(fromGoogle ? googleEmail : '')
   const [password, setPassword] = useState('')
   const [house, setHouse] = useState('')
   const [err, setErr] = useState<Key | ''>('')
@@ -646,7 +655,14 @@ export default function Register() {
               />
             </label>
             <label className="field">
-              <span>{tr('email')} *</span>
+              <span>
+                {tr('email')} *
+                {fromGoogle && (
+                  <span className="chip chip-brand" style={{ marginLeft: 8 }}>
+                    {tr('loginWithGoogle')}
+                  </span>
+                )}
+              </span>
               <input
                 className="input"
                 value={email}
@@ -654,6 +670,8 @@ export default function Register() {
                 placeholder="nama@email.com"
                 inputMode="email"
                 autoCapitalize="none"
+                readOnly={fromGoogle}
+                style={fromGoogle ? { opacity: 0.72 } : undefined}
               />
             </label>
             <PasswordField

@@ -162,6 +162,18 @@ export const authApi = {
     setToken(r.token)
     return r
   },
+  /** Masuk dengan Google (web/PWA). Bila belum ada akun, balas `needRegister`. */
+  async google(idToken: string, deviceId?: string) {
+    const r = await api.post<AuthResult & { needRegister?: boolean }>('/auth/google', {
+      idToken,
+      deviceId,
+    })
+    if (!r.needRegister) setToken(r.token)
+    return r
+  },
+  /** Apakah server mengaktifkan login Google? */
+  googleConfig: () =>
+    api.get<{ enabled: boolean; clientId: string }>('/auth/google/config'),
   async logout() {
     try {
       await api.post('/auth/logout')

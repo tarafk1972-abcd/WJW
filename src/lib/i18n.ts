@@ -350,6 +350,12 @@ const id = {
   errEmailTaken: 'Email sudah terdaftar.',
   errPhoneTaken: 'Nomor HP sudah terdaftar.',
   errLogin: 'Email/HP atau kata sandi salah.',
+  loginWithGoogle: 'Masuk dengan Google',
+  orSignInWith: 'atau masuk dengan',
+  googleUnavailable: 'Layanan Google tidak tersedia di perangkat ini.',
+  tenantSuspended: 'Lingkungan ini sedang dinonaktifkan. Hubungi pengelola.',
+  googleNeedRegister:
+    'Email Google ini belum terdaftar di lingkungan mana pun. Daftarkan dulu untuk melanjutkan.',
   errTooManyAttempts:
     'Terlalu banyak percobaan dari jaringan ini. Tunggu beberapa menit, lalu coba lagi.',
   errNoCommunity: 'Pilih lingkungan atau buat yang baru.',
@@ -1102,6 +1108,12 @@ const en: Dict = {
   errEmailTaken: 'Email is already registered.',
   errPhoneTaken: 'Phone number is already registered.',
   errLogin: 'Wrong email/phone or password.',
+  loginWithGoogle: 'Continue with Google',
+  orSignInWith: 'or sign in with',
+  googleUnavailable: 'Google sign-in is not available on this device.',
+  tenantSuspended: 'This neighbourhood is suspended. Contact the manager.',
+  googleNeedRegister:
+    'This Google email is not registered to any neighbourhood yet. Please register first to continue.',
   errTooManyAttempts:
     'Too many attempts from this network. Wait a few minutes, then try again.',
   errNoCommunity: 'Pick a neighbourhood or create a new one.',

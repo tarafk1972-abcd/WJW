@@ -145,6 +145,7 @@ import {
   vapidPublicKey,
 } from './push.js'
 import { fcmEnabled } from './fcm.js'
+import { googleEnabled, googleClientId, verifyGoogleIdToken } from './google.js'
 
 ensureSuperadmin()
 fixUnnamedCommunities()
@@ -1282,6 +1283,70 @@ app.post('/api/auth/login', async (c) => {
   // Perangkat hanya diklaim untuk warga. Superadmin mengelola layanan dari
   // perangkat mana saja — mengikatnya akan merebut perangkat dari warga
   // yang memakainya, lalu membuat halaman depan menyapa "Superadmin".
+  if (body.deviceId && row.role !== 'superadmin')
+    db.prepare('UPDATE members SET device_id=? WHERE id=?').run(body.deviceId, row.id)
+
+  const token = createSession(row.id, body.deviceId)
+  return c.json({ token, member: publicMember(row) })
+})
+
+/**
+ * Konfigurasi login Google untuk klien web/PWA.
+ *
+ * Terbuka tanpa login — klien memanggilnya untuk tahu apakah harus
+ * menampilkan tombol "Masuk dengan Google". Bila secret tidak terpasang,
+ * bernilai `enabled:false` dan tombolnya tidak dirender.
+ */
+app.get('/api/auth/google/config', (c) =>
+  c.json({ enabled: googleEnabled(), clientId: googleClientId() }),
+)
+
+/**
+ * Masuk dengan Google (web/PWA).
+ *
+ * Klien menyerahkan `credential` (ID token) dari Google Identity Services.
+ * Server memverifikasi tanda tangan & audiens, lalu mencari anggota yang
+ * emailnya cocok. Bila belum ada akun, balasan menandakan perlunya
+ * pendaftaran — aplikasi tidak menciptakan akun tanpa sepengetahuan pemilik.
+ */
+app.post('/api/auth/google', async (c) => {
+  if (!googleEnabled()) return bad(c, 'google_disabled', 404)
+
+  const body = (await c.req.json().catch(() => ({}))) as {
+    idToken?: string
+    deviceId?: string
+  }
+  if (!body.idToken) return bad(c, 'errLogin', 401)
+
+  let info
+  try {
+    info = await verifyGoogleIdToken(body.idToken)
+  } catch {
+    // Pesan generik: jangan bocorkan alasan kegagalan verifikasi.
+    return bad(c, 'errLogin', 401)
+  }
+
+  const hostTenant = tenantHost(c)
+  const row = (hostTenant
+    ? db
+        .prepare('SELECT * FROM members WHERE community_id=? AND lower(email)=?')
+        .get(hostTenant.id, info.email)
+    : db
+        .prepare('SELECT * FROM members WHERE lower(email)=?')
+        .get(info.email)) as MemberRow | undefined
+
+  // Email Google tidak dikenal di lingkungan ini. Tunjukkan pendaftaran
+  // dengan email yang sudah terisi, tanpa membuat akun diam-diam.
+  if (!row) {
+    return c.json({ needRegister: true, email: info.email, name: info.name })
+  }
+  if (row.role !== 'superadmin' && row.community_id) {
+    const subscription = db
+      .prepare('SELECT plan,subscription_status FROM communities WHERE id=?')
+      .get(row.community_id) as { plan: string; subscription_status?: string } | undefined
+    if (subscription?.plan === 'suspended' || subscription?.subscription_status === 'suspended')
+      return bad(c, 'tenant_suspended', 403)
+  }
   if (body.deviceId && row.role !== 'superadmin')
     db.prepare('UPDATE members SET device_id=? WHERE id=?').run(body.deviceId, row.id)
 
