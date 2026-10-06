@@ -46,7 +46,7 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
 
       # Menyimpan unduhan Gradle antar-jalan. Build pertama tetap lambat,
       # berikutnya jauh lebih cepat.
